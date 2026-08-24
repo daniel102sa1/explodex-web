@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { RadioTower } from "lucide-react";
-import PriceChart from "@/components/PriceChart";
+import PriceChart, { type ChartPlan } from "@/components/PriceChart";
 import { getCandles, type Candle } from "@/lib/api";
 
 type Interval = "1m" | "5m" | "15m";
@@ -15,7 +15,7 @@ function okxId(symbol: string) {
   return `${value.endsWith("USDT") ? value.slice(0, -4) : value}-USDT-SWAP`;
 }
 
-export default function LiveCandleChart({ symbol }: { symbol: string }) {
+export default function LiveCandleChart({ symbol, plan }: { symbol: string; plan?: ChartPlan }) {
   const [interval, setIntervalValue] = useState<Interval>("5m");
   const [candles, setCandles] = useState<Candle[]>([]);
   const [source, setSource] = useState("CARGANDO");
@@ -109,19 +109,19 @@ export default function LiveCandleChart({ symbol }: { symbol: string }) {
   }, [symbol, interval]);
 
   return (
-    <section className="mb-5 rounded-3xl border border-slate-800 bg-slate-950/70 p-3">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
+    <section className="rounded-2xl border border-slate-800/80 bg-slate-950/35 p-2.5">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
         <div>
-          <div className="flex items-center gap-2 text-sm font-black text-white"><RadioTower size={15} className="text-emerald-400"/> {symbol} · vela viva</div>
-          <div className="mt-1 text-[11px] text-slate-500">La vela actual se actualiza por WebSocket · {source}</div>
+          <div className="flex items-center gap-2 text-xs font-black text-white"><RadioTower size={14} className="text-emerald-400"/> {symbol} · vela viva</div>
+          <div className="mt-1 text-[10px] text-slate-600">Actualización WebSocket · {source}</div>
         </div>
         <div className="flex gap-1">
           {(["1m", "5m", "15m"] as Interval[]).map((value) => (
-            <button key={value} onClick={() => setIntervalValue(value)} className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-bold ${interval === value ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-slate-800 bg-slate-900 text-slate-400"}`}>{value}</button>
+            <button key={value} onClick={() => setIntervalValue(value)} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold ${interval === value ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-slate-800 bg-slate-900 text-slate-500"}`}>{value}</button>
           ))}
         </div>
       </div>
-      <PriceChart candles={candles} />
+      <PriceChart candles={candles} plan={plan} />
     </section>
   );
 }
