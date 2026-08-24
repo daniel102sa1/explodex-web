@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, BarChart3, Bell, Bot, Gauge, Layers3, LineChart, Newspaper, WalletCards } from "lucide-react";
+import { Activity, BarChart3, Bell, Bot, Gauge, Layers3, LineChart, Newspaper, RadioTower, WalletCards } from "lucide-react";
 
 const items = [
   { href: "/", label: "Inicio", icon: Gauge },
+  { href: "/terminal", label: "Terminal", icon: RadioTower },
   { href: "/scanner", label: "Scanner", icon: Activity },
   { href: "/paper", label: "Paper", icon: WalletCards },
   { href: "/stats", label: "Estadísticas", icon: BarChart3 },
