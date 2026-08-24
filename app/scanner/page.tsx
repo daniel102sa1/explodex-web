@@ -1,6 +1,7 @@
 import { RadioTower, Zap } from "lucide-react";
 import PreparationMemory from "@/components/PreparationMemory";
 import ScannerLiveBoard from "@/components/ScannerLiveBoard";
+import UnifiedPredictionRadar from "@/components/UnifiedPredictionRadar";
 
 export const dynamic = "force-dynamic";
 
@@ -11,10 +12,11 @@ export default function ScannerPage() {
         <div>
           <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.18em] text-emerald-400"><RadioTower size={14}/> Scanner predictivo</div>
           <h1 className="mt-1 text-3xl font-black tracking-tight text-white">Oportunidades antes del movimiento</h1>
-          <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">Busca impulso LONG/SHORT, rebotes y rechazos antes de la expansión. WATCH/PREACTIVACIÓN no son entradas; READY exige activación previa y plan vigente.</p>
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">Busca impulso LONG/SHORT, rebotes y rechazos antes de la expansión. WATCH/PREACTIVACIÓN no son entradas; READY exige dirección coincidente, activación previa y que el precio no haya sido perseguido.</p>
         </div>
         <div className="inline-flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/[.05] px-3 py-2 text-[11px] font-bold text-amber-100"><Zap size={14}/> PAPER TRADING · score ≠ probabilidad garantizada</div>
       </header>
+      <UnifiedPredictionRadar />
       <ScannerLiveBoard />
       <PreparationMemory />
     </main>
