@@ -11,6 +11,16 @@ type RecentResult = {
   setup_score?: number;
   risk_score?: number;
   price?: number;
+  confirmations?: number;
+  reject_reasons?: string[];
+  oi_change_pct?: number;
+  taker_ratio?: number;
+  relative_volume?: number;
+  futures_delta_ratio?: number;
+  spot_delta_ratio?: number;
+  order_book_imbalance?: number;
+  trend_15m?: string;
+  trend_1h?: string;
 };
 
 type Progress = {
@@ -30,6 +40,16 @@ type Progress = {
 };
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
+
+const reasonLabel: Record<string, string> = {
+  aggressive_flow_absorbed: "flujo absorbido",
+  btc_conflict: "BTC en contra",
+  multi_timeframe_conflict: "15m/1h en contra",
+  futures_flow_conflict: "futuros en contra",
+  spot_flow_conflict: "spot en contra",
+  already_extended: "ya extendida",
+  insufficient_confirmations: "faltan confirmaciones",
+};
 
 export default function ScannerProgress() {
   const [data, setData] = useState<Progress | null>(null);
@@ -72,19 +92,11 @@ export default function ScannerProgress() {
   }, [data]);
 
   if (!connected) {
-    return (
-      <section className="mt-6 rounded-3xl border border-rose-500/20 bg-rose-500/5 p-5 text-sm text-rose-200">
-        No se pudo leer el progreso en vivo del scanner.
-      </section>
-    );
+    return <section className="mt-6 rounded-3xl border border-rose-500/20 bg-rose-500/5 p-5 text-sm text-rose-200">No se pudo leer el progreso en vivo del scanner.</section>;
   }
 
   if (!data) {
-    return (
-      <section className="mt-6 rounded-3xl border border-slate-800 bg-slate-950/65 p-5 text-sm text-slate-400">
-        Cargando estado del scanner…
-      </section>
-    );
+    return <section className="mt-6 rounded-3xl border border-slate-800 bg-slate-950/65 p-5 text-sm text-slate-400">Cargando estado del scanner…</section>;
   }
 
   const running = data.status === "running";
@@ -97,12 +109,8 @@ export default function ScannerProgress() {
             {running ? <Loader2 size={16} className="animate-spin" /> : <RadioTower size={16} />}
             Scanner Binance en vivo
           </div>
-          <h2 className="mt-2 text-2xl font-black text-white">
-            {running ? "Analizando mercado ahora" : "Último ciclo terminado"}
-          </h2>
-          <p className="mt-2 text-sm text-slate-400">
-            {running ? `Viendo: ${currentText}` : "El sistema volverá a escanear automáticamente según el intervalo configurado."}
-          </p>
+          <h2 className="mt-2 text-2xl font-black text-white">{running ? "Analizando mercado ahora" : "Último ciclo terminado"}</h2>
+          <p className="mt-2 text-sm text-slate-400">{running ? `Viendo: ${currentText}` : "El sistema volverá a escanear automáticamente según el intervalo configurado."}</p>
         </div>
         <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
           <Box label="Universo" value={data.universe_size} />
@@ -112,22 +120,14 @@ export default function ScannerProgress() {
         </div>
       </div>
 
-      <div className="mt-5 h-2 overflow-hidden rounded-full bg-slate-900">
-        <div className="h-full rounded-full bg-emerald-400 transition-all duration-500" style={{ width: `${Math.max(0, Math.min(100, data.progress_pct))}%` }} />
-      </div>
-      <div className="mt-2 flex justify-between text-xs text-slate-500">
-        <span>Fase: {data.phase}</span><span>{data.progress_pct.toFixed(1)}%</span>
-      </div>
+      <div className="mt-5 h-2 overflow-hidden rounded-full bg-slate-900"><div className="h-full rounded-full bg-emerald-400 transition-all duration-500" style={{ width: `${Math.max(0, Math.min(100, data.progress_pct))}%` }} /></div>
+      <div className="mt-2 flex justify-between text-xs text-slate-500"><span>Fase: {data.phase}</span><span>{data.progress_pct.toFixed(1)}%</span></div>
 
       <div className="mt-6 grid gap-5 xl:grid-cols-2">
         <div>
           <div className="mb-3 flex items-center gap-2 text-sm font-bold text-white"><Activity size={16}/> Monedas que va viendo</div>
           <div className="flex flex-wrap gap-2">
-            {data.recent_symbols.length ? data.recent_symbols.map((symbol, index) => (
-              <Link key={`${symbol}-${index}`} href={`/coin/${symbol}`} className="rounded-full border border-slate-800 bg-slate-900/70 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:border-emerald-500/50 hover:text-emerald-300">
-                {symbol}
-              </Link>
-            )) : <span className="text-sm text-slate-500">Todavía no comenzó el análisis profundo.</span>}
+            {data.recent_symbols.length ? data.recent_symbols.map((symbol, index) => <Link key={`${symbol}-${index}`} href={`/coin/${symbol}`} className="rounded-full border border-slate-800 bg-slate-900/70 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:border-emerald-500/50 hover:text-emerald-300">{symbol}</Link>) : <span className="text-sm text-slate-500">Todavía no comenzó el análisis profundo.</span>}
           </div>
         </div>
 
@@ -135,10 +135,13 @@ export default function ScannerProgress() {
           <div className="mb-3 flex items-center gap-2 text-sm font-bold text-white"><CheckCircle2 size={16}/> Resultados recientes</div>
           <div className="space-y-2">
             {data.recent_results.slice(0, 8).map((item, index) => (
-              <Link key={`${item.symbol}-${index}`} href={`/coin/${item.symbol}`} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 hover:bg-slate-900">
-                <div><div className="font-bold text-white">{item.symbol}</div><div className="text-xs text-slate-500">{item.state ?? "—"}</div></div>
-                <div className={item.direction === "LONG" ? "text-emerald-400" : "text-rose-400"}>{item.direction ?? "—"}</div>
-                <div className="font-mono text-sm font-bold text-slate-200">{item.setup_score?.toFixed(1) ?? "—"}</div>
+              <Link key={`${item.symbol}-${index}`} href={`/coin/${item.symbol}`} className="block rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-3 hover:bg-slate-900">
+                <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3">
+                  <div><div className="font-bold text-white">{item.symbol}</div><div className="text-xs text-slate-500">{item.state ?? "—"} · {item.confirmations ?? 0}/7 confirmaciones</div></div>
+                  <div className={item.direction === "LONG" ? "text-emerald-400" : "text-rose-400"}>{item.direction ?? "—"}</div>
+                  <div className="font-mono text-sm font-bold text-slate-200">{item.setup_score?.toFixed(1) ?? "—"}</div>
+                </div>
+                {!!item.reject_reasons?.length && <div className="mt-2 flex flex-wrap gap-1.5">{item.reject_reasons.slice(0, 3).map((reason) => <span key={reason} className="rounded-full border border-amber-500/20 bg-amber-500/5 px-2 py-0.5 text-[10px] text-amber-200">{reasonLabel[reason] ?? reason}</span>)}</div>}
               </Link>
             ))}
             {!data.recent_results.length && <div className="text-sm text-slate-500">Sin resultados todavía.</div>}
