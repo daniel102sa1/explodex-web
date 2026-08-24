@@ -1,27 +1,18 @@
 import { RadioTower, Zap } from "lucide-react";
-import LiveChartWorkbench from "@/components/LiveChartWorkbench";
 import LiveMarketTerminal from "@/components/LiveMarketTerminal";
 
 export const dynamic = "force-dynamic";
 
 export default function TerminalPage() {
   return (
-    <main className="mx-auto min-h-screen max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
-      <header className="mb-6 border-b border-slate-800 pb-5">
-        <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-emerald-400">
-          <RadioTower size={16} /> Terminal de mercado
+    <main className="mx-auto min-h-screen max-w-[1720px] px-3 py-3 sm:px-4 lg:px-5">
+      <header className="mb-3 flex flex-col gap-2 border-b border-slate-800/70 pb-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.16em] text-emerald-400"><RadioTower size={13}/> Terminal profesional</div>
+          <div className="mt-1 flex flex-wrap items-baseline gap-3"><h1 className="text-2xl font-black text-white">Mercado vivo + predictor</h1><span className="text-[11px] text-slate-600">precios · velas · order book · tape · OI · CoinGlass · plan</span></div>
         </div>
-        <h1 className="mt-2 text-3xl font-black text-white sm:text-4xl">Mercado vivo + predictor previo</h1>
-        <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-400">
-          Precios y velas en tiempo real por WebSocket, más análisis de preactivación para impulso LONG/SHORT, rebote y rechazo.
-          El predictor busca la preparación antes del movimiento; no garantiza que aparezca una vela grande.
-        </p>
-        <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-100">
-          <Zap size={15} /> PAPER TRADING: una preactivación no es una orden. READY exige activación, confirmaciones y que el precio siga dentro de la zona planificada.
-        </div>
+        <div className="inline-flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/[.045] px-3 py-2 text-[10px] font-bold text-amber-100"><Zap size={13}/> PAPER: PREACTIVACIÓN ≠ entrada · READY exige trigger</div>
       </header>
-
-      <LiveChartWorkbench />
       <LiveMarketTerminal />
     </main>
   );
