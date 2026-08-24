@@ -113,6 +113,15 @@ export type AlertItem = {
   message: string;
 };
 
+export type Candle = {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
 
 async function api<T>(path: string): Promise<T> {
@@ -160,4 +169,21 @@ export async function getNews(symbol: string): Promise<Record<string, any>> {
 
 export async function getPrice(symbol: string): Promise<{ symbol: string; price: string }> {
   return api<{ symbol: string; price: string }>(`/api/v1/market/price/${encodeURIComponent(symbol)}`);
+}
+
+export async function getCandles(symbol: string, interval = "15m", limit = 96): Promise<Candle[]> {
+  const allowed = new Set(["5m", "15m", "1h", "4h"]);
+  const safeInterval = allowed.has(interval) ? interval : "15m";
+  const safeSymbol = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
+  const response = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(safeSymbol)}&interval=${safeInterval}&limit=${Math.max(20, Math.min(limit, 200))}`, { cache: "no-store" });
+  if (!response.ok) throw new Error("No se pudieron leer las velas públicas");
+  const rows = await response.json() as any[];
+  return rows.map((row) => ({
+    time: Number(row[0]),
+    open: Number(row[1]),
+    high: Number(row[2]),
+    low: Number(row[3]),
+    close: Number(row[4]),
+    volume: Number(row[7]),
+  }));
 }
