@@ -122,6 +122,36 @@ export type Candle = {
   volume: number;
 };
 
+export type LiveAnalysis = {
+  symbol: string;
+  source: string;
+  provider_warning?: string | null;
+  data_quality: "FULL" | "LIMITED";
+  availability: Record<string, boolean>;
+  current_open_interest: number;
+  direction: "LONG" | "SHORT";
+  state: string;
+  setup_score: number;
+  long_score: number;
+  short_score: number;
+  risk_score: number;
+  current_price: number;
+  entry_low: number;
+  entry_high: number;
+  stop_loss: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  expected_move_min_pct: number;
+  expected_move_max_pct: number;
+  expected_duration_min_minutes: number;
+  expected_duration_max_minutes: number;
+  components: Record<string, number>;
+  metrics: Record<string, any>;
+  btc_context: Record<string, any>;
+  note?: string;
+};
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
 
 async function api<T>(path: string): Promise<T> {
@@ -167,23 +197,18 @@ export async function getNews(symbol: string): Promise<Record<string, any>> {
   return api<Record<string, any>>(`/api/v1/news/${encodeURIComponent(symbol)}`);
 }
 
-export async function getPrice(symbol: string): Promise<{ symbol: string; price: string }> {
-  return api<{ symbol: string; price: string }>(`/api/v1/market/price/${encodeURIComponent(symbol)}`);
+export async function getPrice(symbol: string): Promise<{ symbol: string; price: string; source?: string }> {
+  return api<{ symbol: string; price: string; source?: string }>(`/api/v1/market/price/${encodeURIComponent(symbol)}`);
+}
+
+export async function getLiveAnalysis(symbol: string): Promise<LiveAnalysis> {
+  return api<LiveAnalysis>(`/api/v1/analysis/${encodeURIComponent(symbol)}`);
 }
 
 export async function getCandles(symbol: string, interval = "15m", limit = 96): Promise<Candle[]> {
-  const allowed = new Set(["5m", "15m", "1h", "4h"]);
+  const allowed = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "1d"]);
   const safeInterval = allowed.has(interval) ? interval : "15m";
   const safeSymbol = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
-  const response = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(safeSymbol)}&interval=${safeInterval}&limit=${Math.max(20, Math.min(limit, 200))}`, { cache: "no-store" });
-  if (!response.ok) throw new Error("No se pudieron leer las velas públicas");
-  const rows = await response.json() as any[];
-  return rows.map((row) => ({
-    time: Number(row[0]),
-    open: Number(row[1]),
-    high: Number(row[2]),
-    low: Number(row[3]),
-    close: Number(row[4]),
-    volume: Number(row[7]),
-  }));
+  const payload = await api<{ candles: Candle[] }>(`/api/v1/market/candles/${encodeURIComponent(safeSymbol)}?interval=${encodeURIComponent(safeInterval)}&limit=${Math.max(20, Math.min(limit, 300))}`);
+  return payload.candles ?? [];
 }
