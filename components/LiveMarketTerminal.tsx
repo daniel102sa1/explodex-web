@@ -2,374 +2,107 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, RadioTower, Search, ShieldAlert, TimerReset, Zap } from "lucide-react";
-import { getLiveAnalysis, type LiveAnalysis } from "@/lib/api";
+import { Activity, ArrowDownRight, ArrowUpRight, Bell, BookOpen, CheckCircle2, CircleDashed, ExternalLink, Gauge, RadioTower, Search, ShieldAlert, Target, TimerReset, Zap } from "lucide-react";
+import LiveCandleChart from "@/components/LiveCandleChart";
+import { getAlerts, getLiveAnalysis, type AlertItem, type LiveAnalysis } from "@/lib/api";
 
-type LiveTicker = {
-  symbol: string;
-  price: number;
-  change24h: number;
-  quoteVolume: number;
-  bid: number;
-  ask: number;
-  flash: "up" | "down" | "flat";
-  flashAt: number;
-};
+type LiveTicker = { symbol: string; price: number; change24h: number; quoteVolume: number; bid: number; ask: number; flash: "up" | "down" | "flat"; flashAt: number };
+type BookRow = { price: number; qty: number };
+type TapeRow = { id: string; price: number; qty: number; side: "BUY" | "SELL"; at: number };
 
-const OKX_FALLBACK_SYMBOLS = [
-  "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "SUI",
-  "LTC", "BCH", "TRX", "DOT", "NEAR", "APT", "ARB", "OP", "ATOM", "FIL",
-  "ZEC", "PEPE", "WLD", "AAVE", "ENA", "PENGU", "FET", "ICP", "TON", "ETC",
-];
+type MarketSource = "BINANCE_WS" | "OKX_WS" | "CONECTANDO";
 
-function fmtPrice(value: number) {
-  if (!Number.isFinite(value)) return "—";
-  if (value >= 1000) return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  if (value >= 1) return value.toLocaleString(undefined, { maximumFractionDigits: 5 });
-  return value.toLocaleString(undefined, { maximumSignificantDigits: 7 });
-}
+const OKX_SYMBOLS = ["BTC","ETH","SOL","BNB","XRP","DOGE","ADA","AVAX","LINK","SUI","LTC","BCH","TRX","DOT","NEAR","APT","ARB","OP","ATOM","FIL","ZEC","PEPE","WLD","AAVE","ENA","PENGU","FET","ICP","TON","ETC"];
 
-function fmtMoney(value: number) {
-  if (!Number.isFinite(value)) return "—";
-  if (Math.abs(value) >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
-  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
-  return `$${value.toFixed(0)}`;
-}
-
-function fmtLevel(value?: number) {
+function fmt(value?: number | null) {
   if (value == null || !Number.isFinite(Number(value))) return "—";
-  return fmtPrice(Number(value));
+  const n = Number(value);
+  if (Math.abs(n) >= 1000) return n.toLocaleString(undefined,{maximumFractionDigits:2});
+  if (Math.abs(n) >= 1) return n.toLocaleString(undefined,{maximumFractionDigits:6});
+  return n.toLocaleString(undefined,{maximumSignificantDigits:8});
+}
+function money(value?: number | null) { const n=Number(value??0); if(!Number.isFinite(n)) return "—"; if(Math.abs(n)>=1e9)return `$${(n/1e9).toFixed(2)}B`; if(Math.abs(n)>=1e6)return `$${(n/1e6).toFixed(2)}M`; if(Math.abs(n)>=1e3)return `$${(n/1e3).toFixed(1)}K`; return `$${n.toFixed(0)}`; }
+function pct(value?: number | null) { if(value==null||!Number.isFinite(Number(value)))return "—"; const n=Number(value); return `${n>=0?"+":""}${n.toFixed(2)}%`; }
+function phaseEs(value?: string) { const map:Record<string,string>={SIN_DATOS:"SIN DATOS",SIN_SETUP:"SIN SETUP",VIGILAR:"VIGILAR",PREACTIVACION:"PREACTIVACIÓN",VIGILAR_CONFIRMACION:"FALTA CONFIRMACIÓN",ACTIVADO:"ACTIVADO",ESPERAR_RETEST:"ESPERAR RETEST",VIGILAR_CONFLICTOS:"CONFLICTOS"}; return map[String(value??"").toUpperCase()]??String(value??"—"); }
+function typeEs(value?: string) { const map:Record<string,string>={IMPULSO_LONG:"IMPULSO LONG",IMPULSO_SHORT:"IMPULSO SHORT",REBOTE_LONG:"REBOTE LONG",RECHAZO_SHORT:"RECHAZO SHORT",SIN_SETUP:"SIN SETUP"}; return map[String(value??"").toUpperCase()]??String(value??"—"); }
+function duration(min?:number,max?:number){const f=(n:number)=>n>=60?`${(n/60).toFixed(n%60===0?0:1)} h`:`${n} min`;return min&&max?`${f(min)} – ${f(max)}`:"—";}
+
+function setupConditions(a: LiveAnalysis) {
+  const p=a.prediction; const m=a.metrics??{}; const s=p?.sequence??{}; if(!p)return [];
+  const d=p.direction;
+  return [
+    {label:"Compresión",ready:Boolean(s.compressed)},
+    {label:d==="LONG"?"Mínimos crecientes":"Máximos decrecientes",ready:d==="LONG"?Boolean(s.higher_lows):Boolean(s.lower_highs)},
+    {label:"Volumen acelera",ready:Number(s.volume_acceleration??m.volume_acceleration??0)>=1.15},
+    {label:"OI acompaña",ready:Math.abs(Number(m.oi_change_pct??0))>=.2||Math.abs(Number(a.coinglass?.open_interest?.change_15m_pct??0))>=.2},
+    {label:"Futuros",ready:d==="LONG"?Number(m.futures_delta_ratio??0)>.04:Number(m.futures_delta_ratio??0)<-.04},
+    {label:"Spot",ready:d==="LONG"?Number(m.spot_delta_ratio??0)>.03:Number(m.spot_delta_ratio??0)<-.03},
+    {label:"Order book",ready:d==="LONG"?Number(m.order_book_imbalance??0)>.04:Number(m.order_book_imbalance??0)<-.04},
+    {label:"BTC compatible",ready:d==="LONG"?m.btc_trend!=="BEARISH":m.btc_trend!=="BULLISH"},
+    {label:"Trigger",ready:Boolean(p.trigger_hit)&&!Boolean(s.chase_risk)},
+  ];
 }
 
-function durationText(min?: number, max?: number) {
-  if (!min || !max) return "—";
-  const unit = (m: number) => (m >= 60 ? `${(m / 60).toFixed(m % 60 === 0 ? 0 : 1)} h` : `${m} min`);
-  return `${unit(min)} – ${unit(max)}`;
-}
+export default function LiveMarketTerminal(){
+  const [rows,setRows]=useState<LiveTicker[]>([]); const dataRef=useRef(new Map<string,LiveTicker>());
+  const [source,setSource]=useState<MarketSource>("CONECTANDO"); const [connected,setConnected]=useState(false);
+  const [query,setQuery]=useState(""); const [sort,setSort]=useState<"volume"|"gainers"|"losers">("volume"); const [selected,setSelected]=useState("BTCUSDT");
+  const [analysis,setAnalysis]=useState<LiveAnalysis|null>(null); const [analysisError,setAnalysisError]=useState<string|null>(null);
+  const [bids,setBids]=useState<BookRow[]>([]); const [asks,setAsks]=useState<BookRow[]>([]); const [tape,setTape]=useState<TapeRow[]>([]); const [microSource,setMicroSource]=useState("CONECTANDO");
+  const [alerts,setAlerts]=useState<AlertItem[]>([]);
 
-function phaseText(value?: string) {
-  const map: Record<string, string> = {
-    SIN_DATOS: "SIN DATOS",
-    SIN_SETUP: "SIN SETUP",
-    VIGILAR: "VIGILAR",
-    PREACTIVACION: "PREACTIVACIÓN",
-    VIGILAR_CONFIRMACION: "FALTA CONFIRMACIÓN",
-    ACTIVADO: "ACTIVADO",
-    ESPERAR_RETEST: "ESPERAR RETEST",
-    VIGILAR_CONFLICTOS: "CONFLICTOS",
-  };
-  return map[String(value ?? "").toUpperCase()] ?? String(value ?? "—");
-}
+  useEffect(()=>{
+    let disposed=false; let ws:WebSocket|null=null; let gotBinance=false;
+    const render=setInterval(()=>!disposed&&setRows(Array.from(dataRef.current.values())),250);
+    const put=(x:Omit<LiveTicker,"flash"|"flashAt">)=>{const prev=dataRef.current.get(x.symbol); const flash=!prev?"flat":x.price>prev.price?"up":x.price<prev.price?"down":"flat"; dataRef.current.set(x.symbol,{...x,flash,flashAt:flash==="flat"?prev?.flashAt??0:Date.now()});};
+    const okx=()=>{try{ws?.close()}catch{}; setSource("OKX_WS"); ws=new WebSocket("wss://ws.okx.com:8443/ws/v5/public"); ws.onopen=()=>{setConnected(true);ws?.send(JSON.stringify({op:"subscribe",args:OKX_SYMBOLS.map(c=>({channel:"tickers",instId:`${c}-USDT-SWAP`}))}))}; ws.onmessage=e=>{try{const p=JSON.parse(e.data);for(const i of p?.data??[]){const price=Number(i.last??0);if(!price)continue;const base=String(i.instId).split("-")[0];const open=Number(i.open24h??0);put({symbol:`${base}USDT`,price,change24h:open?((price-open)/open)*100:0,quoteVolume:Number(i.volCcy24h??0)*price,bid:Number(i.bidPx??0),ask:Number(i.askPx??0)})}}catch{}}; ws.onclose=()=>setConnected(false);};
+    ws=new WebSocket("wss://fstream.binance.com/ws/!ticker@arr"); setSource("CONECTANDO"); ws.onopen=()=>{setConnected(true);setSource("BINANCE_WS")}; ws.onmessage=e=>{gotBinance=true;try{const p=JSON.parse(e.data);if(!Array.isArray(p))return;for(const i of p){const symbol=String(i.s??"");const price=Number(i.c??0);if(!symbol.endsWith("USDT")||symbol.includes("_")||!price)continue;put({symbol,price,change24h:Number(i.P??0),quoteVolume:Number(i.q??0),bid:Number(i.b??0),ask:Number(i.a??0)})}}catch{}}; ws.onerror=()=>{if(!gotBinance)okx()}; ws.onclose=()=>{setConnected(false);if(!disposed&&!gotBinance)okx()}; const fallback=setTimeout(()=>{if(!gotBinance)okx()},5000);
+    return()=>{disposed=true;clearInterval(render);clearTimeout(fallback);try{ws?.close()}catch{}};
+  },[]);
 
-function typeText(value?: string) {
-  const map: Record<string, string> = {
-    IMPULSO_LONG: "IMPULSO LONG",
-    IMPULSO_SHORT: "IMPULSO SHORT",
-    REBOTE_LONG: "REBOTE LONG",
-    RECHAZO_SHORT: "RECHAZO / SHORT",
-    SIN_SETUP: "SIN SETUP",
-  };
-  return map[String(value ?? "").toUpperCase()] ?? String(value ?? "—");
-}
+  useEffect(()=>{
+    let cancelled=false; async function load(){try{const a=await getLiveAnalysis(selected);if(!cancelled){setAnalysis(a);setAnalysisError(null)}}catch(e){if(!cancelled)setAnalysisError(e instanceof Error?e.message:"Error de análisis")}}
+    load(); const timer=setInterval(load,20_000); return()=>{cancelled=true;clearInterval(timer)};
+  },[selected]);
 
-export default function LiveMarketTerminal() {
-  const [rows, setRows] = useState<LiveTicker[]>([]);
-  const [source, setSource] = useState<"BINANCE_WS" | "OKX_WS" | "CONECTANDO">("CONECTANDO");
-  const [connected, setConnected] = useState(false);
-  const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState("BTCUSDT");
-  const [analysis, setAnalysis] = useState<LiveAnalysis | null>(null);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [analysisLoading, setAnalysisLoading] = useState(false);
-  const [sort, setSort] = useState<"volume" | "gainers" | "losers">("volume");
-  const dataRef = useRef<Map<string, LiveTicker>>(new Map());
-  const socketRef = useRef<WebSocket | null>(null);
-  const receivedBinanceRef = useRef(false);
+  useEffect(()=>{let cancel=false;async function load(){try{const x=await getAlerts();if(!cancel)setAlerts(x.slice(-12).reverse())}catch{}}load();const t=setInterval(load,5000);return()=>{cancel=true;clearInterval(t)}},[]);
 
-  useEffect(() => {
-    let disposed = false;
-    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  useEffect(()=>{
+    let disposed=false; let ws:WebSocket|null=null; let gotBinance=false; setBids([]);setAsks([]);setTape([]);setMicroSource("CONECTANDO");
+    const pushTape=(row:TapeRow)=>setTape(cur=>[row,...cur].slice(0,30));
+    const connectOkx=()=>{try{ws?.close()}catch{};const base=selected.replace(/USDT$/,'');setMicroSource("OKX");ws=new WebSocket("wss://ws.okx.com:8443/ws/v5/public");ws.onopen=()=>ws?.send(JSON.stringify({op:"subscribe",args:[{channel:"books5",instId:`${base}-USDT-SWAP`},{channel:"trades",instId:`${base}-USDT-SWAP`}]}));ws.onmessage=e=>{try{const p=JSON.parse(e.data);if(p?.arg?.channel==="books5"){const d=p.data?.[0];setBids((d?.bids??[]).map((r:any)=>({price:Number(r[0]),qty:Number(r[1])})).slice(0,8));setAsks((d?.asks??[]).map((r:any)=>({price:Number(r[0]),qty:Number(r[1])})).slice(0,8));}else if(p?.arg?.channel==="trades"){for(const r of p.data??[])pushTape({id:`${r.tradeId}-${r.ts}`,price:Number(r.px),qty:Number(r.sz),side:String(r.side).toUpperCase()==="BUY"?"BUY":"SELL",at:Number(r.ts)})}}catch{}};};
+    const stream=`${selected.toLowerCase()}@depth20@100ms/${selected.toLowerCase()}@aggTrade`;ws=new WebSocket(`wss://fstream.binance.com/stream?streams=${stream}`);setMicroSource("BINANCE");ws.onmessage=e=>{gotBinance=true;try{const msg=JSON.parse(e.data);const d=msg.data??{};if(Array.isArray(d.b)||Array.isArray(d.a)){if(d.b)setBids(d.b.slice(0,8).map((r:any)=>({price:Number(r[0]),qty:Number(r[1])})));if(d.a)setAsks(d.a.slice(0,8).map((r:any)=>({price:Number(r[0]),qty:Number(r[1])})));}else if(d.e==="aggTrade"){pushTape({id:String(d.a??`${d.T}-${d.p}`),price:Number(d.p),qty:Number(d.q),side:d.m?"SELL":"BUY",at:Number(d.T)})}}catch{}};ws.onerror=()=>{if(!gotBinance)connectOkx()};const fb=setTimeout(()=>{if(!gotBinance)connectOkx()},4500);return()=>{disposed=true;clearTimeout(fb);try{ws?.close()}catch{}};
+  },[selected]);
 
-    const renderTimer = setInterval(() => {
-      if (!disposed) setRows(Array.from(dataRef.current.values()));
-    }, 300);
+  const visible=useMemo(()=>{const q=query.trim().toUpperCase();const list=rows.filter(r=>!q||r.symbol.includes(q));if(sort==="gainers")list.sort((a,b)=>b.change24h-a.change24h);else if(sort==="losers")list.sort((a,b)=>a.change24h-b.change24h);else list.sort((a,b)=>b.quoteVolume-a.quoteVolume);return list.slice(0,80)},[rows,query,sort]);
+  const prediction=analysis?.prediction; const conditions=analysis?setupConditions(analysis):[]; const ready=conditions.filter(x=>x.ready).length; const selectedTicker=dataRef.current.get(selected);
+  const bidQty=bids.reduce((a,b)=>a+b.qty,0), askQty=asks.reduce((a,b)=>a+b.qty,0); const imbalance=(bidQty+askQty)>0?(bidQty-askQty)/(bidQty+askQty)*100:0;
 
-    function updateTicker(next: Omit<LiveTicker, "flash" | "flashAt">) {
-      const prev = dataRef.current.get(next.symbol);
-      const now = Date.now();
-      const flash = !prev ? "flat" : next.price > prev.price ? "up" : next.price < prev.price ? "down" : prev.flash;
-      dataRef.current.set(next.symbol, {
-        ...next,
-        flash,
-        flashAt: flash === "flat" ? prev?.flashAt ?? 0 : now,
-      });
-    }
+  return <div className="grid gap-3 xl:grid-cols-[320px_minmax(0,1fr)_360px]">
+    <aside className="terminal-panel overflow-hidden xl:h-[calc(100vh-150px)]">
+      <div className="border-b border-slate-800 p-3"><div className="flex items-center justify-between"><div className="flex items-center gap-2 text-sm font-black text-white"><RadioTower size={15} className="text-emerald-400"/> Mercado</div><span className={`status-pill ${connected?"status-ready":"status-watch"}`}>{source.replace("_WS","")}</span></div><label className="mt-3 flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2"><Search size={14} className="text-slate-500"/><input className="w-full bg-transparent text-xs text-white outline-none" placeholder="BTC, ENA, PENGU..." value={query} onChange={e=>setQuery(e.target.value)}/></label><div className="mt-2 grid grid-cols-3 gap-1">{(["volume","gainers","losers"] as const).map(x=><button key={x} onClick={()=>setSort(x)} className={`rounded-lg border px-2 py-1.5 text-[10px] font-bold ${sort===x?"border-emerald-500/30 bg-emerald-500/10 text-emerald-200":"border-slate-800 text-slate-500"}`}>{x==="volume"?"Volumen":x==="gainers"?"Suben":"Bajan"}</button>)}</div></div>
+      <div className="max-h-[570px] overflow-auto"><table className="w-full text-xs"><thead className="sticky top-0 bg-[#07111d] text-[9px] uppercase tracking-[.1em] text-slate-600"><tr><th className="px-3 py-2 text-left">Par</th><th className="px-3 py-2 text-right">Precio</th><th className="px-3 py-2 text-right">24h</th></tr></thead><tbody>{visible.map(r=><tr key={r.symbol} onClick={()=>setSelected(r.symbol)} className={`cursor-pointer border-t border-slate-900 ${selected===r.symbol?"bg-emerald-500/[.07]":"hover:bg-slate-900/55"}`}><td className="px-3 py-2.5 font-black text-slate-200">{r.symbol}</td><td className={`mono-number px-3 py-2.5 text-right font-bold ${Date.now()-r.flashAt<700?(r.flash==="up"?"price-flash-up text-emerald-300":"price-flash-down text-rose-300"):"text-white"}`}>{fmt(r.price)}</td><td className={`px-3 py-2.5 text-right font-bold ${r.change24h>=0?"text-emerald-400":"text-rose-400"}`}>{pct(r.change24h)}</td></tr>)}</tbody></table></div>
+    </aside>
 
-    function connectOkx() {
-      if (disposed) return;
-      try { socketRef.current?.close(); } catch {}
-      setSource("OKX_WS");
-      setConnected(false);
-      const ws = new WebSocket("wss://ws.okx.com:8443/ws/v5/public");
-      socketRef.current = ws;
-      ws.onopen = () => {
-        if (disposed) return;
-        setConnected(true);
-        ws.send(JSON.stringify({
-          op: "subscribe",
-          args: OKX_FALLBACK_SYMBOLS.map((coin) => ({ channel: "tickers", instId: `${coin}-USDT-SWAP` })),
-        }));
-      };
-      ws.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          for (const item of payload?.data ?? []) {
-            const instId = String(item.instId ?? "");
-            if (!instId.endsWith("-USDT-SWAP")) continue;
-            const symbol = instId.replace("-USDT-SWAP", "USDT").replaceAll("-", "");
-            const price = Number(item.last ?? 0);
-            const open24h = Number(item.open24h ?? 0);
-            const bid = Number(item.bidPx ?? 0);
-            const ask = Number(item.askPx ?? 0);
-            const quoteVolume = Number(item.volCcy24h ?? 0) * price;
-            if (!price) continue;
-            updateTicker({
-              symbol,
-              price,
-              change24h: open24h ? ((price - open24h) / open24h) * 100 : 0,
-              quoteVolume,
-              bid,
-              ask,
-            });
-          }
-        } catch {}
-      };
-      ws.onerror = () => setConnected(false);
-      ws.onclose = () => setConnected(false);
-    }
+    <main className="min-w-0 space-y-3">
+      <section className="terminal-panel overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3"><div><div className="flex items-center gap-2"><h1 className="text-xl font-black text-white">{selected}</h1>{prediction&&<span className={`status-pill ${prediction.direction==="LONG"?"status-long":"status-short"}`}>{typeEs(prediction.type)}</span>}{prediction&&<span className={`status-pill ${prediction.phase==="ACTIVADO"?"status-ready":prediction.phase==="PREACTIVACION"?"status-watch":"status-neutral"}`}>{phaseEs(prediction.phase)}</span>}</div><div className="mt-1 text-[11px] text-slate-500">Precio vivo · estructura + flujo + derivados + CoinGlass</div></div><div className="text-right"><div className="mono-number text-2xl font-black text-white">{fmt(selectedTicker?.price??analysis?.current_price)}</div><div className={`text-xs font-bold ${(selectedTicker?.change24h??0)>=0?"text-emerald-400":"text-rose-400"}`}>{pct(selectedTicker?.change24h)}</div></div></div><div className="p-3"><LiveCandleChart symbol={selected}/></div></section>
 
-    function connectBinance() {
-      setSource("CONECTANDO");
-      const ws = new WebSocket("wss://fstream.binance.com/ws/!ticker@arr");
-      socketRef.current = ws;
-      ws.onopen = () => {
-        if (disposed) return;
-        setConnected(true);
-        setSource("BINANCE_WS");
-      };
-      ws.onmessage = (event) => {
-        receivedBinanceRef.current = true;
-        try {
-          const payload = JSON.parse(event.data);
-          if (!Array.isArray(payload)) return;
-          for (const item of payload) {
-            const symbol = String(item.s ?? "");
-            if (!symbol.endsWith("USDT") || symbol.includes("_")) continue;
-            const price = Number(item.c ?? 0);
-            if (!price) continue;
-            updateTicker({
-              symbol,
-              price,
-              change24h: Number(item.P ?? 0),
-              quoteVolume: Number(item.q ?? 0),
-              bid: Number(item.b ?? 0),
-              ask: Number(item.a ?? 0),
-            });
-          }
-        } catch {}
-      };
-      ws.onerror = () => {
-        if (!receivedBinanceRef.current) connectOkx();
-      };
-      ws.onclose = () => {
-        setConnected(false);
-        if (!disposed && !receivedBinanceRef.current) connectOkx();
-      };
-      fallbackTimer = setTimeout(() => {
-        if (!receivedBinanceRef.current) connectOkx();
-      }, 6000);
-    }
-
-    connectBinance();
-
-    return () => {
-      disposed = true;
-      clearInterval(renderTimer);
-      if (fallbackTimer) clearTimeout(fallbackTimer);
-      try { socketRef.current?.close(); } catch {}
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadPrediction(showLoading = false) {
-      if (showLoading) setAnalysisLoading(true);
-      try {
-        const value = await getLiveAnalysis(selected);
-        if (!cancelled) {
-          setAnalysis(value);
-          setAnalysisError(null);
-        }
-      } catch (error) {
-        if (!cancelled) setAnalysisError(error instanceof Error ? error.message : "No se pudo cargar la predicción");
-      } finally {
-        if (!cancelled) setAnalysisLoading(false);
-      }
-    }
-    loadPrediction(true);
-    const timer = setInterval(() => loadPrediction(false), 30_000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [selected]);
-
-  const visible = useMemo(() => {
-    const q = query.trim().toUpperCase();
-    const filtered = rows.filter((row) => !q || row.symbol.includes(q));
-    const copy = [...filtered];
-    if (sort === "gainers") copy.sort((a, b) => b.change24h - a.change24h);
-    else if (sort === "losers") copy.sort((a, b) => a.change24h - b.change24h);
-    else copy.sort((a, b) => b.quoteVolume - a.quoteVolume);
-    return copy.slice(0, 100);
-  }, [rows, query, sort]);
-
-  const prediction = analysis?.prediction;
-
-  return (
-    <div className="grid gap-5 xl:grid-cols-[1.45fr_.75fr]">
-      <section className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-950/70">
-        <div className="border-b border-slate-800 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-black text-white"><RadioTower size={18} className="text-emerald-400"/> Mercado en tiempo real</div>
-              <div className="mt-1 text-xs text-slate-500">Los precios cambian por WebSocket; no necesitas recargar la página.</div>
-            </div>
-            <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-black ${connected ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-amber-500/30 bg-amber-500/10 text-amber-200"}`}>
-              <span className={`h-2 w-2 rounded-full ${connected ? "animate-pulse bg-emerald-400" : "bg-amber-400"}`}/>
-              {connected ? `${source} CONECTADO` : "CONECTANDO"}
-            </div>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <label className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2">
-              <Search size={15} className="text-slate-500"/>
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar BTC, ENA, PENGU..." className="w-full bg-transparent text-sm text-white outline-none placeholder:text-slate-600"/>
-            </label>
-            {(["volume", "gainers", "losers"] as const).map((value) => (
-              <button key={value} onClick={() => setSort(value)} className={`rounded-xl border px-3 py-2 text-xs font-bold ${sort === value ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-slate-800 bg-slate-900 text-slate-400"}`}>
-                {value === "volume" ? "Mayor volumen" : value === "gainers" ? "Más suben" : "Más bajan"}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="max-h-[720px] overflow-auto">
-          <table className="min-w-full text-left text-sm">
-            <thead className="sticky top-0 z-10 border-b border-slate-800 bg-slate-950 text-xs uppercase tracking-[0.12em] text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Moneda</th>
-                <th className="px-4 py-3 text-right">Precio</th>
-                <th className="px-4 py-3 text-right">24h</th>
-                <th className="px-4 py-3 text-right">Volumen</th>
-                <th className="px-4 py-3 text-right">Spread</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((row) => {
-                const spreadBps = row.bid > 0 && row.ask > 0 ? ((row.ask - row.bid) / ((row.ask + row.bid) / 2)) * 10_000 : 0;
-                const freshFlash = Date.now() - row.flashAt < 700;
-                return (
-                  <tr key={row.symbol} onClick={() => setSelected(row.symbol)} className={`cursor-pointer border-b border-slate-900 transition ${selected === row.symbol ? "bg-emerald-500/10" : "hover:bg-slate-900/60"}`}>
-                    <td className="px-4 py-3 font-black text-white">{row.symbol}</td>
-                    <td className={`px-4 py-3 text-right font-mono font-black transition ${freshFlash && row.flash === "up" ? "bg-emerald-500/15 text-emerald-300" : freshFlash && row.flash === "down" ? "bg-rose-500/15 text-rose-300" : "text-slate-100"}`}>{fmtPrice(row.price)}</td>
-                    <td className={`px-4 py-3 text-right font-bold ${row.change24h >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{row.change24h >= 0 ? "+" : ""}{row.change24h.toFixed(2)}%</td>
-                    <td className="px-4 py-3 text-right text-slate-400">{fmtMoney(row.quoteVolume)}</td>
-                    <td className="px-4 py-3 text-right text-slate-500">{spreadBps ? `${spreadBps.toFixed(2)} bps` : "—"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {!visible.length && <div className="p-10 text-center text-sm text-slate-500">Esperando datos del mercado...</div>}
-        </div>
+      <section className="grid gap-3 lg:grid-cols-2">
+        <div className="terminal-panel p-4"><div className="mb-3 flex items-center justify-between"><div className="flex items-center gap-2 text-sm font-black text-white"><BookOpen size={15} className="text-cyan-300"/> Libro de órdenes</div><div className={`text-[10px] font-bold ${imbalance>5?"text-emerald-300":imbalance<-5?"text-rose-300":"text-slate-500"}`}>Imbalance {pct(imbalance)} · {microSource}</div></div><div className="space-y-1">{[...asks].reverse().map((r,i)=><Book key={`a${i}`} row={r} side="SELL" max={Math.max(...asks.map(x=>x.qty),1)}/>)}<div className="my-2 flex items-center justify-between border-y border-slate-800 py-2"><span className="text-[10px] text-slate-500">MID</span><span className="mono-number font-black text-white">{fmt(selectedTicker?.price??analysis?.current_price)}</span></div>{bids.map((r,i)=><Book key={`b${i}`} row={r} side="BUY" max={Math.max(...bids.map(x=>x.qty),1)}/>)}</div></div>
+        <div className="terminal-panel p-4"><div className="mb-3 flex items-center justify-between"><div className="flex items-center gap-2 text-sm font-black text-white"><Activity size={15} className="text-violet-300"/> Tape</div><span className="text-[10px] text-slate-600">trades agresivos</span></div><div className="max-h-[315px] space-y-1 overflow-auto">{tape.length?tape.map(t=><div key={t.id} className="grid grid-cols-[58px_1fr_1fr] items-center rounded-lg px-2 py-1.5 text-[11px] hover:bg-slate-900/55"><span className={t.side==="BUY"?"font-black text-emerald-400":"font-black text-rose-400"}>{t.side==="BUY"?"COMPRA":"VENTA"}</span><span className="mono-number text-right text-slate-200">{fmt(t.price)}</span><span className="mono-number text-right text-slate-500">{fmt(t.qty)}</span></div>):<div className="py-10 text-center text-xs text-slate-600">Esperando operaciones...</div>}</div></div>
       </section>
+    </main>
 
-      <aside className="xl:sticky xl:top-24 xl:self-start">
-        <section className="rounded-3xl border border-violet-500/20 bg-violet-500/5 p-5">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-xs font-bold uppercase tracking-[0.16em] text-violet-300">Predictor previo</div>
-              <h2 className="mt-1 text-2xl font-black text-white">{selected}</h2>
-            </div>
-            <Link href={`/coin/${selected}`} className="rounded-xl border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300 hover:text-white">Detalle</Link>
-          </div>
+    <aside className="space-y-3 xl:h-[calc(100vh-150px)] xl:overflow-auto">
+      <section className="terminal-panel p-4">{analysis&&prediction?<><div className="flex items-start justify-between gap-3"><div><div className="text-[10px] font-black uppercase tracking-[.16em] text-violet-300">Predictor previo</div><div className="mt-1 text-xl font-black text-white">{prediction.title??typeEs(prediction.type)}</div></div><Link href={`/coin/${selected}`} className="rounded-lg border border-slate-800 p-2 text-slate-500 hover:text-white"><ExternalLink size={14}/></Link></div><div className="mt-4 grid grid-cols-3 gap-2"><Mini label="Preparación" value={`${prediction.preactivation_score.toFixed(1)}`} accent/><Mini label="Setup" value={analysis.setup_score.toFixed(1)}/><Mini label="Riesgo" value={analysis.risk_score.toFixed(1)}/></div><div className={`mt-3 rounded-xl border p-3 ${analysis.state==="READY"&&prediction.phase==="ACTIVADO"?"border-emerald-500/30 bg-emerald-500/[.07]":"border-amber-500/20 bg-amber-500/[.04]"}`}><div className="text-xs font-black text-white">{analysis.state==="READY"&&prediction.phase==="ACTIVADO"?"READY · ENTRADA HABILITADA":"NO ENTRAR TODAVÍA"}</div><div className="mt-1 text-[11px] leading-5 text-slate-400">{analysis.state==="READY"&&prediction.phase==="ACTIVADO"?"El trigger activó y el plan sigue vigente.":prediction.management?.before_trigger??"Esperar la secuencia."}</div></div><div className="mt-3 grid grid-cols-2 gap-2"><Plan label="Trigger" value={prediction.trigger_price}/><Plan label="Entrada" value={`${fmt(prediction.entry_low)}–${fmt(prediction.entry_high)}`}/><Plan label="Stop" value={prediction.stop_loss} danger/><Plan label="TP1" value={prediction.tp1} good/><Plan label="TP2" value={prediction.tp2} good/><Plan label="TP3" value={prediction.tp3} good/></div><div className="mt-3 grid grid-cols-2 gap-2"><Mini label="Duración" value={duration(prediction.expected_duration_min_minutes,prediction.expected_duration_max_minutes)}/><Mini label="Time stop" value={prediction.time_stop_minutes?`${prediction.time_stop_minutes} min`:"—"}/></div><div className="mt-4"><div className="mb-2 flex items-center justify-between text-[10px] font-black uppercase tracking-[.12em] text-slate-500"><span>Condiciones</span><span className="text-emerald-300">{ready}/{conditions.length}</span></div><div className="grid grid-cols-2 gap-1.5">{conditions.map(c=><div key={c.label} className={`flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[10px] ${c.ready?"border-emerald-500/15 bg-emerald-500/[.04] text-emerald-200":"border-slate-800 text-slate-500"}`}>{c.ready?<CheckCircle2 size={12}/>:<CircleDashed size={12}/>} {c.label}</div>)}</div></div></>:<div className="py-10 text-center text-xs text-slate-500">{analysisError??"Calculando predicción..."}</div>}</section>
 
-          {analysisLoading && !analysis ? <div className="mt-6 text-sm text-slate-400">Calculando estructura, flujo, OI y CoinGlass...</div> : analysisError && !analysis ? <div className="mt-6 rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-sm text-rose-200">{analysisError}</div> : analysis && prediction ? (
-            <>
-              <div className="mt-5 grid grid-cols-2 gap-3">
-                <Info label="Patrón" value={typeText(prediction.type)} />
-                <Info label="Fase" value={phaseText(prediction.phase)} strong={prediction.phase === "ACTIVADO"} />
-                <Info label="Preparación" value={`${prediction.preactivation_score.toFixed(1)}/100`} />
-                <Info label="Magnitud" value={prediction.magnitude ?? "—"} />
-              </div>
+      <section className="terminal-panel p-4"><div className="mb-3 flex items-center gap-2 text-sm font-black text-white"><Gauge size={15} className="text-cyan-300"/> Flujo y derivados</div>{analysis?<div className="grid grid-cols-2 gap-2"><Mini label="OI CoinGlass" value={money(analysis.coinglass?.open_interest?.open_interest_usd)}/><Mini label="OI 15m" value={pct(analysis.coinglass?.open_interest?.change_15m_pct)}/><Mini label="Futuros" value={pct(Number(analysis.metrics?.futures_delta_ratio??0)*100)}/><Mini label="Spot" value={pct(Number(analysis.metrics?.spot_delta_ratio??0)*100)}/><Mini label="Taker" value={analysis.coinglass?.taker?.available?`${Number(analysis.coinglass?.taker?.buy_sell_ratio??1).toFixed(2)}x`:"—"}/><Mini label="Funding" value={pct(analysis.coinglass?.funding?.median_rate_pct)}/></div>:null}</section>
 
-              <div className={`mt-4 rounded-2xl border p-4 ${prediction.phase === "ACTIVADO" ? "border-emerald-500/30 bg-emerald-500/10" : prediction.phase === "PREACTIVACION" ? "border-amber-500/30 bg-amber-500/10" : "border-slate-800 bg-slate-950/40"}`}>
-                <div className="flex items-center gap-2 font-black text-white"><Zap size={17}/> {prediction.title ?? typeText(prediction.type)}</div>
-                <div className="mt-2 text-xs leading-5 text-slate-400">El score de preparación no es una probabilidad de ganar. La entrada solo se habilita cuando la secuencia se activa y el precio no está perseguido.</div>
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <Level label="Trigger" value={prediction.trigger_price} />
-                <Level label="Invalidación" value={prediction.invalidation_price} danger />
-                <Level label="Entrada baja" value={prediction.entry_low} />
-                <Level label="Entrada alta" value={prediction.entry_high} />
-                <Level label="Stop loss" value={prediction.stop_loss} danger />
-                <Level label="TP1" value={prediction.tp1} good />
-                <Level label="TP2" value={prediction.tp2} good />
-                <Level label="TP3 / runner" value={prediction.tp3} good />
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <Info label="Duración estimada" value={durationText(prediction.expected_duration_min_minutes, prediction.expected_duration_max_minutes)} />
-                <Info label="Time stop" value={prediction.time_stop_minutes ? `${prediction.time_stop_minutes} min` : "—"} />
-              </div>
-
-              <div className="mt-5">
-                <div className="flex items-center gap-2 text-sm font-black text-emerald-300"><Activity size={16}/> Confirmaciones</div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {(prediction.confirmations ?? []).length ? prediction.confirmations!.map((item) => <span key={item} className="rounded-full border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1 text-[11px] text-emerald-200">{item}</span>) : <span className="text-xs text-slate-500">Aún no hay suficientes confirmaciones.</span>}
-                </div>
-              </div>
-
-              {!!(prediction.conflicts ?? []).length && <div className="mt-5">
-                <div className="flex items-center gap-2 text-sm font-black text-rose-300"><ShieldAlert size={16}/> Conflictos</div>
-                <div className="mt-2 flex flex-wrap gap-2">{prediction.conflicts!.map((item) => <span key={item} className="rounded-full border border-rose-500/20 bg-rose-500/5 px-2.5 py-1 text-[11px] text-rose-200">{item}</span>)}</div>
-              </div>}
-
-              <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
-                <div className="flex items-center gap-2 text-sm font-black text-white"><TimerReset size={16}/> Plan de gestión</div>
-                <div className="mt-3 space-y-2 text-xs leading-5 text-slate-400">
-                  <p><b className="text-slate-200">Antes del trigger:</b> {prediction.management?.before_trigger ?? "No entrar."}</p>
-                  <p><b className="text-slate-200">Después:</b> {prediction.management?.after_trigger ?? "Esperar confirmación."}</p>
-                  <p><b className="text-slate-200">TP1:</b> {prediction.management?.tp1 ?? "Proteger."}</p>
-                  <p><b className="text-slate-200">TP2:</b> {prediction.management?.tp2 ?? "Tomar beneficio principal."}</p>
-                  <p><b className="text-slate-200">TP3:</b> {prediction.management?.tp3 ?? "Runner opcional."}</p>
-                  <p><b className="text-slate-200">Tiempo:</b> {prediction.management?.time_stop ?? "Reevaluar si no hay seguimiento."}</p>
-                </div>
-              </div>
-            </>
-          ) : <div className="mt-6 text-sm text-slate-500">Selecciona una moneda para calcular el plan.</div>}
-        </section>
-      </aside>
-    </div>
-  );
+      <section className="terminal-panel p-4"><div className="mb-3 flex items-center gap-2 text-sm font-black text-white"><Bell size={15} className="text-amber-300"/> Eventos recientes</div><div className="space-y-2">{alerts.slice(0,6).map(a=><div key={a.id} className="rounded-xl border border-slate-800 bg-slate-950/45 p-2.5"><div className="flex items-center justify-between gap-2"><span className={`text-[10px] font-black ${a.severity==="READY"||a.severity==="ENTRY"?"text-emerald-300":a.severity==="EXIT"?"text-rose-300":"text-amber-200"}`}>{a.severity}</span><span className="text-[9px] text-slate-600">{new Date(a.created_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</span></div><div className="mt-1 text-[11px] font-bold text-slate-200">{a.title}</div></div>)}{!alerts.length&&<div className="py-5 text-center text-xs text-slate-600">Sin eventos nuevos.</div>}</div></section>
+    </aside>
+  </div>;
 }
 
-function Info({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
-  return <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3"><div className="text-[11px] uppercase tracking-[0.12em] text-slate-500">{label}</div><div className={`mt-1 text-sm font-black ${strong ? "text-emerald-300" : "text-white"}`}>{value}</div></div>;
-}
-
-function Level({ label, value, danger = false, good = false }: { label: string; value?: number; danger?: boolean; good?: boolean }) {
-  return <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3"><div className="text-[11px] text-slate-500">{label}</div><div className={`mt-1 font-mono text-sm font-black ${danger ? "text-rose-300" : good ? "text-emerald-300" : "text-white"}`}>{fmtLevel(value)}</div></div>;
-}
+function Mini({label,value,accent=false}:{label:string;value:string;accent?:boolean}){return <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-2.5"><div className="text-[9px] uppercase tracking-[.1em] text-slate-600">{label}</div><div className={`mt-1 text-xs font-black ${accent?"text-cyan-300":"text-slate-100"}`}>{value}</div></div>}
+function Plan({label,value,danger=false,good=false}:{label:string;value:number|string|undefined;danger?:boolean;good?:boolean}){return <div className="rounded-xl border border-slate-800 bg-slate-950/55 p-2.5"><div className="text-[9px] text-slate-600">{label}</div><div className={`mono-number mt-1 text-xs font-black ${danger?"text-rose-300":good?"text-emerald-300":"text-white"}`}>{typeof value==="number"?fmt(value):value??"—"}</div></div>}
+function Book({row,side,max}:{row:BookRow;side:"BUY"|"SELL";max:number}){const w=Math.max(3,(row.qty/max)*100);return <div className="relative grid grid-cols-2 overflow-hidden rounded-md px-2 py-1 text-[10px]"><div className={`absolute inset-y-0 ${side==="BUY"?"left-0 bg-emerald-500/[.08]":"right-0 bg-rose-500/[.08]"}`} style={{width:`${w}%`}}/><span className={`relative mono-number font-bold ${side==="BUY"?"text-emerald-300":"text-rose-300"}`}>{fmt(row.price)}</span><span className="relative mono-number text-right text-slate-500">{fmt(row.qty)}</span></div>}
