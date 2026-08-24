@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowDownRight, ArrowUpRight, Filter, Search } from "lucide-react";
+import ScannerProgress from "@/components/ScannerProgress";
 import { getOpportunities, type Opportunity } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -21,15 +22,21 @@ export default async function ScannerPage() {
         <div>
           <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-emerald-400"><Search size={16}/> Scanner completo</div>
           <h1 className="mt-2 text-3xl font-black text-white">Ranking del mercado</h1>
-          <p className="mt-2 text-sm text-slate-400">Ordenado por score contextual, riesgo y estado actual.</p>
+          <p className="mt-2 text-sm text-slate-400">Binance Futures en vivo: universo, monedas analizadas, resultados recientes y ranking final.</p>
         </div>
         <div className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs text-slate-400"><Filter size={15}/> {items.length} señales visibles</div>
       </div>
 
+      <ScannerProgress />
+
       {!data ? (
-        <div className="mt-8 rounded-2xl border border-rose-500/30 bg-rose-500/5 p-5 text-rose-200">No se pudo cargar el scanner.</div>
+        <div className="mt-8 rounded-2xl border border-rose-500/30 bg-rose-500/5 p-5 text-rose-200">No se pudo cargar el ranking almacenado.</div>
       ) : (
         <div className="mt-8 overflow-hidden rounded-3xl border border-slate-800 bg-slate-950/60">
+          <div className="border-b border-slate-800 px-4 py-3">
+            <div className="font-bold text-white">Ranking de señales almacenadas</div>
+            <div className="mt-1 text-xs text-slate-500">Toca cualquier moneda para abrir su análisis completo.</div>
+          </div>
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead className="border-b border-slate-800 text-xs uppercase tracking-[0.12em] text-slate-500">
@@ -42,7 +49,7 @@ export default async function ScannerPage() {
                   const risk = item.contextual_risk_score ?? item.risk_score;
                   return (
                     <tr key={item.id} className="border-b border-slate-900 last:border-0 hover:bg-slate-900/50">
-                      <td className="px-4 py-4 font-black text-white"><Link href={`/?symbol=${item.symbol}`}>{item.symbol}</Link></td>
+                      <td className="px-4 py-4 font-black text-white"><Link className="hover:text-emerald-300" href={`/coin/${item.symbol}`}>{item.symbol}</Link></td>
                       <td className={`px-4 py-4 font-bold ${isLong ? "text-emerald-400" : "text-rose-400"}`}><span className="inline-flex items-center gap-1">{isLong ? <ArrowUpRight size={15}/> : <ArrowDownRight size={15}/>} {item.direction}</span></td>
                       <td className="px-4 py-4 text-slate-200">{item.label ?? "—"} {item.tier ?? ""}</td>
                       <td className="px-4 py-4 font-mono font-bold text-white">{score.toFixed(1)}</td>
@@ -56,7 +63,7 @@ export default async function ScannerPage() {
               </tbody>
             </table>
           </div>
-          {!items.length && <div className="p-8 text-center text-slate-500">Aún no hay señales almacenadas.</div>}
+          {!items.length && <div className="p-8 text-center text-slate-500">Aún no hay señales almacenadas. El panel superior seguirá mostrando las monedas que va revisando.</div>}
         </div>
       )}
     </main>
