@@ -143,6 +143,7 @@ export type HealthStatus = {
   scheduler_enabled?: boolean;
   market_data_source?: string;
   provider_warning?: string | null;
+  prediction_engine?: string;
   coinglass?: CoinGlassStatus;
 };
 
@@ -191,6 +192,40 @@ export type CoinGlassEnrichment = {
   };
 };
 
+export type PreMovePrediction = {
+  type: "IMPULSO_LONG" | "IMPULSO_SHORT" | "REBOTE_LONG" | "RECHAZO_SHORT" | "SIN_SETUP" | string;
+  magnitude?: "EXPLOSIVO" | "NORMAL" | "REBOTE" | "RECHAZO" | string;
+  direction: "LONG" | "SHORT";
+  phase: "SIN_DATOS" | "SIN_SETUP" | "VIGILAR" | "PREACTIVACION" | "VIGILAR_CONFIRMACION" | "ACTIVADO" | "ESPERAR_RETEST" | "VIGILAR_CONFLICTOS" | string;
+  title?: string;
+  preactivation_score: number;
+  score_is_probability?: boolean;
+  trigger_price?: number;
+  trigger_hit?: boolean;
+  entry_low?: number;
+  entry_high?: number;
+  invalidation_price?: number;
+  stop_loss?: number;
+  tp1?: number;
+  tp2?: number;
+  tp3?: number;
+  expected_duration_min_minutes?: number;
+  expected_duration_max_minutes?: number;
+  time_stop_minutes?: number;
+  management?: {
+    before_trigger?: string;
+    after_trigger?: string;
+    tp1?: string;
+    tp2?: string;
+    tp3?: string;
+    time_stop?: string;
+  };
+  confirmations?: string[];
+  conflicts?: string[];
+  sequence?: Record<string, any>;
+  message?: string;
+};
+
 export type LiveAnalysis = {
   symbol: string;
   source: string;
@@ -198,6 +233,7 @@ export type LiveAnalysis = {
   data_quality: "FULL" | "TRADE_GRADE" | "LIMITED";
   availability: Record<string, boolean>;
   coinglass?: CoinGlassEnrichment;
+  prediction?: PreMovePrediction;
   current_open_interest: number;
   direction: "LONG" | "SHORT";
   state: string;
@@ -210,6 +246,7 @@ export type LiveAnalysis = {
   current_price: number;
   entry_low: number;
   entry_high: number;
+  invalidation_price?: number;
   stop_loss: number;
   tp1: number;
   tp2: number;
@@ -224,6 +261,7 @@ export type LiveAnalysis = {
   risk_policy?: {
     paper_only?: boolean;
     coinglass_required_for_ready?: boolean;
+    prediction_activation_required_for_ready?: boolean;
     score_is_probability?: boolean;
   };
   note?: string;
