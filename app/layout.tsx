@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import AppNav from "@/components/AppNav";
+import GlobalScannerBar from "@/components/GlobalScannerBar";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -12,6 +13,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="es">
       <body>
         <AppNav />
+        <GlobalScannerBar />
         {children}
       </body>
     </html>
