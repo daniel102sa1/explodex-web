@@ -1,4 +1,5 @@
-import { Activity, ArrowDownRight, ArrowUpRight, ShieldAlert } from "lucide-react";
+import Link from "next/link";
+import { Activity, ArrowDownRight, ArrowUpRight, ExternalLink, ShieldAlert } from "lucide-react";
 import type { Opportunity } from "@/lib/api";
 
 function fmt(value?: number | null) {
@@ -26,7 +27,10 @@ export default function OpportunityCard({ item, featured = false }: { item: Oppo
             <span className="rounded-full border border-slate-700 px-2.5 py-1">{item.tier || "SCANNER"}</span>
             <span>{item.label || "—"}</span>
           </div>
-          <h2 className={`${featured ? "text-3xl" : "text-2xl"} mt-3 font-black tracking-tight text-white`}>{item.symbol}</h2>
+          <Link href={`/coin/${item.symbol}`} className="group mt-3 inline-flex items-center gap-2">
+            <h2 className={`${featured ? "text-3xl" : "text-2xl"} font-black tracking-tight text-white group-hover:text-emerald-300`}>{item.symbol}</h2>
+            <ExternalLink size={16} className="text-slate-600 group-hover:text-emerald-400" />
+          </Link>
           <div className={`mt-1 inline-flex items-center gap-1.5 font-bold ${isLong ? "text-emerald-400" : "text-rose-400"}`}>
             {isLong ? <ArrowUpRight size={18} /> : <ArrowDownRight size={18} />}
             {item.direction}
@@ -57,7 +61,7 @@ export default function OpportunityCard({ item, featured = false }: { item: Oppo
       <div className="mt-5 flex flex-wrap items-center gap-3 text-sm">
         <span className="inline-flex items-center gap-1.5 text-slate-300"><Activity size={16} /> Mercado: {item.market_regime || "—"}</span>
         <span className="inline-flex items-center gap-1.5 text-slate-300"><ShieldAlert size={16} /> Prob. histórica: {item.historical_win_rate_pct ?? "sin muestra"}{item.historical_win_rate_pct != null ? "%" : ""}</span>
-        <span className="text-slate-500">No es certeza para la siguiente operación.</span>
+        <Link href={`/coin/${item.symbol}`} className="font-semibold text-emerald-400 hover:text-emerald-300">Ver detalle →</Link>
       </div>
     </article>
   );
