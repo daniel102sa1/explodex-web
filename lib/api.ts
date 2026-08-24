@@ -122,19 +122,81 @@ export type Candle = {
   volume: number;
 };
 
+export type CoinGlassStatus = {
+  enabled: boolean;
+  configured: boolean;
+  base_url?: string;
+  plan?: string;
+  safe_rate_limit_per_minute?: number;
+  requests_last_60s?: number;
+  total_requests_since_boot?: number;
+  total_cache_hits_since_boot?: number;
+  last_ok_at?: string | null;
+  last_http_status?: number | null;
+  last_error?: string | null;
+};
+
+export type CoinGlassEnrichment = {
+  available?: boolean;
+  configured?: boolean;
+  critical_complete?: boolean;
+  errors?: string[];
+  open_interest?: {
+    available?: boolean;
+    open_interest_usd?: number;
+    change_5m_pct?: number;
+    change_15m_pct?: number;
+    change_30m_pct?: number;
+    change_1h_pct?: number;
+    change_4h_pct?: number;
+    change_24h_pct?: number;
+    exchanges?: Array<Record<string, any>>;
+  };
+  taker?: {
+    available?: boolean;
+    buy_ratio_pct?: number;
+    sell_ratio_pct?: number;
+    buy_volume_usd?: number;
+    sell_volume_usd?: number;
+    buy_sell_ratio?: number;
+    exchanges?: Array<Record<string, any>>;
+  };
+  funding?: {
+    available?: boolean;
+    median_rate_pct?: number;
+    max_rate_pct?: number;
+    min_rate_pct?: number;
+    exchanges?: Array<Record<string, any>>;
+  };
+  liquidations?: {
+    available?: boolean;
+    long_1h?: number;
+    short_1h?: number;
+    long_4h?: number;
+    short_4h?: number;
+    total_1h?: number;
+    total_4h?: number;
+    short_minus_long_imbalance_1h?: number;
+    exchanges?: Array<Record<string, any>>;
+  };
+};
+
 export type LiveAnalysis = {
   symbol: string;
   source: string;
   provider_warning?: string | null;
-  data_quality: "FULL" | "LIMITED";
+  data_quality: "FULL" | "TRADE_GRADE" | "LIMITED";
   availability: Record<string, boolean>;
+  coinglass?: CoinGlassEnrichment;
   current_open_interest: number;
   direction: "LONG" | "SHORT";
   state: string;
   setup_score: number;
+  local_setup_score_before_coinglass?: number;
   long_score: number;
   short_score: number;
   risk_score: number;
+  local_risk_score_before_coinglass?: number;
   current_price: number;
   entry_low: number;
   entry_high: number;
@@ -149,6 +211,11 @@ export type LiveAnalysis = {
   components: Record<string, number>;
   metrics: Record<string, any>;
   btc_context: Record<string, any>;
+  risk_policy?: {
+    paper_only?: boolean;
+    coinglass_required_for_ready?: boolean;
+    score_is_probability?: boolean;
+  };
   note?: string;
 };
 
@@ -175,6 +242,14 @@ export async function getPerformance(): Promise<Performance> {
 
 export async function getRuntimeStatus(): Promise<Record<string, any>> {
   return api<Record<string, any>>("/api/v1/runtime/status");
+}
+
+export async function getCoinGlassStatus(probe = false): Promise<CoinGlassStatus> {
+  return api<CoinGlassStatus>(`/api/v1/coinglass/status${probe ? "?probe=true" : ""}`);
+}
+
+export async function getCoinGlass(symbol: string): Promise<CoinGlassEnrichment> {
+  return api<CoinGlassEnrichment>(`/api/v1/coinglass/${encodeURIComponent(symbol)}`);
 }
 
 export async function getPaperOpen(): Promise<PaperTrade[]> {
