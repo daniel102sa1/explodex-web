@@ -4,43 +4,75 @@
 
 :root {
   color-scheme: dark;
+  --bg: #050b12;
+  --panel: #07111d;
+  --panel-2: #0a1523;
+  --line: rgba(71, 85, 105, 0.35);
+  --muted: #6f8299;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 html,
 body {
   margin: 0;
   min-height: 100%;
   background:
-    radial-gradient(circle at top left, rgba(34, 197, 94, 0.08), transparent 26%),
-    radial-gradient(circle at top right, rgba(59, 130, 246, 0.08), transparent 24%),
-    #071018;
-  color: #e5eef7;
+    radial-gradient(circle at 12% -10%, rgba(16, 185, 129, 0.10), transparent 28%),
+    radial-gradient(circle at 88% -8%, rgba(59, 130, 246, 0.08), transparent 25%),
+    linear-gradient(180deg, #061019 0%, #050a11 45%, #050a10 100%);
+  color: #e7eef7;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-body {
-  min-height: 100vh;
+body { min-height: 100vh; }
+button, a { -webkit-tap-highlight-color: transparent; }
+button, input { font: inherit; }
+
+::selection { background: rgba(52, 211, 153, 0.22); color: white; }
+
+.terminal-panel {
+  border: 1px solid rgba(51, 65, 85, 0.72);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(8, 18, 30, .96), rgba(5, 12, 21, .96));
+  box-shadow: 0 18px 55px rgba(0, 0, 0, .22), inset 0 1px 0 rgba(255,255,255,.015);
 }
 
-button,
-a {
-  -webkit-tap-highlight-color: transparent;
-}
-
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #203244;
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
   border-radius: 999px;
+  border: 1px solid rgba(71, 85, 105, .7);
+  padding: .34rem .62rem;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
+.status-long { color: #6ee7b7; border-color: rgba(16,185,129,.3); background: rgba(16,185,129,.07); }
+.status-short { color: #fda4af; border-color: rgba(244,63,94,.3); background: rgba(244,63,94,.07); }
+.status-ready { color: #a7f3d0; border-color: rgba(52,211,153,.38); background: rgba(16,185,129,.12); box-shadow: 0 0 18px rgba(16,185,129,.08); }
+.status-watch { color: #fde68a; border-color: rgba(245,158,11,.32); background: rgba(245,158,11,.08); }
+.status-neutral { color: #a8b8ca; background: rgba(15,23,42,.7); }
 
-::-webkit-scrollbar-track {
-  background: transparent;
+.market-grid-line { border-color: rgba(51,65,85,.42); }
+.mono-number { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+@keyframes priceUpFlash { 0% { background: rgba(16,185,129,.30); } 100% { background: transparent; } }
+@keyframes priceDownFlash { 0% { background: rgba(244,63,94,.28); } 100% { background: transparent; } }
+.price-flash-up { animation: priceUpFlash .65s ease-out; }
+.price-flash-down { animation: priceDownFlash .65s ease-out; }
+
+@keyframes softPulse {
+  0%, 100% { opacity: .72; box-shadow: 0 0 0 0 rgba(52,211,153,.0); }
+  50% { opacity: 1; box-shadow: 0 0 20px 0 rgba(52,211,153,.09); }
 }
+.live-pulse { animation: softPulse 2.2s ease-in-out infinite; }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #203247; border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: #2a4059; }
+::-webkit-scrollbar-track { background: transparent; }
