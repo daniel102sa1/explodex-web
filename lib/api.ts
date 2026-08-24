@@ -136,6 +136,16 @@ export type CoinGlassStatus = {
   last_error?: string | null;
 };
 
+export type HealthStatus = {
+  status: string;
+  database?: boolean;
+  paper_trading_only?: boolean;
+  scheduler_enabled?: boolean;
+  market_data_source?: string;
+  provider_warning?: string | null;
+  coinglass?: CoinGlassStatus;
+};
+
 export type CoinGlassEnrichment = {
   available?: boolean;
   configured?: boolean;
@@ -226,6 +236,10 @@ async function api<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, { cache: "no-store" });
   if (!response.ok) throw new Error(`Backend ${response.status}: ${response.statusText}`);
   return response.json() as Promise<T>;
+}
+
+export async function getHealth(): Promise<HealthStatus> {
+  return api<HealthStatus>("/health");
 }
 
 export async function getOpportunities(): Promise<OpportunityResponse> {
