@@ -4,6 +4,18 @@ import { getMarketContext, getOpportunities, getPerformance, getRuntimeStatus } 
 
 export const dynamic = "force-dynamic";
 
+function marketLabel(value?: string | null) {
+  const map: Record<string, string> = {
+    RISK_OFF: "MERCADO DEFENSIVO",
+    RISK_ON: "MERCADO FAVORABLE",
+    MIXED: "MERCADO MIXTO",
+    BULLISH: "ALCISTA",
+    BEARISH: "BAJISTA",
+    NEUTRAL: "NEUTRAL",
+  };
+  return map[String(value ?? "").toUpperCase()] ?? String(value ?? "Sin datos");
+}
+
 export default async function HomePage() {
   const [opportunitiesResult, marketResult, performanceResult, runtimeResult] = await Promise.allSettled([
     getOpportunities(),
@@ -24,13 +36,16 @@ export default async function HomePage() {
   const strong = opportunities?.groups?.strong ?? [];
   const watch = opportunities?.groups?.watch ?? [];
   const allTradeable = [...elite, ...veryStrong, ...strong];
-  const featured = allTradeable[0] ?? watch[0];
+  const bestTradeable = allTradeable[0] ?? null;
+  const bestWatch = watch[0] ?? null;
+  const featured = bestTradeable ?? bestWatch;
+  const hasTradeable = Boolean(bestTradeable);
 
   return (
     <main className="mx-auto min-h-screen max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <header className="flex flex-col gap-5 border-b border-slate-800 pb-6 md:flex-row md:items-end md:justify-between">
         <div>
-          <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.25em] text-emerald-400"><RadioTower size={17} /> Live scanner</div>
+          <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.25em] text-emerald-400"><RadioTower size={17} /> Scanner en vivo</div>
           <h1 className="mt-2 text-4xl font-black tracking-tight text-white sm:text-5xl">ExplodeX</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-400 sm:text-base">Dashboard de oportunidades tempranas LONG/SHORT con score técnico, contexto de mercado, riesgo y calibración por paper trading.</p>
         </div>
@@ -38,7 +53,7 @@ export default async function HomePage() {
       </header>
 
       <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon={<CircleGauge size={20} />} label="Régimen mercado" value={String(market?.regime ?? "Sin datos")} />
+        <StatCard icon={<CircleGauge size={20} />} label="Régimen mercado" value={marketLabel(market?.regime)} />
         <StatCard icon={<BarChart3 size={20} />} label="Win rate paper" value={performance?.win_rate_pct == null ? "Sin muestra" : `${performance.win_rate_pct}%`} />
         <StatCard icon={<BarChart3 size={20} />} label="PnL paper" value={performance ? `${performance.net_pnl_usdt.toFixed(2)} USDT` : "—"} />
         <StatCard icon={<RadioTower size={20} />} label="Runtime" value={runtime ? "ONLINE" : "SIN CONEXIÓN"} />
@@ -52,14 +67,28 @@ export default async function HomePage() {
       )}
 
       <section className="mt-8">
-        <div className="mb-4 flex items-end justify-between gap-4"><div><div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Prioridad</div><h2 className="mt-1 text-2xl font-black text-white">Mejor oportunidad ahora</h2></div><div className="text-sm text-slate-500">{allTradeable.length} candidatos operables</div></div>
+        <div className="mb-4 flex items-end justify-between gap-4">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Prioridad</div>
+            <h2 className="mt-1 text-2xl font-black text-white">{hasTradeable ? "Mejor oportunidad operable ahora" : bestWatch ? "Mejor observación ahora" : "Sin oportunidad operable"}</h2>
+          </div>
+          <div className={`text-sm font-semibold ${hasTradeable ? "text-emerald-300" : "text-amber-300"}`}>{allTradeable.length} candidatos operables</div>
+        </div>
+
+        {!hasTradeable && bestWatch && (
+          <div className="mb-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-100">
+            <div className="font-black">⚠️ SOLO VIGILAR · NO ENTRAR</div>
+            <div className="mt-1 text-amber-200/75">La moneda destacada todavía está en WATCH. Los niveles son referencia del setup; no se consideran una entrada hasta que el sistema la eleve a READY.</div>
+          </div>
+        )}
+
         {featured ? <OpportunityCard item={featured} featured /> : <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-8 text-center"><div className="text-xl font-black text-white">NO TRADE</div><p className="mt-2 text-sm text-slate-400">El sistema no encontró una oportunidad suficientemente fuerte ahora mismo.</p></div>}
       </section>
 
       <TierSection title="ELITE A+" subtitle="Score contextual más alto y riesgo bajo" items={elite} />
       <TierSection title="MUY FUERTES A" subtitle="Alta prioridad, todavía requiere disciplina de entrada" items={veryStrong} />
       <TierSection title="FUERTES B+" subtitle="Candidatos de trade que deben confirmar" items={strong} />
-      <TierSection title="WATCH" subtitle="Vigilar; todavía no entrar" items={watch} />
+      <TierSection title="WATCH" subtitle="Vigilar únicamente; todavía no entrar" items={watch} />
 
       <footer className="mt-12 border-t border-slate-800 py-7 text-xs leading-5 text-slate-500">Un score 100/100 representa calidad del setup, no una probabilidad de éxito del 100%. La tasa histórica se muestra únicamente cuando exista muestra suficiente de paper trading.</footer>
     </main>
