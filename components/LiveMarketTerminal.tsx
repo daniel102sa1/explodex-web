@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, ArrowDownRight, ArrowUpRight, RadioTower, Search, ShieldAlert, TimerReset, Zap } from "lucide-react";
+import { Activity, RadioTower, Search, ShieldAlert, TimerReset, Zap } from "lucide-react";
 import { getLiveAnalysis, type LiveAnalysis } from "@/lib/api";
 
 type LiveTicker = {
@@ -280,7 +280,7 @@ export default function LiveMarketTerminal() {
                 const spreadBps = row.bid > 0 && row.ask > 0 ? ((row.ask - row.bid) / ((row.ask + row.bid) / 2)) * 10_000 : 0;
                 const freshFlash = Date.now() - row.flashAt < 700;
                 return (
-                  <tr key={row.symbol} onClick={() => setSelected(row.symbol)} className={`cursor-pointer border-b border-slate-900 transition ${selected === row.symbol ? "bg-emerald-500/8" : "hover:bg-slate-900/60"}`}>
+                  <tr key={row.symbol} onClick={() => setSelected(row.symbol)} className={`cursor-pointer border-b border-slate-900 transition ${selected === row.symbol ? "bg-emerald-500/10" : "hover:bg-slate-900/60"}`}>
                     <td className="px-4 py-3 font-black text-white">{row.symbol}</td>
                     <td className={`px-4 py-3 text-right font-mono font-black transition ${freshFlash && row.flash === "up" ? "bg-emerald-500/15 text-emerald-300" : freshFlash && row.flash === "down" ? "bg-rose-500/15 text-rose-300" : "text-slate-100"}`}>{fmtPrice(row.price)}</td>
                     <td className={`px-4 py-3 text-right font-bold ${row.change24h >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{row.change24h >= 0 ? "+" : ""}{row.change24h.toFixed(2)}%</td>
@@ -314,7 +314,7 @@ export default function LiveMarketTerminal() {
                 <Info label="Magnitud" value={prediction.magnitude ?? "—"} />
               </div>
 
-              <div className={`mt-4 rounded-2xl border p-4 ${prediction.phase === "ACTIVADO" ? "border-emerald-500/30 bg-emerald-500/8" : prediction.phase === "PREACTIVACION" ? "border-amber-500/30 bg-amber-500/8" : "border-slate-800 bg-slate-950/40"}`}>
+              <div className={`mt-4 rounded-2xl border p-4 ${prediction.phase === "ACTIVADO" ? "border-emerald-500/30 bg-emerald-500/10" : prediction.phase === "PREACTIVACION" ? "border-amber-500/30 bg-amber-500/10" : "border-slate-800 bg-slate-950/40"}`}>
                 <div className="flex items-center gap-2 font-black text-white"><Zap size={17}/> {prediction.title ?? typeText(prediction.type)}</div>
                 <div className="mt-2 text-xs leading-5 text-slate-400">El score de preparación no es una probabilidad de ganar. La entrada solo se habilita cuando la secuencia se activa y el precio no está perseguido.</div>
               </div>
