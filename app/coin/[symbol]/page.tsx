@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, Newspaper, ShieldAlert, Database, Activity, Gauge, Waves, Users, BookOpen, RadioTower } from "lucide-react";
+import { ArrowLeft, Newspaper, ShieldAlert, Database, Activity, Gauge, Waves, Users, BookOpen, RadioTower, Network, ShieldCheck, TriangleAlert } from "lucide-react";
 import PriceChart from "@/components/PriceChart";
 import { getCandles, getLiveAnalysis, getNews, getPrice } from "@/lib/api";
 
@@ -10,6 +10,15 @@ function fmt(value?: number | null, digits = 8) {
   return Number(value).toLocaleString(undefined, { maximumSignificantDigits: digits });
 }
 
+function money(value?: number | null) {
+  if (value == null || Number.isNaN(Number(value))) return "—";
+  const n = Number(value);
+  if (Math.abs(n) >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`;
+  if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+  if (Math.abs(n) >= 1_000) return `$${(n / 1_000).toFixed(2)}K`;
+  return `$${n.toFixed(2)}`;
+}
+
 function pct(value?: number | null) {
   if (value == null || Number.isNaN(Number(value))) return "—";
   const n = Number(value);
@@ -18,6 +27,10 @@ function pct(value?: number | null) {
 
 function yesNo(value?: boolean) {
   return value ? "Disponible" : "No disponible";
+}
+
+function labelReason(reason: string) {
+  return reason.replaceAll("_", " ");
 }
 
 export default async function CoinPage({ params }: { params: Promise<{ symbol: string }> }) {
@@ -37,7 +50,14 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
   const livePrice = price ? Number(price.price) : analysis?.current_price;
   const metrics = analysis?.metrics ?? {};
   const availability = analysis?.availability ?? {};
+  const cg = analysis?.coinglass ?? {};
+  const cgOi = cg.open_interest ?? {};
+  const cgTaker = cg.taker ?? {};
+  const cgFunding = cg.funding ?? {};
+  const cgLiq = cg.liquidations ?? {};
   const limited = analysis?.data_quality === "LIMITED";
+  const cgConfirmations: string[] = metrics.coinglass_confirmations ?? [];
+  const cgConflicts: string[] = metrics.coinglass_conflicts ?? [];
 
   return (
     <main className="mx-auto min-h-screen max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -51,8 +71,11 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
               {analysis?.source ?? price?.source ?? "SIN FUENTE"}
             </span>
             {analysis && <span className={`rounded-full border px-3 py-1 text-xs font-black ${limited ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-cyan-500/30 bg-cyan-500/10 text-cyan-200"}`}>{analysis.data_quality}</span>}
+            <span className={`rounded-full border px-3 py-1 text-xs font-black ${cg.available ? "border-violet-500/30 bg-violet-500/10 text-violet-200" : "border-slate-700 bg-slate-900 text-slate-400"}`}>
+              CoinGlass {cg.available ? "CONECTADO" : "SIN DATOS"}
+            </span>
           </div>
-          <p className="mt-2 text-sm text-slate-400">Análisis vivo multi-timeframe, flujo, derivados y estructura del setup.</p>
+          <p className="mt-2 text-sm text-slate-400">Análisis vivo multi-timeframe, flujo, derivados y confirmación multi-exchange.</p>
         </div>
         <div className="rounded-2xl border border-slate-800 bg-slate-950/65 px-5 py-4">
           <div className="text-xs uppercase tracking-[0.12em] text-slate-500">Precio actual</div>
@@ -62,7 +85,7 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
 
       {analysis?.provider_warning && (
         <div className="mt-5 rounded-2xl border border-amber-500/25 bg-amber-500/5 p-4 text-sm text-amber-100">
-          Binance principal no está disponible desde el servidor. Se está usando {analysis.source}. Las métricas marcadas como “No disponible” no se inventan ni se estiman como si fueran datos reales.
+          Binance principal no está disponible desde el servidor. Se está usando {analysis.source}. Las métricas que no estén disponibles no se inventan.
         </div>
       )}
 
@@ -71,17 +94,53 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
           <section className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
             <Stat label="Dirección" value={analysis.direction} />
             <Stat label="Estado" value={analysis.state} />
-            <Stat label="Score" value={`${analysis.setup_score.toFixed(1)}/100`} />
-            <Stat label="LONG" value={`${analysis.long_score.toFixed(1)}`} />
-            <Stat label="SHORT" value={`${analysis.short_score.toFixed(1)}`} />
-            <Stat label="Riesgo" value={`${analysis.risk_score.toFixed(1)}/100`} />
+            <Stat label="Score final" value={`${analysis.setup_score.toFixed(1)}/100`} />
+            <Stat label="Score local" value={`${Number(analysis.local_setup_score_before_coinglass ?? analysis.setup_score).toFixed(1)}/100`} />
+            <Stat label="LONG / SHORT" value={`${analysis.long_score.toFixed(1)} / ${analysis.short_score.toFixed(1)}`} />
+            <Stat label="Riesgo final" value={`${analysis.risk_score.toFixed(1)}/100`} />
+          </section>
+
+          <section className="mt-6 rounded-3xl border border-violet-500/20 bg-violet-500/5 p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-violet-200"><Network size={19}/><h2 className="text-xl font-black text-white">Confirmación CoinGlass</h2></div>
+              <div className="text-xs font-bold uppercase tracking-[0.12em] text-slate-400">Multi-exchange · no genera trades por sí sola</div>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <MetricCard icon={<Database size={17}/>} title="OI agregado" value={cgOi.available ? money(cgOi.open_interest_usd) : "No disponible"} sub={`5m ${pct(cgOi.change_5m_pct)} · 15m ${pct(cgOi.change_15m_pct)} · 1h ${pct(cgOi.change_1h_pct)}`} />
+              <MetricCard icon={<Activity size={17}/>} title="Taker agregado" value={cgTaker.available ? `${fmt(cgTaker.buy_sell_ratio, 5)}x` : "No disponible"} sub={cgTaker.available ? `Buy ${pct(cgTaker.buy_ratio_pct)} · Sell ${pct(cgTaker.sell_ratio_pct)}` : "Sin confirmación"} />
+              <MetricCard icon={<Waves size={17}/>} title="Funding agregado" value={cgFunding.available ? pct(cgFunding.median_rate_pct) : "No disponible"} sub={cgFunding.available ? `min ${pct(cgFunding.min_rate_pct)} · max ${pct(cgFunding.max_rate_pct)}` : "Sin datos"} />
+              <MetricCard icon={<Gauge size={17}/>} title="Liquidaciones" value={cgLiq.available ? money(cgLiq.total_1h) : "No disponible"} sub={cgLiq.available ? `Long ${money(cgLiq.long_1h)} · Short ${money(cgLiq.short_1h)}` : "Sin datos"} />
+            </div>
+
+            <div className="mt-5 grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                <div className="flex items-center gap-2 text-sm font-black text-emerald-300"><ShieldCheck size={16}/> Confirmaciones</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {cgConfirmations.length ? cgConfirmations.map((item) => <span key={item} className="rounded-full border border-emerald-500/25 px-3 py-1 text-xs text-emerald-200">{labelReason(item)}</span>) : <span className="text-sm text-slate-500">Sin confirmaciones CoinGlass suficientes.</span>}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4">
+                <div className="flex items-center gap-2 text-sm font-black text-rose-300"><TriangleAlert size={16}/> Conflictos / vetos</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {cgConflicts.length ? cgConflicts.map((item) => <span key={item} className="rounded-full border border-rose-500/25 px-3 py-1 text-xs text-rose-200">{labelReason(item)}</span>) : <span className="text-sm text-slate-500">No hay conflictos fuertes registrados.</span>}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Mini label="Ajuste score CoinGlass" value={`${Number(metrics.coinglass_score_adjustment ?? 0) >= 0 ? "+" : ""}${Number(metrics.coinglass_score_adjustment ?? 0).toFixed(1)}`} />
+              <Mini label="Ajuste riesgo CoinGlass" value={`+${Number(metrics.coinglass_risk_adjustment ?? 0).toFixed(1)}`} />
+              <Mini label="OI 15m CoinGlass" value={pct(metrics.coinglass_oi_change_15m_pct)} />
+              <Mini label="Taker CoinGlass" value={`${fmt(metrics.coinglass_taker_buy_sell_ratio, 5)}x`} />
+            </div>
           </section>
 
           <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <MetricCard icon={<Database size={17}/>} title="Open Interest" value={availability.open_interest_current ? fmt(analysis.current_open_interest) : "No disponible"} sub={availability.open_interest_history ? `Δ OI ${pct(metrics.oi_change_pct)}` : "Histórico OI no disponible"} />
-            <MetricCard icon={<Activity size={17}/>} title="Taker Buy/Sell" value={availability.taker_ratio ? fmt(metrics.taker_avg_3, 5) : "No disponible"} sub={`Último ${fmt(metrics.taker_latest, 5)}`} />
+            <MetricCard icon={<Database size={17}/>} title="Open Interest local" value={availability.open_interest_current ? fmt(analysis.current_open_interest) : "No disponible"} sub={availability.open_interest_history ? `Δ OI ${pct(metrics.oi_change_pct)}` : "Histórico OI no disponible"} />
+            <MetricCard icon={<Activity size={17}/>} title="Taker local" value={availability.taker_ratio ? fmt(metrics.taker_avg_3, 5) : "No disponible"} sub={`Último ${fmt(metrics.taker_latest, 5)}`} />
             <MetricCard icon={<Gauge size={17}/>} title="Volumen relativo" value={`${fmt(metrics.relative_volume, 5)}x`} sub={`Aceleración ${fmt(metrics.volume_acceleration, 5)}x`} />
-            <MetricCard icon={<Waves size={17}/>} title="Funding" value={availability.funding ? pct(Number(metrics.funding_rate ?? 0) * 100) : "No disponible"} sub={`ATR ${pct(metrics.atr_pct)}`} />
+            <MetricCard icon={<Waves size={17}/>} title="Funding local" value={availability.funding ? pct(Number(metrics.funding_rate ?? 0) * 100) : "No disponible"} sub={`ATR ${pct(metrics.atr_pct)}`} />
             <MetricCard icon={<BookOpen size={17}/>} title="Order Book" value={availability.order_book ? pct(Number(metrics.order_book_imbalance ?? 0) * 100) : "No disponible"} sub={`Spread ${fmt(metrics.order_book_spread_bps, 5)} bps`} />
             <MetricCard icon={<RadioTower size={17}/>} title="Flujo futuros" value={availability.futures_flow ? pct(Number(metrics.futures_delta_ratio ?? 0) * 100) : "No disponible"} sub={`B/S ${fmt(metrics.futures_buy_sell_ratio, 5)}`} />
             <MetricCard icon={<RadioTower size={17}/>} title="Flujo spot" value={availability.spot_flow ? pct(Number(metrics.spot_delta_ratio ?? 0) * 100) : "No disponible"} sub={`B/S ${fmt(metrics.spot_buy_sell_ratio, 5)}`} />
@@ -89,7 +148,7 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
           </section>
 
           <section className="mt-6 rounded-3xl border border-slate-800 bg-slate-950/65 p-5">
-            <h2 className="text-lg font-black text-white">Confirmaciones del setup</h2>
+            <h2 className="text-lg font-black text-white">Confirmaciones del setup local</h2>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Mini label="Confirmaciones" value={`${metrics.confirmations ?? 0}/7`} />
               <Mini label="Tendencia 15m" value={metrics.trend_15m ?? "—"} />
@@ -98,7 +157,7 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
             </div>
             {!!metrics.reject_reasons?.length && (
               <div className="mt-4 flex flex-wrap gap-2">
-                {metrics.reject_reasons.map((reason: string) => <span key={reason} className="rounded-full border border-amber-500/25 bg-amber-500/5 px-3 py-1 text-xs text-amber-200">{reason}</span>)}
+                {metrics.reject_reasons.map((reason: string) => <span key={reason} className="rounded-full border border-amber-500/25 bg-amber-500/5 px-3 py-1 text-xs text-amber-200">{labelReason(reason)}</span>)}
               </div>
             )}
           </section>
@@ -137,6 +196,7 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
           <Mini label="TP3" value={fmt(analysis.tp3)}/>
         </div>
         <div className="mt-4 text-sm text-slate-400">Movimiento estimado: {analysis.expected_move_min_pct}% – {analysis.expected_move_max_pct}% · Duración estimada: {analysis.expected_duration_min_minutes}–{analysis.expected_duration_max_minutes} min.</div>
+        <div className="mt-2 text-xs text-slate-500">El score representa calidad del setup; no es una probabilidad garantizada de ganancia.</div>
       </section>}
 
       <section className="mt-8 rounded-3xl border border-slate-800 bg-slate-950/65 p-5">
