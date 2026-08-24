@@ -17,23 +17,16 @@ type AlertItem = {
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
 
 function tone(severity: string) {
-  if (severity === "READY" || severity === "ENTRY") {
-    return { card: "border-emerald-500/35 bg-emerald-500/5", badge: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300", icon: "text-emerald-300" };
-  }
-  if (severity === "ACTIVATED") {
-    return { card: "border-orange-500/35 bg-orange-500/5", badge: "border-orange-500/30 bg-orange-500/10 text-orange-200", icon: "text-orange-300" };
-  }
-  if (severity === "EARLY") {
-    return { card: "border-amber-500/35 bg-amber-500/5", badge: "border-amber-500/30 bg-amber-500/10 text-amber-200", icon: "text-amber-300" };
-  }
-  if (severity === "EXIT" || severity === "STOP") {
-    return { card: "border-rose-500/35 bg-rose-500/5", badge: "border-rose-500/30 bg-rose-500/10 text-rose-300", icon: "text-rose-300" };
-  }
+  if (severity === "READY" || severity === "ENTRY") return { card: "border-emerald-500/35 bg-emerald-500/5", badge: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300", icon: "text-emerald-300" };
+  if (severity === "ACTIVATED") return { card: "border-orange-500/35 bg-orange-500/5", badge: "border-orange-500/30 bg-orange-500/10 text-orange-200", icon: "text-orange-300" };
+  if (severity === "EARLY") return { card: "border-amber-500/35 bg-amber-500/5", badge: "border-amber-500/30 bg-amber-500/10 text-amber-200", icon: "text-amber-300" };
+  if (severity === "EXIT" || severity === "STOP") return { card: "border-rose-500/35 bg-rose-500/5", badge: "border-rose-500/30 bg-rose-500/10 text-rose-300", icon: "text-rose-300" };
   return { card: "border-slate-800 bg-slate-950/65", badge: "border-slate-700 text-slate-400", icon: "text-slate-400" };
 }
 
 function severityEs(value: string) {
-  return { READY: "READY", ENTRY: "ENTRADA", ACTIVATED: "ACTIVADO", EARLY: "PREACTIVACIÓN", EXIT: "SALIDA", STOP: "STOP" }[value] ?? value;
+  const labels: Record<string, string> = { READY: "READY", ENTRY: "ENTRADA", ACTIVATED: "ACTIVADO", EARLY: "PREACTIVACIÓN", EXIT: "SALIDA", STOP: "STOP" };
+  return labels[value] ?? value;
 }
 
 export default function AlertFeed() {
