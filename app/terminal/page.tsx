@@ -1,4 +1,5 @@
 import { RadioTower, Zap } from "lucide-react";
+import LiveChartWorkbench from "@/components/LiveChartWorkbench";
 import LiveMarketTerminal from "@/components/LiveMarketTerminal";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,7 @@ export default function TerminalPage() {
         </div>
         <h1 className="mt-2 text-3xl font-black text-white sm:text-4xl">Mercado vivo + predictor previo</h1>
         <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-400">
-          Precios en tiempo real por WebSocket y análisis de preactivación para impulso LONG/SHORT, rebote y rechazo.
+          Precios y velas en tiempo real por WebSocket, más análisis de preactivación para impulso LONG/SHORT, rebote y rechazo.
           El predictor busca la preparación antes del movimiento; no garantiza que aparezca una vela grande.
         </p>
         <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-100">
@@ -20,6 +21,7 @@ export default function TerminalPage() {
         </div>
       </header>
 
+      <LiveChartWorkbench />
       <LiveMarketTerminal />
     </main>
   );
