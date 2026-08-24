@@ -1,4 +1,5 @@
 import { RadioTower, Zap } from "lucide-react";
+import PreparationMemory from "@/components/PreparationMemory";
 import ScannerLiveBoard from "@/components/ScannerLiveBoard";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +16,7 @@ export default function ScannerPage() {
         <div className="inline-flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/[.05] px-3 py-2 text-[11px] font-bold text-amber-100"><Zap size={14}/> PAPER TRADING · score ≠ probabilidad garantizada</div>
       </header>
       <ScannerLiveBoard />
+      <PreparationMemory />
     </main>
   );
 }
