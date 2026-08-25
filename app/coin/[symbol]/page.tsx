@@ -7,6 +7,7 @@ import ProgressiveThesisMonitor from "@/components/ProgressiveThesisMonitor";
 import ProfessionalCoinWorkspace from "@/components/ProfessionalCoinWorkspace";
 import RiskGuardPanel from "@/components/RiskGuardPanel";
 import TradeSafetyCoach from "@/components/TradeSafetyCoach";
+import TraderConfidenceEngine from "@/components/TraderConfidenceEngine";
 import TraderReadPanel from "@/components/TraderReadPanel";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,7 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
       <PostEntryWatchdog symbol={symbol} />
       <ProgressiveThesisMonitor symbol={symbol} />
       <RiskGuardPanel symbol={symbol} />
+      <TraderConfidenceEngine symbol={symbol} />
       <MultiTimeframeThesisPanel symbol={symbol} />
       <TradeSafetyCoach symbol={symbol} />
       <TraderReadPanel symbol={symbol} />
