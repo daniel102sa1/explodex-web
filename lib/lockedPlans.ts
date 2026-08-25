@@ -20,10 +20,14 @@ export type LockedPlan = {
   initialRiskScore: number;
   enteredAt?: number;
   actualEntryPrice?: number;
+  // Current canonical names used by the /planes board.
   marginUsdt?: number;
   leverage?: number;
   notes?: string;
   lastUpdatedAt?: number;
+  // Backward-compatible aliases used by earlier locked-plan editor builds.
+  marginUsed?: number;
+  note?: string;
 };
 
 export const LOCKED_PLAN_PREFIX = "explodex:locked-plan:";
@@ -32,6 +36,19 @@ export const LOCKED_PLANS_EVENT = "explodex:locked-plans-changed";
 function normalizeSymbol(symbol: string) {
   const upper = symbol.toUpperCase();
   return upper.endsWith("USDT") ? upper : `${upper}USDT`;
+}
+
+function normalizePlan(plan: LockedPlan): LockedPlan {
+  const margin = plan.marginUsdt ?? plan.marginUsed;
+  const notes = plan.notes ?? plan.note;
+  return {
+    ...plan,
+    symbol: normalizeSymbol(plan.symbol),
+    marginUsdt: margin,
+    marginUsed: margin,
+    notes,
+    note: notes,
+  };
 }
 
 export function lockedPlanKey(symbol: string) {
@@ -44,7 +61,7 @@ export function readLockedPlan(symbol: string): LockedPlan | null {
     const raw = window.localStorage.getItem(lockedPlanKey(symbol));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as LockedPlan;
-    return parsed?.symbol ? parsed : null;
+    return parsed?.symbol ? normalizePlan(parsed) : null;
   } catch {
     return null;
   }
@@ -61,7 +78,7 @@ export function readLockedPlans(): LockedPlan[] {
       if (!raw) continue;
       try {
         const parsed = JSON.parse(raw) as LockedPlan;
-        if (parsed?.symbol) plans.push(parsed);
+        if (parsed?.symbol) plans.push(normalizePlan(parsed));
       } catch {}
     }
   } catch {}
@@ -71,9 +88,10 @@ export function readLockedPlans(): LockedPlan[] {
 export function writeLockedPlan(plan: LockedPlan) {
   if (typeof window === "undefined") return;
   try {
-    const enriched = { ...plan, lastUpdatedAt: Date.now() };
+    const normalized = normalizePlan(plan);
+    const enriched = { ...normalized, lastUpdatedAt: Date.now() };
     window.localStorage.setItem(lockedPlanKey(plan.symbol), JSON.stringify(enriched));
-    window.dispatchEvent(new CustomEvent(LOCKED_PLANS_EVENT, { detail: { symbol: plan.symbol, action: "write" } }));
+    window.dispatchEvent(new CustomEvent(LOCKED_PLANS_EVENT, { detail: { symbol: normalized.symbol, action: "write" } }));
   } catch {}
 }
 
