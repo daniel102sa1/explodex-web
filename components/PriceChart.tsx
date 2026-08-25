@@ -11,6 +11,7 @@ export type ChartPlan = {
   tp2?: number;
   tp3?: number;
   ready?: boolean;
+  actualEntry?: number;
 };
 
 function fmt(value: number) {
@@ -112,7 +113,7 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
   let minPrice = marketLow - marketSpan * 0.10;
   let maxPrice = marketHigh + marketSpan * 0.10;
 
-  const nearby = [plan?.trigger, plan?.entryLow, plan?.entryHigh]
+  const nearby = [plan?.trigger, plan?.entryLow, plan?.entryHigh, plan?.actualEntry]
     .filter((v): v is number => Number.isFinite(Number(v)) && Number(v) > 0)
     .filter((v) => v >= marketLow - marketSpan * 0.45 && v <= marketHigh + marketSpan * 0.45);
   if (nearby.length) {
@@ -142,6 +143,7 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
 
   const rawLevels = plan ? [
     { key: "now", label: "AHORA", value: last, stroke: "#f8fafc", dash: "2 4", priority: 100 },
+    { key: "my-entry", label: "MI ENTRADA", value: Number(plan.actualEntry || 0), stroke: "#f472b6", dash: "8 4", priority: 98 },
     { key: "trigger", label: "TRIGGER", value: Number(plan.trigger || 0), stroke: "#a78bfa", dash: "6 5", priority: 90 },
     { key: "invalidation", label: "INVALIDACIÓN", value: Number(plan.invalidation || 0), stroke: "#fb923c", dash: "4 5", priority: 80 },
     { key: "stop", label: "STOP", value: Number(plan.stop || 0), stroke: "#fb7185", priority: 85 },
@@ -182,7 +184,7 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
   const entryStroke = plan?.ready ? "#34d399" : "#a78bfa";
   const entryFill = plan?.ready ? "rgba(52,211,153,.11)" : "rgba(167,139,250,.08)";
   const entryText = plan?.ready ? "#6ee7b7" : "#c4b5fd";
-  const entryLabel = hasEntryZone ? `${plan?.ready ? "ENTRADA READY" : "ENTRADA"} ${fmt(entryMin)} – ${fmt(entryMax)}` : "";
+  const entryLabel = hasEntryZone ? `${plan?.ready ? "ENTRADA READY" : "ENTRADA TEÓRICA"} ${fmt(entryMin)} – ${fmt(entryMax)}` : "";
   const entryOut = hasEntryZone ? entryMax < minPrice ? "down" : entryMin > maxPrice ? "up" : null : null;
 
   const rsiLabel = rsi == null ? "N/D" : rsi >= 70 ? "SOBRECOMPRA" : rsi <= 30 ? "SOBREVENTA" : rsi >= 55 ? "IMPULSO ALCISTA" : rsi <= 45 ? "IMPULSO BAJISTA" : "NEUTRAL";
@@ -199,6 +201,7 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
             <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-cyan-400"/>EMA 9 <b className="font-mono text-cyan-300">{fmt(ema9Now)}</b></span>
             <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-amber-400"/>EMA 21 <b className="font-mono text-amber-300">{fmt(ema21Now)}</b></span>
             <span className={`font-black ${emaBull ? "text-emerald-300" : emaBear ? "text-rose-300" : "text-slate-400"}`}>{bullishCross ? "CRUCE ALCISTA" : bearishCross ? "CRUCE BAJISTA" : emaBull ? "EMA ALCISTA" : emaBear ? "EMA BAJISTA" : "EMA NEUTRAL"} · gap {emaGapPct >= 0 ? "+" : ""}{emaGapPct.toFixed(3)}%</span>
+            {plan?.actualEntry ? <span className="inline-flex items-center gap-1.5 font-black text-pink-300"><span className="h-0.5 w-4 bg-pink-400"/>MI ENTRADA {fmt(plan.actualEntry)}</span> : null}
           </div>
         </div>
         <div className="flex items-center gap-4 text-right">
@@ -207,7 +210,7 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
         </div>
       </div>
 
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full" role="img" aria-label="Gráfico de velas con EMA 9, EMA 21, volumen y plan operativo">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full" role="img" aria-label="Gráfico de velas con EMA, plan operativo y entrada real">
         <rect x={plotRight + 7} y={0} width={railWidth + 8} height={priceHeight + 4} rx="10" fill="rgba(2,6,23,.40)" stroke="rgba(51,65,85,.45)" />
         <text x={railX} y={13} fill="#64748b" fontSize="9" fontWeight="800">NIVELES DEL PLAN</text>
 
@@ -249,10 +252,10 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
           const exactY = clampY(item.actualY);
           const tag = `${item.out === "up" ? "↑ " : item.out === "down" ? "↓ " : ""}${item.label} ${fmt(item.value)}`;
           return <g key={item.key}>
-            {item.visible && <line x1={padLeft} x2={plotRight} y1={item.actualY} y2={item.actualY} stroke={item.stroke} strokeWidth={item.key === "now" ? "1" : "1.15"} strokeDasharray={item.dash || undefined} opacity={item.key === "now" ? ".52" : ".78"} />}
-            <path d={`M ${plotRight} ${exactY} L ${railX-7} ${item.railY}`} fill="none" stroke={item.stroke} strokeWidth="1" opacity=".5" />
-            <circle cx={railX-7} cy={item.railY} r="2.4" fill={item.stroke} />
-            <rect x={railX} y={item.railY-9} width={railWidth-26} height={18} rx="5" fill="rgba(3,7,18,.92)" stroke={item.stroke} strokeOpacity=".4" />
+            {item.visible && <line x1={padLeft} x2={plotRight} y1={item.actualY} y2={item.actualY} stroke={item.stroke} strokeWidth={item.key === "my-entry" ? "2" : item.key === "now" ? "1" : "1.15"} strokeDasharray={item.dash || undefined} opacity={item.key === "my-entry" ? ".98" : item.key === "now" ? ".52" : ".78"} />}
+            <path d={`M ${plotRight} ${exactY} L ${railX-7} ${item.railY}`} fill="none" stroke={item.stroke} strokeWidth={item.key === "my-entry" ? "1.4" : "1"} opacity={item.key === "my-entry" ? ".9" : ".5"} />
+            <circle cx={railX-7} cy={item.railY} r={item.key === "my-entry" ? "3.2" : "2.4"} fill={item.stroke} />
+            <rect x={railX} y={item.railY-9} width={railWidth-26} height={18} rx="5" fill={item.key === "my-entry" ? "rgba(80,7,36,.94)" : "rgba(3,7,18,.92)"} stroke={item.stroke} strokeOpacity={item.key === "my-entry" ? ".9" : ".4"} />
             <text x={railX+7} y={item.railY+3} fill={item.stroke} fontSize="9" fontWeight="800">{tag}</text>
           </g>;
         })}
