@@ -2,12 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, BarChart3, Bell, Bot, Gauge, Layers3, LineChart, Newspaper, RadioTower, WalletCards } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Activity, BarChart3, Bell, Bot, Gauge, Layers3, LineChart, Lock, Newspaper, RadioTower, WalletCards } from "lucide-react";
+import { LOCKED_PLANS_EVENT, readLockedPlans } from "@/lib/lockedPlans";
 
 const items = [
   { href: "/", label: "Inicio", icon: Gauge },
   { href: "/terminal", label: "Terminal", icon: RadioTower },
   { href: "/scanner", label: "Scanner", icon: Activity },
+  { href: "/plans", label: "Planes", icon: Lock },
   { href: "/paper", label: "Paper", icon: WalletCards },
   { href: "/stats", label: "Estadísticas", icon: BarChart3 },
   { href: "/market", label: "Mercado", icon: LineChart },
@@ -18,6 +21,18 @@ const items = [
 
 export default function AppNav() {
   const pathname = usePathname();
+  const [planCount, setPlanCount] = useState(0);
+
+  useEffect(() => {
+    const refresh = () => setPlanCount(readLockedPlans().length);
+    refresh();
+    window.addEventListener("storage", refresh);
+    window.addEventListener(LOCKED_PLANS_EVENT, refresh as EventListener);
+    return () => {
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener(LOCKED_PLANS_EVENT, refresh as EventListener);
+    };
+  }, []);
 
   return (
     <nav className="sticky top-0 z-40 border-b border-slate-800/80 bg-[#071018]/95 shadow-lg shadow-black/10 backdrop-blur-xl">
@@ -45,6 +60,7 @@ export default function AppNav() {
               }`}
             >
               <Icon size={15} /> {label}
+              {href === "/plans" && planCount > 0 && <span className="ml-0.5 rounded-full bg-cyan-400/15 px-1.5 py-0.5 font-mono text-[9px] font-black text-cyan-200">{planCount}</span>}
             </Link>
           );
         })}
