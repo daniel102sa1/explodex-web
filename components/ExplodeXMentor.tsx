@@ -3,15 +3,35 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  BarChart3,
   BrainCircuit,
   CheckCircle2,
   Clock3,
+  Database,
   ShieldAlert,
   Target,
+  TrendingUp,
   XCircle,
   Zap,
 } from "lucide-react";
 import { getLiveAnalysis, type LiveAnalysis } from "@/lib/api";
+
+const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
+
+type EdgeStats = {
+  sample: number;
+  decided: number;
+  wins: number;
+  losses: number;
+  unresolved: number;
+  observed_win_rate_pct: number | null;
+  avg_r: number | null;
+  avg_mfe_pct: number | null;
+  avg_mae_pct: number | null;
+  calibration_status: "CALIBRATED" | "INSUFFICIENT_SAMPLE" | string;
+  minimum_decided_for_probability: number;
+  cohorts?: Array<Record<string, unknown>>;
+};
 
 function fmt(value?: number | null) {
   if (value == null || !Number.isFinite(Number(value))) return "—";
@@ -42,14 +62,24 @@ function labelReason(value: string) {
 export default function ExplodeXMentor({ symbol }: { symbol: string }) {
   const safeSymbol = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
   const [analysis, setAnalysis] = useState<LiveAnalysis | null>(null);
+  const [edge, setEdge] = useState<EdgeStats | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const value = await getLiveAnalysis(safeSymbol);
-        if (!cancelled) { setAnalysis(value); setError(null); }
+        const analysisPromise = getLiveAnalysis(safeSymbol);
+        const edgePromise = BASE_URL
+          ? fetch(`${BASE_URL}/api/v1/predictions/${encodeURIComponent(safeSymbol)}/history?limit=12`, { cache: "no-store" })
+              .then(async (r) => r.ok ? r.json() : null)
+          : Promise.resolve(null);
+        const [value, history] = await Promise.all([analysisPromise, edgePromise]);
+        if (!cancelled) {
+          setAnalysis(value);
+          setEdge(history?.edge ?? null);
+          setError(null);
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "No se pudo cargar el mentor");
       }
@@ -87,7 +117,7 @@ export default function ExplodeXMentor({ symbol }: { symbol: string }) {
     } else if (ready) {
       action = "ENTRADA HABILITADA"; tone = "green";
       headline = `${p.direction} confirmado por las reglas actuales`;
-      explanation = "Trigger activado, dirección alineada y el sistema no detecta riesgo de persecución. Aun así, el stop sigue siendo obligatorio porque no existe certeza.";
+      explanation = "Trigger activado, dirección alineada y sin riesgo de persecución. El stop sigue siendo obligatorio porque ninguna predicción es certeza.";
     } else if (p.phase === "PREACTIVACION" || p.phase === "VIGILAR_CONFIRMACION") {
       action = "VIGILAR DE CERCA"; tone = "amber";
       headline = "El movimiento podría estar preparándose";
@@ -99,7 +129,7 @@ export default function ExplodeXMentor({ symbol }: { symbol: string }) {
     } else if (analysis.state === "NO_TRADE") {
       action = "NO ENTRAR"; tone = "red";
       headline = "La evidencia actual no justifica una operación";
-      explanation = "No hay suficiente ventaja estadística/técnica para asumir riesgo ahora.";
+      explanation = "No hay suficiente ventaja técnica/estadística para asumir riesgo ahora.";
     }
 
     const evidence = [
@@ -111,12 +141,13 @@ export default function ExplodeXMentor({ symbol }: { symbol: string }) {
       { label: `Confirmaciones ${confirmations.length}`, ok: confirmations.length >= 5 },
     ];
 
-    return { action, tone, headline, explanation, conflicts, confirmations, evidence, p, ready };
+    return { action, tone, headline, explanation, conflicts, evidence, p, ready };
   }, [analysis]);
 
   if (error) return <section className="mx-auto mt-6 max-w-[1500px] px-4"><div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-200"><ShieldAlert size={16} className="mr-2 inline"/>Mentor temporalmente no disponible: {error}</div></section>;
   if (!analysis || !view) return <section className="mx-auto mt-6 max-w-[1500px] px-4"><div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4 text-sm text-slate-500">Cargando Mentor ExplodeX…</div></section>;
 
+  const calibrated = edge?.calibration_status === "CALIBRATED" && edge.observed_win_rate_pct != null;
   const toneClass = view.tone === "green" ? "border-emerald-500/30 bg-emerald-500/[.06]" : view.tone === "red" ? "border-rose-500/30 bg-rose-500/[.06]" : view.tone === "violet" ? "border-violet-500/30 bg-violet-500/[.06]" : "border-amber-500/30 bg-amber-500/[.06]";
   const actionClass = view.tone === "green" ? "text-emerald-300" : view.tone === "red" ? "text-rose-300" : view.tone === "violet" ? "text-violet-300" : "text-amber-300";
 
@@ -147,6 +178,22 @@ export default function ExplodeXMentor({ symbol }: { symbol: string }) {
           </div>
         </div>
 
+        <div className="mt-5 rounded-2xl border border-cyan-500/15 bg-cyan-500/[.035] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2"><Database size={16} className="text-cyan-300"/><div><div className="text-sm font-black text-white">Evidencia aprendida · Edge Engine V2</div><div className="text-[10px] text-slate-500">Casos de esta moneda comprobados después del horizonte del setup</div></div></div>
+            <span className={`rounded-full border px-2.5 py-1 text-[9px] font-black ${calibrated ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300" : "border-amber-500/25 bg-amber-500/10 text-amber-200"}`}>{calibrated ? "CALIBRADO" : "NO CALIBRADO"}</span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-6">
+            <Stat label="Muestra" value={String(edge?.sample ?? 0)} />
+            <Stat label="Decididos" value={`${edge?.decided ?? 0}/${edge?.minimum_decided_for_probability ?? 30}`} />
+            <Stat label="Wins / Loss" value={`${edge?.wins ?? 0} / ${edge?.losses ?? 0}`} />
+            <Stat label="Tasa observada" value={calibrated ? `${Number(edge?.observed_win_rate_pct).toFixed(1)}%` : "—"} good={calibrated && Number(edge?.observed_win_rate_pct) >= 55} />
+            <Stat label="R promedio" value={edge?.avg_r == null ? "—" : `${edge.avg_r >= 0 ? "+" : ""}${edge.avg_r.toFixed(2)}R`} good={Number(edge?.avg_r) > 0} />
+            <Stat label="MFE medio" value={edge?.avg_mfe_pct == null ? "—" : `${edge.avg_mfe_pct.toFixed(2)}%`} />
+          </div>
+          <div className="mt-3 flex items-start gap-2 text-[11px] leading-5 text-slate-400"><BarChart3 size={14} className="mt-0.5 shrink-0 text-cyan-300"/>{calibrated ? `Ya hay ${edge?.decided} resultados decididos. Esta tasa es observada en datos propios, no una garantía del siguiente trade.` : `Todavía no hay suficiente muestra para mostrar una probabilidad. Faltan ${Math.max(0, (edge?.minimum_decided_for_probability ?? 30) - (edge?.decided ?? 0))} resultados decididos para la primera calibración.`}</div>
+        </div>
+
         <div className="mt-5 grid gap-4 lg:grid-cols-2">
           <div className="rounded-2xl border border-slate-800/80 bg-slate-950/45 p-4">
             <div className="text-sm font-black text-white">Lo que estoy comprobando</div>
@@ -163,7 +210,7 @@ export default function ExplodeXMentor({ symbol }: { symbol: string }) {
           </div>
         </div>
 
-        <div className="mt-4 text-[11px] text-slate-500">El Mentor explica la decisión del sistema; no reemplaza el stop ni convierte un setup en certeza. Las probabilidades empíricas se mostrarán solo cuando Edge Engine acumule muestra suficiente.</div>
+        <div className="mt-4 flex items-start gap-2 text-[11px] text-slate-500"><TrendingUp size={13} className="mt-0.5 shrink-0"/>El Mentor explica la decisión del sistema y la confronta con resultados propios. Verde significa mejor evidencia según reglas y muestra, nunca certeza.</div>
       </div>
     </section>
   );
@@ -172,3 +219,4 @@ export default function ExplodeXMentor({ symbol }: { symbol: string }) {
 function Box({ label, value, icon, good=false, bad=false }: { label:string; value:string; icon:React.ReactNode; good?:boolean; bad?:boolean }) {
   return <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3"><div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[.08em] text-slate-500">{icon}{label}</div><div className={`mt-1 font-mono text-xs font-black ${good ? "text-emerald-300" : bad ? "text-rose-300" : "text-white"}`}>{value}</div></div>;
 }
+function Stat({ label, value, good=false }: { label:string; value:string; good?:boolean }) { return <div className="rounded-xl border border-slate-800/80 bg-slate-950/45 p-2.5"><div className="text-[9px] uppercase tracking-[.08em] text-slate-600">{label}</div><div className={`mt-1 font-mono text-sm font-black ${good ? "text-emerald-300" : "text-white"}`}>{value}</div></div>; }
