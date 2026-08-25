@@ -24,7 +24,7 @@ function parseReason(value: unknown): Record<string, any> {
   return {};
 }
 
-export default function LiveCandleChart({ symbol, plan }: { symbol: string; plan?: ChartPlan }) {
+export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: string; plan?: ChartPlan; livePrice?: number | null }) {
   const [interval, setIntervalValue] = useState<Interval>("5m");
   const [candles, setCandles] = useState<Candle[]>([]);
   const [source, setSource] = useState("CARGANDO");
@@ -129,7 +129,7 @@ export default function LiveCandleChart({ symbol, plan }: { symbol: string; plan
         </div>
         <div className="flex gap-1">{(["1m", "5m", "15m"] as Interval[]).map((value) => <button key={value} onClick={() => setIntervalValue(value)} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold ${interval === value ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-slate-800 bg-slate-900 text-slate-500"}`}>{value}</button>)}</div>
       </div>
-      <PriceChart candles={candles} plan={plan ?? savedPlan} />
+      <PriceChart candles={candles} plan={plan ?? savedPlan} livePrice={livePrice ?? undefined} />
     </section>
   );
 }
