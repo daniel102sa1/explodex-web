@@ -1,4 +1,5 @@
 import ExplodeXMentor from "@/components/ExplodeXMentor";
+import LockedPlanManager from "@/components/LockedPlanManager";
 import ManualTradeMirror from "@/components/ManualTradeMirror";
 import ProfessionalCoinWorkspace from "@/components/ProfessionalCoinWorkspace";
 import TradeSafetyCoach from "@/components/TradeSafetyCoach";
@@ -11,6 +12,7 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
   return (
     <>
       <ProfessionalCoinWorkspace symbol={symbol} />
+      <LockedPlanManager symbol={symbol} />
       <TradeSafetyCoach symbol={symbol} />
       <TraderReadPanel symbol={symbol} />
       <ExplodeXMentor symbol={symbol} />
