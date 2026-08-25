@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import AppNav from "@/components/AppNav";
+import GlobalPlanAlerts from "@/components/GlobalPlanAlerts";
 import GlobalScannerBar from "@/components/GlobalScannerBar";
 import "./globals.css";
 
@@ -15,6 +16,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <AppNav />
         <GlobalScannerBar />
         {children}
+        <GlobalPlanAlerts />
       </body>
     </html>
   );
