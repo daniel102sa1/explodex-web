@@ -19,6 +19,19 @@ function fmt(value: number) {
   return value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
 }
 
+function emaSeries(values: number[], period: number) {
+  if (!values.length) return [];
+  const alpha = 2 / (period + 1);
+  const out: number[] = [];
+  let current = values[0];
+  out.push(current);
+  for (let i = 1; i < values.length; i++) {
+    current = values[i] * alpha + current * (1 - alpha);
+    out.push(current);
+  }
+  return out;
+}
+
 type RailItem = {
   key: string;
   label: string;
@@ -49,16 +62,27 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
 
   const visible = candles.slice(-96);
   const last = Number(livePrice || visible[visible.length - 1].close);
+  const closes = visible.map((c, index) => index === visible.length - 1 && livePrice ? Number(livePrice) : Number(c.close));
+  const ema9 = emaSeries(closes, 9);
+  const ema21 = emaSeries(closes, 21);
+  const ema9Now = ema9[ema9.length - 1] ?? last;
+  const ema21Now = ema21[ema21.length - 1] ?? last;
+  const emaGapPct = last ? ((ema9Now - ema21Now) / last) * 100 : 0;
+  const emaBull = ema9Now > ema21Now;
+  const emaBear = ema9Now < ema21Now;
+  const previousDiff = ema9.length >= 2 && ema21.length >= 2 ? ema9[ema9.length - 2] - ema21[ema21.length - 2] : 0;
+  const currentDiff = ema9Now - ema21Now;
+  const bullishCross = previousDiff <= 0 && currentDiff > 0;
+  const bearishCross = previousDiff >= 0 && currentDiff < 0;
 
-  // IMPORTANT: scale follows the market, not distant TP levels. This keeps
-  // candles readable. Off-screen plan levels live in the right-side rail.
-  const marketHigh = Math.max(...visible.map((c) => c.high), last);
-  const marketLow = Math.min(...visible.map((c) => c.low), last);
+  // Scale follows the market, not distant TP levels. Nearby EMAs naturally fit
+  // inside the market range and distant targets stay in the right-side rail.
+  const marketHigh = Math.max(...visible.map((c) => c.high), last, ema9Now, ema21Now);
+  const marketLow = Math.min(...visible.map((c) => c.low), last, ema9Now, ema21Now);
   const marketSpan = Math.max(marketHigh - marketLow, Math.abs(marketHigh) * 0.001, 1e-9);
   let minPrice = marketLow - marketSpan * 0.10;
   let maxPrice = marketHigh + marketSpan * 0.10;
 
-  // Pull only nearby trigger/entry into view; never stretch the chart for far TP3.
   const nearby = [plan?.trigger, plan?.entryLow, plan?.entryHigh]
     .filter((v): v is number => Number.isFinite(Number(v)) && Number(v) > 0)
     .filter((v) => v >= marketLow - marketSpan * 0.45 && v <= marketHigh + marketSpan * 0.45);
@@ -75,6 +99,12 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
   const clampY = (y: number) => Math.max(padTop + 9, Math.min(priceHeight - padTop - 9, y));
   const first = visible[0].open;
   const change = first ? ((last - first) / first) * 100 : 0;
+
+  const emaPath = (series: number[]) => series.map((value, index) => {
+    const x = padLeft + slot * index + slot / 2;
+    const y = yPrice(value);
+    return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+  }).join(" ");
 
   const trigger = Number(plan?.trigger || 0);
   const triggerDistancePct = trigger > 0 && last > 0
@@ -96,16 +126,9 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
   const railItems: RailItem[] = rawLevels.map((level) => {
     const actualY = yPrice(level.value);
     const out: RailItem["out"] = level.value > maxPrice ? "up" : level.value < minPrice ? "down" : null;
-    return {
-      ...level,
-      actualY,
-      railY: clampY(actualY),
-      visible: out === null,
-      out,
-    };
+    return { ...level, actualY, railY: clampY(actualY), visible: out === null, out };
   });
 
-  // Avoid overlapping labels in the rail. Lines remain at their exact price.
   const sorted = [...railItems].sort((a, b) => a.railY - b.railY || b.priority - a.priority);
   const minGap = 23;
   for (let i = 1; i < sorted.length; i++) {
@@ -137,8 +160,12 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
     <div className="rounded-2xl border border-slate-800/80 bg-slate-950/40 p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3 text-sm">
         <div>
-          <div className="font-semibold text-slate-300">Velas + volumen + plan</div>
-          <div className="mt-1 text-[11px] text-slate-500">Las etiquetas están fuera de las velas · niveles lejanos no aplastan la escala</div>
+          <div className="font-semibold text-slate-300">Velas + volumen + EMA + plan</div>
+          <div className="mt-1 flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
+            <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-cyan-400"/>EMA 9 <b className="font-mono text-cyan-300">{fmt(ema9Now)}</b></span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-amber-400"/>EMA 21 <b className="font-mono text-amber-300">{fmt(ema21Now)}</b></span>
+            <span className={`font-black ${emaBull ? "text-emerald-300" : emaBear ? "text-rose-300" : "text-slate-400"}`}>{bullishCross ? "CRUCE ALCISTA" : bearishCross ? "CRUCE BAJISTA" : emaBull ? "EMA ALCISTA" : emaBear ? "EMA BAJISTA" : "EMA NEUTRAL"} · gap {emaGapPct >= 0 ? "+" : ""}{emaGapPct.toFixed(3)}%</span>
+          </div>
         </div>
         <div className="flex items-center gap-4 text-right">
           {triggerDistancePct != null && <div><div className="text-[9px] uppercase tracking-[.1em] text-slate-600">Dist. trigger</div><div className={`font-mono text-xs font-black ${triggerDistancePct <= 0 ? "text-emerald-300" : "text-violet-300"}`}>{triggerDistancePct <= 0 ? "TOCADO" : `${triggerDistancePct.toFixed(3)}%`}</div></div>}
@@ -146,7 +173,7 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
         </div>
       </div>
 
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full" role="img" aria-label="Gráfico de velas, volumen y plan operativo con riel lateral de precios">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full" role="img" aria-label="Gráfico de velas con EMA 9, EMA 21, volumen y plan operativo">
         <rect x={plotRight + 7} y={0} width={railWidth + 8} height={priceHeight + 4} rx="10" fill="rgba(2,6,23,.40)" stroke="rgba(51,65,85,.45)" />
         <text x={railX} y={13} fill="#64748b" fontSize="9" fontWeight="800">NIVELES DEL PLAN</text>
 
@@ -162,10 +189,11 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
         {visible.map((candle, index) => {
           const x = padLeft + slot * index + slot / 2;
           const yOpen = yPrice(candle.open);
-          const yClose = yPrice(candle.close);
-          const yHigh = yPrice(candle.high);
-          const yLow = yPrice(candle.low);
-          const bullish = candle.close >= candle.open;
+          const yClose = yPrice(index === visible.length - 1 && livePrice ? Number(livePrice) : candle.close);
+          const yHigh = yPrice(Math.max(candle.high, index === visible.length - 1 && livePrice ? Number(livePrice) : candle.high));
+          const yLow = yPrice(Math.min(candle.low, index === visible.length - 1 && livePrice ? Number(livePrice) : candle.low));
+          const close = index === visible.length - 1 && livePrice ? Number(livePrice) : candle.close;
+          const bullish = close >= candle.open;
           const bodyY = Math.min(yOpen, yClose);
           const bodyH = Math.max(1.5, Math.abs(yClose - yOpen));
           const volH = (candle.volume / maxVolume) * volumeHeight;
@@ -179,6 +207,9 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
             </g>
           );
         })}
+
+        <path d={emaPath(ema21)} fill="none" stroke="#fbbf24" strokeWidth="1.7" opacity=".82" vectorEffect="non-scaling-stroke" />
+        <path d={emaPath(ema9)} fill="none" stroke="#22d3ee" strokeWidth="1.9" opacity=".92" vectorEffect="non-scaling-stroke" />
 
         {sorted.map((item) => {
           const exactY = clampY(item.actualY);
