@@ -26,13 +26,15 @@ export default function AppNav() {
   useEffect(() => {
     const refresh = () => setPlanCount(readLockedPlans().length);
     refresh();
+    const timer = window.setInterval(refresh, 2000);
     window.addEventListener("storage", refresh);
     window.addEventListener(LOCKED_PLANS_EVENT, refresh as EventListener);
     return () => {
+      window.clearInterval(timer);
       window.removeEventListener("storage", refresh);
       window.removeEventListener(LOCKED_PLANS_EVENT, refresh as EventListener);
     };
-  }, []);
+  }, [pathname]);
 
   return (
     <nav className="sticky top-0 z-40 border-b border-slate-800/80 bg-[#071018]/95 shadow-lg shadow-black/10 backdrop-blur-xl">
