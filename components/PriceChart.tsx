@@ -32,6 +32,35 @@ function emaSeries(values: number[], period: number) {
   return out;
 }
 
+function rsi14(values: number[]) {
+  if (values.length < 15) return null;
+  let gains = 0;
+  let losses = 0;
+  for (let i = values.length - 14; i < values.length; i++) {
+    const diff = values[i] - values[i - 1];
+    if (diff > 0) gains += diff;
+    if (diff < 0) losses += Math.abs(diff);
+  }
+  const avgGain = gains / 14;
+  const avgLoss = losses / 14;
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - 100 / (1 + rs);
+}
+
+function macdNow(values: number[]) {
+  if (values.length < 26) return null;
+  const ema12 = emaSeries(values, 12);
+  const ema26 = emaSeries(values, 26);
+  const line = ema12.map((value, index) => value - ema26[index]);
+  const signal = emaSeries(line, 9);
+  const lastLine = line[line.length - 1];
+  const lastSignal = signal[signal.length - 1];
+  const histogram = lastLine - lastSignal;
+  const prevHistogram = line.length >= 2 ? line[line.length - 2] - signal[signal.length - 2] : histogram;
+  return { line: lastLine, signal: lastSignal, histogram, strengthening: Math.abs(histogram) > Math.abs(prevHistogram) };
+}
+
 type RailItem = {
   key: string;
   label: string;
@@ -74,9 +103,9 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
   const currentDiff = ema9Now - ema21Now;
   const bullishCross = previousDiff <= 0 && currentDiff > 0;
   const bearishCross = previousDiff >= 0 && currentDiff < 0;
+  const rsi = rsi14(closes);
+  const macd = macdNow(closes);
 
-  // Scale follows the market, not distant TP levels. Nearby EMAs naturally fit
-  // inside the market range and distant targets stay in the right-side rail.
   const marketHigh = Math.max(...visible.map((c) => c.high), last, ema9Now, ema21Now);
   const marketLow = Math.min(...visible.map((c) => c.low), last, ema9Now, ema21Now);
   const marketSpan = Math.max(marketHigh - marketLow, Math.abs(marketHigh) * 0.001, 1e-9);
@@ -155,6 +184,11 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
   const entryText = plan?.ready ? "#6ee7b7" : "#c4b5fd";
   const entryLabel = hasEntryZone ? `${plan?.ready ? "ENTRADA READY" : "ENTRADA"} ${fmt(entryMin)} – ${fmt(entryMax)}` : "";
   const entryOut = hasEntryZone ? entryMax < minPrice ? "down" : entryMin > maxPrice ? "up" : null : null;
+
+  const rsiLabel = rsi == null ? "N/D" : rsi >= 70 ? "SOBRECOMPRA" : rsi <= 30 ? "SOBREVENTA" : rsi >= 55 ? "IMPULSO ALCISTA" : rsi <= 45 ? "IMPULSO BAJISTA" : "NEUTRAL";
+  const rsiTone = rsi == null ? "text-slate-400" : rsi >= 70 ? "text-amber-300" : rsi <= 30 ? "text-cyan-300" : rsi >= 55 ? "text-emerald-300" : rsi <= 45 ? "text-rose-300" : "text-slate-300";
+  const macdLabel = !macd ? "N/D" : macd.histogram > 0 ? (macd.strengthening ? "ALCISTA · ACELERA" : "ALCISTA") : macd.histogram < 0 ? (macd.strengthening ? "BAJISTA · ACELERA" : "BAJISTA") : "NEUTRAL";
+  const macdTone = !macd ? "text-slate-400" : macd.histogram > 0 ? "text-emerald-300" : macd.histogram < 0 ? "text-rose-300" : "text-slate-300";
 
   return (
     <div className="rounded-2xl border border-slate-800/80 bg-slate-950/40 p-3">
@@ -236,6 +270,21 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
         <span>{visible.length} velas</span>
         <span>High mercado {fmt(marketHigh)}</span>
       </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <IndicatorCard label="RSI 14" value={rsi == null ? "N/D" : rsi.toFixed(1)} status={rsiLabel} toneClass={rsiTone} detail="Contexto de momentum; no habilita entrada por sí solo." />
+        <IndicatorCard label="MACD 12/26/9" value={macd ? macd.histogram.toFixed(6) : "N/D"} status={macdLabel} toneClass={macdTone} detail={macd ? `línea ${macd.line.toFixed(6)} · señal ${macd.signal.toFixed(6)}` : "Muestra insuficiente"} />
+        <IndicatorCard label="EMA 9/21" value={`${fmt(ema9Now)} / ${fmt(ema21Now)}`} status={emaBull ? "ALCISTA" : emaBear ? "BAJISTA" : "NEUTRAL"} toneClass={emaBull ? "text-emerald-300" : emaBear ? "text-rose-300" : "text-slate-300"} detail={`gap ${emaGapPct >= 0 ? "+" : ""}${emaGapPct.toFixed(3)}%`} />
+        <IndicatorCard label="Lectura conjunta" value={plan?.direction ?? "—"} status={(plan?.direction === "LONG" && emaBull && (rsi ?? 50) >= 50 && (macd?.histogram ?? 0) >= 0) || (plan?.direction === "SHORT" && emaBear && (rsi ?? 50) <= 50 && (macd?.histogram ?? 0) <= 0) ? "CONTEXTO ALINEADO" : "MIXTO / SECUNDARIO"} toneClass="text-violet-300" detail="La decisión principal sigue dependiendo de estructura, trigger, flujo, OI, riesgo y casos aprendidos." />
+      </div>
     </div>
   );
+}
+
+function IndicatorCard({ label, value, status, toneClass, detail }: { label: string; value: string; status: string; toneClass: string; detail: string }) {
+  return <div className="rounded-xl border border-slate-800 bg-slate-950/55 p-3">
+    <div className="text-[9px] font-bold uppercase tracking-[.1em] text-slate-600">{label}</div>
+    <div className="mt-1 flex items-end justify-between gap-2"><div className="font-mono text-sm font-black text-white">{value}</div><div className={`text-[9px] font-black ${toneClass}`}>{status}</div></div>
+    <div className="mt-1 text-[9px] leading-4 text-slate-600">{detail}</div>
+  </div>;
 }
