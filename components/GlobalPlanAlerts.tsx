@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, BellRing, ShieldAlert, Target, X } from "lucide-react";
 import { getPrice } from "@/lib/api";
+import { evaluateLockedPlan } from "@/lib/planDecision";
 import { LOCKED_PLANS_EVENT, readLockedPlans, type LockedPlan } from "@/lib/lockedPlans";
 
 type AlertState = {
@@ -14,47 +15,38 @@ type AlertState = {
   signature: string;
 };
 
-function crossed(plan: LockedPlan, price: number, level: number, profit: boolean) {
-  if (!(price > 0 && level > 0)) return false;
-  if (plan.direction === "LONG") return profit ? price >= level : price <= level;
-  return profit ? price <= level : price >= level;
-}
-
 function inspect(plan: LockedPlan, price: number): AlertState | null {
+  const decision = evaluateLockedPlan(plan, price);
   if (!plan.enteredAt || !plan.actualEntryPrice || !price) return null;
-  const entry = Number(plan.actualEntryPrice);
-  const risk = Math.abs(entry - plan.stop);
-  const favorable = plan.direction === "LONG" ? price - entry : entry - price;
-  const r = risk > 0 ? favorable / risk : 0;
-  const maxR = Number(plan.maxRSeen ?? r);
-  const givebackR = Math.max(0, maxR - r);
-  const stopDistancePct = Math.abs(price - plan.stop) / price * 100;
-  const tp1DistancePct = Math.abs(plan.tp1 - price) / price * 100;
-  const ageMinutes = Math.max(0, (Date.now() - plan.enteredAt) / 60000);
 
-  if (crossed(plan, price, plan.stop, false) || crossed(plan, price, plan.invalidation, false)) {
-    return { symbol: plan.symbol, severity: "critical", title: "STOP / INVALIDACIÓN", detail: "La tesis original perdió su nivel de protección. Revisar de inmediato.", signature: `${plan.symbol}:invalidated` };
+  if (decision.level === "CRITICAL") {
+    return {
+      symbol: plan.symbol,
+      severity: "critical",
+      title: decision.label,
+      detail: decision.detail,
+      signature: `${plan.symbol}:critical:${decision.label}:${Math.floor(Date.now() / 600000)}`,
+    };
   }
-  if (ageMinutes >= plan.maxDurationMinutes) {
-    return { symbol: plan.symbol, severity: "critical", title: "DURACIÓN MÁXIMA", detail: `La operación lleva ~${Math.floor(ageMinutes)} min y excedió la duración máxima del plan.`, signature: `${plan.symbol}:max-duration` };
+
+  if (["DEBILITÁNDOSE RÁPIDO", "APALANCAMIENTO EXCESIVO", "TIME STOP", "BAJO PRESIÓN", "STOP MUY CERCA", "GANANCIA DEVUELTA"].includes(decision.label)) {
+    return {
+      symbol: plan.symbol,
+      severity: "warning",
+      title: decision.label,
+      detail: decision.detail,
+      signature: `${plan.symbol}:warning:${decision.label}:${Math.floor(Date.now() / 600000)}`,
+    };
   }
-  if (ageMinutes >= plan.timeStopMinutes && r < 0.5) {
-    return { symbol: plan.symbol, severity: "warning", title: "TIME STOP", detail: `Lleva ~${Math.floor(ageMinutes)} min y todavía no desarrolló 0.5R.`, signature: `${plan.symbol}:time-stop:${Math.floor(ageMinutes / 10)}` };
-  }
-  if (stopDistancePct <= 0.35) {
-    return { symbol: plan.symbol, severity: "critical", title: "STOP MUY CERCA", detail: `Queda aproximadamente ${stopDistancePct.toFixed(2)}% hasta el stop.`, signature: `${plan.symbol}:stop-near` };
-  }
-  if (r <= -0.7) {
-    return { symbol: plan.symbol, severity: "warning", title: "BAJO PRESIÓN", detail: `La operación va ${r.toFixed(2)}R. Revisar riesgo antes de que llegue al stop.`, signature: `${plan.symbol}:pressure` };
-  }
-  if (givebackR >= 0.75 && maxR >= 0.8) {
-    return { symbol: plan.symbol, severity: "warning", title: "GANANCIA DEVUELTA", detail: `Llegó a +${maxR.toFixed(2)}R y devolvió ${givebackR.toFixed(2)}R. Revisar protección.`, signature: `${plan.symbol}:giveback:${Math.floor(givebackR * 4)}` };
-  }
-  if (crossed(plan, price, plan.tp1, true)) {
-    return { symbol: plan.symbol, severity: "positive", title: "TP1 ALCANZADO", detail: "Primer objetivo alcanzado. Revisar protección del resto del plan.", signature: `${plan.symbol}:tp1` };
-  }
-  if (tp1DistancePct <= 0.25 && r > 0) {
-    return { symbol: plan.symbol, severity: "positive", title: "TP1 MUY CERCA", detail: `TP1 está a aproximadamente ${tp1DistancePct.toFixed(2)}%.`, signature: `${plan.symbol}:tp1-near` };
+
+  if (["TP1 · PROTEGER", "TP2 ALCANZADO", "TP3 ALCANZADO", "TP1 CERCA"].includes(decision.label)) {
+    return {
+      symbol: plan.symbol,
+      severity: "positive",
+      title: decision.label,
+      detail: decision.detail,
+      signature: `${plan.symbol}:positive:${decision.label}`,
+    };
   }
   return null;
 }
@@ -97,9 +89,7 @@ export default function GlobalPlanAlerts() {
       seen.current[next.signature] = now;
       setAlert(next);
       if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-        try {
-          new Notification(`${next.symbol} · ${next.title}`, { body: next.detail, tag: next.signature });
-        } catch {}
+        try { new Notification(`${next.symbol} · ${next.title}`, { body: next.detail, tag: next.signature }); } catch {}
       }
     }
     check();
