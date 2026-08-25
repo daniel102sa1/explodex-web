@@ -2,7 +2,28 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowUpRight, CheckCircle2, CircleDashed, Clock3, Database, Gauge, Network, RadioTower, ShieldAlert, Target, TimerReset, Waves, XCircle, Zap } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowLeft,
+  ArrowUpRight,
+  CheckCircle2,
+  CircleDashed,
+  Clock3,
+  Gauge,
+  Network,
+  RadioTower,
+  ShieldAlert,
+  Sparkles,
+  Target,
+  TimerReset,
+  TrendingDown,
+  TrendingUp,
+  Waves,
+  XCircle,
+  Zap,
+} from "lucide-react";
 import LiveCandleChart from "@/components/LiveCandleChart";
 import { getLiveAnalysis, type LiveAnalysis, type PreMovePrediction } from "@/lib/api";
 
@@ -23,10 +44,10 @@ function money(value?: number | null) {
   return `$${n.toFixed(0)}`;
 }
 
-function pct(value?: number | null) {
+function pct(value?: number | null, digits = 2) {
   if (value == null || !Number.isFinite(Number(value))) return "—";
   const n = Number(value);
-  return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+  return `${n >= 0 ? "+" : ""}${n.toFixed(digits)}%`;
 }
 
 function phaseEs(value?: string) {
@@ -59,10 +80,16 @@ function duration(min?: number, max?: number) {
   return min && max ? `${unit(min)} – ${unit(max)}` : "—";
 }
 
-function conditionList(analysis: LiveAnalysis, prediction: PreMovePrediction) {
+function triggerHit(direction: "LONG" | "SHORT", price: number, trigger?: number) {
+  if (!trigger || !price) return false;
+  return direction === "LONG" ? price >= trigger : price <= trigger;
+}
+
+function conditionList(analysis: LiveAnalysis, prediction: PreMovePrediction, price: number) {
   const m = analysis.metrics ?? {};
   const seq = prediction.sequence ?? {};
   const direction = prediction.direction;
+  const liveTrigger = triggerHit(direction, price, prediction.trigger_price);
   return [
     { label: "Volatilidad comprimida", ready: Boolean(seq.compressed), detail: `rVol ${Number(seq.relative_volume ?? m.relative_volume ?? 0).toFixed(2)}x` },
     { label: direction === "LONG" ? "Mínimos crecientes" : "Máximos decrecientes", ready: direction === "LONG" ? Boolean(seq.higher_lows) : Boolean(seq.lower_highs), detail: "presión estructural" },
@@ -72,8 +99,25 @@ function conditionList(analysis: LiveAnalysis, prediction: PreMovePrediction) {
     { label: "Spot confirma", ready: direction === "LONG" ? Number(m.spot_delta_ratio ?? 0) > 0.03 : Number(m.spot_delta_ratio ?? 0) < -0.03, detail: pct(Number(m.spot_delta_ratio ?? 0) * 100) },
     { label: "Libro inclinado", ready: direction === "LONG" ? Number(m.order_book_imbalance ?? 0) > 0.04 : Number(m.order_book_imbalance ?? 0) < -0.04, detail: pct(Number(m.order_book_imbalance ?? 0) * 100) },
     { label: "BTC compatible", ready: direction === "LONG" ? m.btc_trend !== "BEARISH" : m.btc_trend !== "BULLISH", detail: String(m.btc_trend ?? "NEUTRAL") },
-    { label: "Trigger alcanzado", ready: Boolean(prediction.trigger_hit) && !Boolean(seq.chase_risk), detail: prediction.trigger_hit ? (seq.chase_risk ? "demasiado lejos" : "activado") : `esperar ${fmt(prediction.trigger_price)}` },
+    { label: "Trigger en vivo", ready: liveTrigger && !Boolean(seq.chase_risk), detail: liveTrigger ? "precio tocó el nivel" : `esperar ${fmt(prediction.trigger_price)}` },
   ];
+}
+
+type MicroTrade = { at: number; price: number; side: "BUY" | "SELL" | "UNKNOWN" };
+type Pulse = { momentum5: number; momentum15: number; buyPct: number; sellPct: number; trades: number };
+
+function microPulse(rows: MicroTrade[], current: number): Pulse {
+  const now = Date.now();
+  const recent = rows.filter((x) => now - x.at <= 20_000);
+  const p5 = [...recent].reverse().find((x) => now - x.at >= 5_000)?.price ?? recent[0]?.price ?? current;
+  const p15 = [...recent].reverse().find((x) => now - x.at >= 15_000)?.price ?? recent[0]?.price ?? current;
+  const momentum5 = p5 ? ((current - p5) / p5) * 100 : 0;
+  const momentum15 = p15 ? ((current - p15) / p15) * 100 : 0;
+  const sided = recent.filter((x) => x.side !== "UNKNOWN");
+  const buys = sided.filter((x) => x.side === "BUY").length;
+  const sells = sided.filter((x) => x.side === "SELL").length;
+  const total = Math.max(1, buys + sells);
+  return { momentum5, momentum15, buyPct: (buys / total) * 100, sellPct: (sells / total) * 100, trades: recent.length };
 }
 
 export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }) {
@@ -82,7 +126,17 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
   const [error, setError] = useState<string | null>(null);
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const [flash, setFlash] = useState<"up" | "down" | "flat">("flat");
+  const [pulse, setPulse] = useState<Pulse>({ momentum5: 0, momentum15: 0, buyPct: 50, sellPct: 50, trades: 0 });
+  const [lastAnalysisAt, setLastAnalysisAt] = useState<number>(0);
+  const [clock, setClock] = useState(Date.now());
   const lastPrice = useRef<number | null>(null);
+  const trades = useRef<MicroTrade[]>([]);
+  const lastPulsePaint = useRef(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,7 +146,8 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
         if (!cancelled) {
           setAnalysis(value);
           setError(null);
-          if (!livePrice) setLivePrice(value.current_price);
+          setLastAnalysisAt(Date.now());
+          setLivePrice((current) => current ?? value.current_price);
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "No se pudo cargar el análisis");
@@ -107,13 +162,22 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
     let disposed = false;
     let gotBinance = false;
     let socket: WebSocket | null = null;
-    function apply(price: number) {
+
+    function apply(price: number, side: MicroTrade["side"] = "UNKNOWN") {
       if (!price || disposed) return;
       if (lastPrice.current != null) setFlash(price > lastPrice.current ? "up" : price < lastPrice.current ? "down" : "flat");
       lastPrice.current = price;
       setLivePrice(price);
+      const now = Date.now();
+      trades.current.push({ at: now, price, side });
+      trades.current = trades.current.filter((x) => now - x.at <= 25_000).slice(-600);
+      if (now - lastPulsePaint.current >= 250) {
+        lastPulsePaint.current = now;
+        setPulse(microPulse(trades.current, price));
+      }
       setTimeout(() => !disposed && setFlash("flat"), 450);
     }
+
     function connectOkx() {
       try { socket?.close(); } catch {}
       const base = safeSymbol.replace(/USDT$/, "");
@@ -123,25 +187,116 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
         try { const data = JSON.parse(event.data); const p = Number(data?.data?.[0]?.last ?? 0); apply(p); } catch {}
       };
     }
+
     socket = new WebSocket(`wss://fstream.binance.com/ws/${safeSymbol.toLowerCase()}@aggTrade`);
-    socket.onmessage = (event) => { gotBinance = true; try { apply(Number(JSON.parse(event.data)?.p ?? 0)); } catch {} };
+    socket.onmessage = (event) => {
+      gotBinance = true;
+      try {
+        const trade = JSON.parse(event.data);
+        const price = Number(trade?.p ?? 0);
+        // Binance aggTrade: m=true means buyer was maker, therefore aggressive side was SELL.
+        const side: MicroTrade["side"] = trade?.m === true ? "SELL" : trade?.m === false ? "BUY" : "UNKNOWN";
+        apply(price, side);
+      } catch {}
+    };
     socket.onerror = () => { if (!gotBinance) connectOkx(); };
     const fallback = setTimeout(() => { if (!gotBinance) connectOkx(); }, 4500);
     return () => { disposed = true; clearTimeout(fallback); try { socket?.close(); } catch {} };
   }, [safeSymbol]);
 
   const prediction = analysis?.prediction;
-  const conditions = useMemo(() => analysis && prediction ? conditionList(analysis, prediction) : [], [analysis, prediction]);
+  const price = Number(livePrice ?? analysis?.current_price ?? 0);
+  const conditions = useMemo(() => analysis && prediction ? conditionList(analysis, prediction, price) : [], [analysis, prediction, price]);
   const readyCount = conditions.filter((x) => x.ready).length;
   const phase = prediction?.phase ?? "SIN_SETUP";
-  const isReady = analysis?.state === "READY" && phase === "ACTIVADO";
   const isLong = prediction?.direction === "LONG";
+  const directionMatch = Boolean(analysis && prediction && analysis.direction === prediction.direction);
+  const liveTriggerHit = prediction ? triggerHit(prediction.direction, price, prediction.trigger_price) : false;
+  const low = Math.min(Number(prediction?.entry_low || 0), Number(prediction?.entry_high || 0));
+  const high = Math.max(Number(prediction?.entry_low || 0), Number(prediction?.entry_high || 0));
+  const inEntryZone = Boolean(price && low && high && price >= low && price <= high);
+  const invalidation = Number(prediction?.invalidation_price || 0);
+  const invalidated = Boolean(prediction && invalidation && (isLong ? price <= invalidation : price >= invalidation));
+  const chased = Boolean(prediction && liveTriggerHit && !inEntryZone && low && high && (isLong ? price > high : price < low));
+  const backendReady = analysis?.state === "READY" && phase === "ACTIVADO" && directionMatch;
+  const isReady = Boolean(backendReady && liveTriggerHit && inEntryZone && !invalidated && !chased);
+  const triggerDistancePct = prediction?.trigger_price && price
+    ? Math.abs((Number(prediction.trigger_price) - price) / price) * 100
+    : null;
+
+  const alignedMomentum = isLong ? pulse.momentum5 : -pulse.momentum5;
+  const aggressionImbalance = isLong ? pulse.buyPct - pulse.sellPct : pulse.sellPct - pulse.buyPct;
+  const pulseAdjustment = Math.max(-10, Math.min(10, alignedMomentum * 80 + aggressionImbalance * 0.08));
+  const livePreparation = prediction ? Math.max(0, Math.min(100, prediction.preactivation_score + pulseAdjustment)) : 0;
+  const weakening = alignedMomentum < -0.025 || aggressionImbalance < -16;
+  const strengthening = alignedMomentum > 0.025 && aggressionImbalance > 8;
+
+  let liveDecision = "VIGILAR";
+  let liveDecisionTone: "green" | "amber" | "red" | "violet" = "amber";
+  let liveDecisionText = "Esperando que la secuencia gane fuerza.";
+  if (!directionMatch && analysis && prediction) {
+    liveDecision = "CONFLICTO · NO TRADE";
+    liveDecisionTone = "red";
+    liveDecisionText = "El setup técnico y el predictor apuntan a direcciones diferentes.";
+  } else if (invalidated) {
+    liveDecision = "INVALIDADO EN VIVO";
+    liveDecisionTone = "red";
+    liveDecisionText = "El precio cruzó la invalidación estructural. No entrar.";
+  } else if (isReady) {
+    liveDecision = "READY · EN ZONA";
+    liveDecisionTone = "green";
+    liveDecisionText = "Backend READY, trigger tocado y precio todavía dentro de la zona planificada.";
+  } else if (chased) {
+    liveDecision = "ESPERAR RETEST";
+    liveDecisionTone = "violet";
+    liveDecisionText = "El precio ya salió de la zona después del trigger. No perseguir la vela.";
+  } else if (liveTriggerHit && inEntryZone) {
+    liveDecision = "TRIGGER TOCADO · CONFIRMANDO";
+    liveDecisionTone = "violet";
+    liveDecisionText = backendReady ? "Esperando estabilidad dentro de zona." : "El precio activó el nivel; falta confirmación profunda para READY.";
+  } else if (strengthening && triggerDistancePct != null && triggerDistancePct <= 0.35) {
+    liveDecision = "FORTALECIÉNDOSE CERCA DEL TRIGGER";
+    liveDecisionTone = "green";
+    liveDecisionText = "Momentum y agresión reciente acompañan la dirección prevista. Todavía no es entrada.";
+  } else if (weakening) {
+    liveDecision = "PERDIENDO FUERZA";
+    liveDecisionTone = "red";
+    liveDecisionText = "El pulso de trades recientes se está moviendo contra la predicción. Esperar.";
+  } else if (phase === "PREACTIVACION") {
+    liveDecision = "PREACTIVACIÓN · NO ENTRAR";
+    liveDecisionTone = "amber";
+    liveDecisionText = prediction?.management?.before_trigger ?? "Esperar el trigger y las confirmaciones faltantes.";
+  }
+
+  const plan = prediction ? {
+    direction: prediction.direction,
+    trigger: prediction.trigger_price,
+    entryLow: prediction.entry_low,
+    entryHigh: prediction.entry_high,
+    invalidation: prediction.invalidation_price,
+    stop: prediction.stop_loss,
+    tp1: prediction.tp1,
+    tp2: prediction.tp2,
+    tp3: prediction.tp3,
+  } : undefined;
+
+  const analysisAge = lastAnalysisAt ? Math.max(0, Math.floor((clock - lastAnalysisAt) / 1000)) : null;
+  const decisionClasses = liveDecisionTone === "green"
+    ? "border-emerald-500/35 bg-emerald-500/[.08] text-emerald-200"
+    : liveDecisionTone === "red"
+      ? "border-rose-500/35 bg-rose-500/[.07] text-rose-200"
+      : liveDecisionTone === "violet"
+        ? "border-violet-500/30 bg-violet-500/[.07] text-violet-200"
+        : "border-amber-500/30 bg-amber-500/[.06] text-amber-100";
 
   return (
     <main className="mx-auto min-h-screen max-w-[1680px] px-3 py-4 sm:px-5 lg:px-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <Link href="/scanner" className="inline-flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-white"><ArrowLeft size={15}/> Volver</Link>
-        <div className="flex items-center gap-2 text-[11px] text-slate-500"><RadioTower size={14} className="text-emerald-400"/> precio vivo · análisis cada 20 s</div>
+        <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
+          <span className="inline-flex items-center gap-1.5"><RadioTower size={14} className="text-emerald-400"/> precio + trades en tiempo real</span>
+          <span className="inline-flex items-center gap-1.5"><Clock3 size={13}/>{analysisAge == null ? "calculando análisis" : `análisis profundo hace ${analysisAge}s`}</span>
+        </div>
       </div>
 
       <section className="terminal-panel mb-4 overflow-hidden">
@@ -152,20 +307,34 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
             <span className={`status-pill ${isReady ? "status-ready" : phase === "PREACTIVACION" ? "status-watch" : "status-neutral"}`}>{phaseEs(phase)}</span>
             <span className="status-pill status-neutral">{analysis?.source ?? "CARGANDO"}</span>
           </div>
-          <div className={`rounded-2xl border px-5 py-3 transition ${flash === "up" ? "border-emerald-400/50 bg-emerald-500/10" : flash === "down" ? "border-rose-400/50 bg-rose-500/10" : "border-slate-800 bg-slate-950/70"}`}>
-            <div className="text-[10px] font-bold uppercase tracking-[.16em] text-slate-500">Precio en vivo</div>
-            <div className="mt-1 font-mono text-3xl font-black text-white">{fmt(livePrice ?? analysis?.current_price)}</div>
+          <div className="flex flex-wrap items-stretch gap-2">
+            <div className={`rounded-2xl border px-4 py-3 transition ${flash === "up" ? "border-emerald-400/50 bg-emerald-500/10" : flash === "down" ? "border-rose-400/50 bg-rose-500/10" : "border-slate-800 bg-slate-950/70"}`}>
+              <div className="text-[9px] font-bold uppercase tracking-[.14em] text-slate-500">Precio en vivo</div>
+              <div className="mt-1 font-mono text-2xl font-black text-white">{fmt(price)}</div>
+            </div>
+            <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/[.035] px-4 py-3">
+              <div className="text-[9px] font-bold uppercase tracking-[.14em] text-slate-500">Distancia trigger</div>
+              <div className={`mt-1 font-mono text-lg font-black ${liveTriggerHit ? "text-emerald-300" : "text-violet-300"}`}>{liveTriggerHit ? "TOCADO" : triggerDistancePct == null ? "—" : `${triggerDistancePct.toFixed(3)}%`}</div>
+            </div>
           </div>
         </div>
 
         {analysis && prediction ? (
           <div className="grid xl:grid-cols-[1.65fr_.85fr]">
             <div className="border-r border-slate-800/80 p-4">
-              <LiveCandleChart symbol={safeSymbol} />
+              <LiveCandleChart symbol={safeSymbol} plan={plan} livePrice={price} />
+
+              <section className="mb-3 mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                <LivePulse label="Pulso vivo" value={`${livePreparation.toFixed(1)}/100`} status={strengthening ? "FORTALECE" : weakening ? "DEBILITA" : "ESTABLE"} tone={strengthening ? "green" : weakening ? "red" : "neutral"} icon={<Gauge size={15}/>} />
+                <LivePulse label="Momentum 5s" value={pct(pulse.momentum5, 3)} status={isLong ? "LONG +" : "SHORT +"} tone={(isLong ? pulse.momentum5 : -pulse.momentum5) > .02 ? "green" : (isLong ? pulse.momentum5 : -pulse.momentum5) < -.02 ? "red" : "neutral"} icon={pulse.momentum5 >= 0 ? <TrendingUp size={15}/> : <TrendingDown size={15}/>} />
+                <LivePulse label="Momentum 15s" value={pct(pulse.momentum15, 3)} status={`${pulse.trades} ticks`} tone="neutral" icon={<Waves size={15}/>} />
+                <LivePulse label="Agresión compra" value={`${pulse.buyPct.toFixed(0)}%`} status={`venta ${pulse.sellPct.toFixed(0)}%`} tone={pulse.buyPct > 58 ? "green" : pulse.sellPct > 58 ? "red" : "neutral"} icon={<ArrowUpRight size={15}/>} />
+                <LivePulse label="Estado trigger" value={liveTriggerHit ? "TOCADO" : "PENDIENTE"} status={inEntryZone ? "EN ZONA" : chased ? "FUERA / RETEST" : "VIGILAR"} tone={isReady ? "green" : chased || invalidated ? "red" : liveTriggerHit ? "green" : "neutral"} icon={<Zap size={15}/>} />
+              </section>
 
               <div className="grid gap-3 md:grid-cols-4">
                 <Metric label="Setup técnico" value={`${analysis.setup_score.toFixed(1)}/100`} />
-                <Metric label="Preparación previa" value={`${prediction.preactivation_score.toFixed(1)}/100`} accent />
+                <Metric label="Preparación profunda" value={`${prediction.preactivation_score.toFixed(1)}/100`} accent />
                 <Metric label="Riesgo" value={`${analysis.risk_score.toFixed(1)}/100`} />
                 <Metric label="Condiciones" value={`${readyCount}/${conditions.length}`} />
               </div>
@@ -198,17 +367,26 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
             </div>
 
             <aside className="bg-[#050b13]/65 p-4">
-              <div className={`rounded-2xl border p-4 ${isReady ? "border-emerald-500/35 bg-emerald-500/[.08]" : phase === "PREACTIVACION" ? "border-amber-500/30 bg-amber-500/[.06]" : "border-slate-800 bg-slate-950/60"}`}>
-                <div className="text-[10px] font-black uppercase tracking-[.18em] text-slate-500">Decisión actual</div>
-                <div className={`mt-2 text-2xl font-black ${isReady ? "text-emerald-300" : phase === "PREACTIVACION" ? "text-amber-200" : "text-white"}`}>{isReady ? "READY · PLAN ACTIVO" : phase === "PREACTIVACION" ? "NO ENTRAR TODAVÍA" : phaseEs(phase)}</div>
-                <p className="mt-2 text-xs leading-5 text-slate-400">{isReady ? "Trigger activado, dirección alineada y precio aún dentro del plan." : prediction.management?.before_trigger ?? "Esperar confirmación. No perseguir el precio."}</p>
+              <div className={`rounded-2xl border p-4 ${decisionClasses}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[10px] font-black uppercase tracking-[.18em] opacity-60">Decisión dinámica</div>
+                  <span className="inline-flex items-center gap-1 text-[9px] font-bold opacity-70"><Activity size={11}/> LIVE</span>
+                </div>
+                <div className="mt-2 text-xl font-black">{liveDecision}</div>
+                <p className="mt-2 text-xs leading-5 opacity-75">{liveDecisionText}</p>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-950/55 p-3">
+                <div className="mb-2 flex items-center justify-between"><span className="text-[10px] font-black uppercase tracking-[.12em] text-slate-500">Ruta al trigger</span><span className="font-mono text-[10px] text-violet-300">{triggerDistancePct == null ? "—" : `${triggerDistancePct.toFixed(3)}%`}</span></div>
+                <div className="h-2 overflow-hidden rounded-full bg-slate-900"><div className={`h-full rounded-full transition-all duration-300 ${invalidated || weakening ? "bg-rose-400" : strengthening ? "bg-emerald-400" : "bg-violet-400"}`} style={{ width: `${Math.max(3, Math.min(100, 100 - (triggerDistancePct ?? 1) * 120))}%` }} /></div>
+                <div className="mt-2 flex justify-between text-[9px] text-slate-600"><span>precio {fmt(price)}</span><span>trigger {fmt(prediction.trigger_price)}</span></div>
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-2">
-                <Level label="Trigger" value={prediction.trigger_price} icon={<Zap size={14}/>} />
-                <Level label="Invalidación" value={prediction.invalidation_price} danger icon={<ShieldAlert size={14}/>} />
+                <Level label="Trigger" value={prediction.trigger_price} icon={<Zap size={14}/>} liveState={liveTriggerHit ? "TOCADO" : triggerDistancePct == null ? undefined : `${triggerDistancePct.toFixed(3)}%`} />
+                <Level label="Invalidación" value={prediction.invalidation_price} danger icon={<ShieldAlert size={14}/>} liveState={invalidated ? "CRUZADA" : "VIGENTE"} />
                 <Level label="Entrada baja" value={prediction.entry_low} icon={<Target size={14}/>} />
-                <Level label="Entrada alta" value={prediction.entry_high} icon={<Target size={14}/>} />
+                <Level label="Entrada alta" value={prediction.entry_high} icon={<Target size={14}/>} liveState={inEntryZone ? "PRECIO EN ZONA" : undefined} />
                 <Level label="Stop loss" value={prediction.stop_loss} danger icon={<XCircle size={14}/>} />
                 <Level label="TP1" value={prediction.tp1} good icon={<Target size={14}/>} />
                 <Level label="TP2" value={prediction.tp2} good icon={<Target size={14}/>} />
@@ -246,4 +424,5 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
 function Metric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) { return <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-3"><div className="text-[10px] font-bold uppercase tracking-[.13em] text-slate-500">{label}</div><div className={`mt-1 text-lg font-black ${accent ? "text-cyan-300" : "text-white"}`}>{value}</div></div>; }
 function Small({ label, value }: { label: string; value: string }) { return <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-2.5"><div className="text-[10px] text-slate-500">{label}</div><div className="mt-1 text-xs font-black text-slate-100">{value}</div></div>; }
 function Flow({ label, value }: { label: string; value: number }) { return <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-2.5 text-center"><div className="text-[10px] text-slate-500">{label}</div><div className={`mt-1 text-xs font-black ${value > 3 ? "text-emerald-300" : value < -3 ? "text-rose-300" : "text-slate-300"}`}>{pct(value)}</div></div>; }
-function Level({ label, value, danger = false, good = false, icon }: { label: string; value?: number; danger?: boolean; good?: boolean; icon: React.ReactNode }) { return <div className="rounded-xl border border-slate-800 bg-slate-950/55 p-3"><div className="flex items-center gap-1.5 text-[10px] text-slate-500">{icon}{label}</div><div className={`mt-1 font-mono text-sm font-black ${danger ? "text-rose-300" : good ? "text-emerald-300" : "text-white"}`}>{fmt(value)}</div></div>; }
+function Level({ label, value, danger = false, good = false, icon, liveState }: { label: string; value?: number; danger?: boolean; good?: boolean; icon: React.ReactNode; liveState?: string }) { return <div className="rounded-xl border border-slate-800 bg-slate-950/55 p-3"><div className="flex items-center justify-between gap-2"><div className="flex items-center gap-1.5 text-[10px] text-slate-500">{icon}{label}</div>{liveState && <span className={`text-[8px] font-black ${danger && liveState === "CRUZADA" ? "text-rose-300" : "text-cyan-300"}`}>{liveState}</span>}</div><div className={`mt-1 font-mono text-sm font-black ${danger ? "text-rose-300" : good ? "text-emerald-300" : "text-white"}`}>{fmt(value)}</div></div>; }
+function LivePulse({ label, value, status, tone, icon }: { label: string; value: string; status: string; tone: "green" | "red" | "neutral"; icon: React.ReactNode }) { const cls = tone === "green" ? "border-emerald-500/20 bg-emerald-500/[.045] text-emerald-300" : tone === "red" ? "border-rose-500/20 bg-rose-500/[.045] text-rose-300" : "border-slate-800 bg-slate-950/45 text-slate-300"; return <div className={`rounded-xl border p-3 ${cls}`}><div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[.08em] opacity-65">{icon}{label}</div><div className="mt-1 font-mono text-sm font-black">{value}</div><div className="mt-1 text-[8px] font-black uppercase tracking-[.08em] opacity-70">{status}</div></div>; }
