@@ -12,7 +12,13 @@ export type ChartPlan = {
   tp3?: number;
 };
 
-export default function PriceChart({ candles, plan }: { candles: Candle[]; plan?: ChartPlan }) {
+function fmt(value: number) {
+  if (Math.abs(value) >= 1000) return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (Math.abs(value) >= 1) return value.toLocaleString(undefined, { maximumFractionDigits: 6 });
+  return value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
+}
+
+export default function PriceChart({ candles, plan, livePrice }: { candles: Candle[]; plan?: ChartPlan; livePrice?: number }) {
   if (!candles.length) return <div className="rounded-2xl border border-dashed border-slate-800 p-8 text-center text-sm text-slate-500">Sin datos de gráfico.</div>;
 
   const width = 960;
@@ -24,9 +30,10 @@ export default function PriceChart({ candles, plan }: { candles: Candle[]; plan?
   const gap = 18;
 
   const visible = candles.slice(-96);
+  const last = Number(livePrice || visible[visible.length - 1].close);
   const chartPlanValues = plan ? [plan.trigger, plan.entryLow, plan.entryHigh, plan.invalidation, plan.stop, plan.tp1, plan.tp2, plan.tp3].filter((v): v is number => Number.isFinite(Number(v)) && Number(v) > 0) : [];
-  const highs = [...visible.map((c) => c.high), ...chartPlanValues];
-  const lows = [...visible.map((c) => c.low), ...chartPlanValues];
+  const highs = [...visible.map((c) => c.high), ...chartPlanValues, last];
+  const lows = [...visible.map((c) => c.low), ...chartPlanValues, last];
   let minPrice = Math.min(...lows);
   let maxPrice = Math.max(...highs);
   const rawSpan = Math.max(maxPrice - minPrice, Math.abs(maxPrice) * 0.0001, 1e-9);
@@ -39,7 +46,6 @@ export default function PriceChart({ candles, plan }: { candles: Candle[]; plan?
 
   const yPrice = (value: number) => padTop + ((maxPrice - value) / priceSpan) * (priceHeight - padTop * 2);
   const first = visible[0].open;
-  const last = visible[visible.length - 1].close;
   const change = first ? ((last - first) / first) * 100 : 0;
 
   const planLines = plan ? [
@@ -54,21 +60,26 @@ export default function PriceChart({ candles, plan }: { candles: Candle[]; plan?
   const hasEntryZone = Boolean(plan && Number(plan.entryLow) > 0 && Number(plan.entryHigh) > 0);
   const entryTop = hasEntryZone ? yPrice(Math.max(Number(plan!.entryLow), Number(plan!.entryHigh))) : 0;
   const entryBottom = hasEntryZone ? yPrice(Math.min(Number(plan!.entryLow), Number(plan!.entryHigh))) : 0;
+  const yLive = yPrice(last);
+  const trigger = Number(plan?.trigger || 0);
+  const triggerDistancePct = trigger > 0 && last > 0
+    ? (plan?.direction === "SHORT" ? ((last - trigger) / last) * 100 : ((trigger - last) / last) * 100)
+    : null;
 
   return (
     <div className="rounded-2xl border border-slate-800/80 bg-slate-950/40 p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3 text-sm">
         <div>
           <div className="font-semibold text-slate-300">Velas + volumen {plan ? "+ plan" : ""}</div>
-          <div className="mt-1 text-[11px] text-slate-500">OHLC real del proveedor activo · última vela en vivo</div>
+          <div className="mt-1 text-[11px] text-slate-500">OHLC real · última vela y precio actual en vivo</div>
         </div>
-        <div className="text-right">
-          <div className={`font-black ${change >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{change >= 0 ? "+" : ""}{change.toFixed(2)}%</div>
-          <div className="mono-number text-[11px] text-slate-500">Último {last.toLocaleString(undefined,{maximumSignificantDigits:8})}</div>
+        <div className="flex items-center gap-4 text-right">
+          {triggerDistancePct != null && <div><div className="text-[9px] uppercase tracking-[.1em] text-slate-600">Dist. trigger</div><div className={`font-mono text-xs font-black ${triggerDistancePct <= 0 ? "text-emerald-300" : "text-violet-300"}`}>{triggerDistancePct <= 0 ? "TOCADO" : `${triggerDistancePct.toFixed(3)}%`}</div></div>}
+          <div><div className={`font-black ${change >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{change >= 0 ? "+" : ""}{change.toFixed(2)}%</div><div className="mono-number text-[11px] text-slate-500">Ahora {fmt(last)}</div></div>
         </div>
       </div>
 
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full" role="img" aria-label="Gráfico de velas, volumen y plan operativo">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full" role="img" aria-label="Gráfico de velas, volumen, precio vivo y plan operativo">
         {[0.2, 0.4, 0.6, 0.8].map((ratio) => (
           <line key={ratio} x1={padX} x2={width-padX} y1={padTop + (priceHeight-padTop*2)*ratio} y2={padTop + (priceHeight-padTop*2)*ratio} stroke="rgba(148,163,184,.09)" strokeWidth="1" />
         ))}
@@ -108,13 +119,20 @@ export default function PriceChart({ candles, plan }: { candles: Candle[]; plan?
           </g>;
         })}
 
+        <g>
+          <line x1={padX} x2={width-padX} y1={yLive} y2={yLive} stroke="#f8fafc" strokeWidth="1" strokeDasharray="2 4" opacity=".6" />
+          <circle cx={width-padX-4} cy={yLive} r="3.2" fill="#f8fafc" opacity=".95" />
+          <rect x={width-padX-105} y={yLive-10} width={101} height={19} rx="5" fill="#0f172a" stroke="#64748b" strokeOpacity=".55" />
+          <text x={width-padX-99} y={yLive+3} fill="#f8fafc" fontSize="9" fontWeight="800">AHORA {fmt(last)}</text>
+        </g>
+
         <line x1={padX} x2={width-padX} y1={priceHeight + gap - 6} y2={priceHeight + gap - 6} stroke="rgba(148,163,184,.16)" strokeWidth="1" />
       </svg>
 
       <div className="mt-1 flex justify-between text-[10px] text-slate-600">
-        <span>Low {minPrice.toLocaleString(undefined,{maximumSignificantDigits:8})}</span>
+        <span>Low {fmt(minPrice)}</span>
         <span>{visible.length} velas</span>
-        <span>High {maxPrice.toLocaleString(undefined,{maximumSignificantDigits:8})}</span>
+        <span>High {fmt(maxPrice)}</span>
       </div>
     </div>
   );
