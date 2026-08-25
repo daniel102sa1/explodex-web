@@ -10,6 +10,7 @@ export type ChartPlan = {
   tp1?: number;
   tp2?: number;
   tp3?: number;
+  ready?: boolean;
 };
 
 function fmt(value: number) {
@@ -60,6 +61,15 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
   const hasEntryZone = Boolean(plan && Number(plan.entryLow) > 0 && Number(plan.entryHigh) > 0);
   const entryTop = hasEntryZone ? yPrice(Math.max(Number(plan!.entryLow), Number(plan!.entryHigh))) : 0;
   const entryBottom = hasEntryZone ? yPrice(Math.min(Number(plan!.entryLow), Number(plan!.entryHigh))) : 0;
+  const entryStroke = plan?.ready ? "#34d399" : "#a78bfa";
+  const entryFill = plan?.ready ? "rgba(52,211,153,.10)" : "rgba(167,139,250,.09)";
+  const entryText = plan?.ready ? "#6ee7b7" : "#c4b5fd";
+  const entryLow = Number(plan?.entryLow || 0);
+  const entryHigh = Number(plan?.entryHigh || 0);
+  const entryLabel = hasEntryZone
+    ? `${plan?.ready ? "ENTRADA READY" : "ZONA DE ENTRADA"} ${fmt(Math.min(entryLow, entryHigh))} – ${fmt(Math.max(entryLow, entryHigh))}`
+    : "";
+
   const yLive = yPrice(last);
   const trigger = Number(plan?.trigger || 0);
   const triggerDistancePct = trigger > 0 && last > 0
@@ -85,8 +95,8 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
         ))}
 
         {hasEntryZone && <>
-          <rect x={padX} y={Math.min(entryTop,entryBottom)} width={width-padX*2} height={Math.max(3,Math.abs(entryBottom-entryTop))} fill="rgba(167,139,250,.09)" stroke="rgba(167,139,250,.24)" strokeWidth="1" />
-          <text x={padX+6} y={Math.min(entryTop,entryBottom)-4} fill="#c4b5fd" fontSize="10" fontWeight="700">ZONA DE ENTRADA</text>
+          <rect x={padX} y={Math.min(entryTop,entryBottom)} width={width-padX*2} height={Math.max(3,Math.abs(entryBottom-entryTop))} fill={entryFill} stroke={entryStroke} strokeOpacity=".38" strokeWidth="1" />
+          <text x={padX+6} y={Math.min(entryTop,entryBottom)-4} fill={entryText} fontSize="10" fontWeight="800">{entryLabel}</text>
         </>}
 
         {visible.map((candle, index) => {
@@ -112,18 +122,19 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
 
         {planLines.map((line) => {
           const y = yPrice(line.value);
+          const label = `${line.label} ${fmt(line.value)}`;
           return <g key={line.key}>
-            <line x1={padX} x2={width-padX} y1={y} y2={y} stroke={line.stroke} strokeWidth="1.2" strokeDasharray={line.dash || undefined} opacity="0.85" />
-            <rect x={width-padX-82} y={y-9} width={79} height={17} rx="4" fill="rgba(3,7,18,.88)" stroke={line.stroke} strokeOpacity=".38" />
-            <text x={width-padX-76} y={y+3} fill={line.stroke} fontSize="9" fontWeight="800">{line.label}</text>
+            <line x1={padX} x2={width-padX} y1={y} y2={y} stroke={line.stroke} strokeWidth="1.2" strokeDasharray={line.dash || undefined} opacity="0.9" />
+            <rect x={width-padX-145} y={y-9} width={142} height={17} rx="4" fill="rgba(3,7,18,.91)" stroke={line.stroke} strokeOpacity=".42" />
+            <text x={width-padX-139} y={y+3} fill={line.stroke} fontSize="9" fontWeight="800">{label}</text>
           </g>;
         })}
 
         <g>
           <line x1={padX} x2={width-padX} y1={yLive} y2={yLive} stroke="#f8fafc" strokeWidth="1" strokeDasharray="2 4" opacity=".6" />
           <circle cx={width-padX-4} cy={yLive} r="3.2" fill="#f8fafc" opacity=".95" />
-          <rect x={width-padX-105} y={yLive-10} width={101} height={19} rx="5" fill="#0f172a" stroke="#64748b" strokeOpacity=".55" />
-          <text x={width-padX-99} y={yLive+3} fill="#f8fafc" fontSize="9" fontWeight="800">AHORA {fmt(last)}</text>
+          <rect x={width-padX-125} y={yLive-10} width={121} height={19} rx="5" fill="#0f172a" stroke="#64748b" strokeOpacity=".55" />
+          <text x={width-padX-119} y={yLive+3} fill="#f8fafc" fontSize="9" fontWeight="800">AHORA {fmt(last)}</text>
         </g>
 
         <line x1={padX} x2={width-padX} y1={priceHeight + gap - 6} y2={priceHeight + gap - 6} stroke="rgba(148,163,184,.16)" strokeWidth="1" />
