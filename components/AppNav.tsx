@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Activity, BarChart3, Bell, Bot, Gauge, Layers3, LineChart, Lock, Newspaper, RadioTower, WalletCards } from "lucide-react";
+import { Activity, BarChart3, Bell, Bot, FlaskConical, Gauge, Layers3, LineChart, Lock, Newspaper, RadioTower, WalletCards } from "lucide-react";
 import { LOCKED_PLANS_EVENT, readLockedPlans } from "@/lib/lockedPlans";
 
 const items = [
@@ -11,6 +11,7 @@ const items = [
   { href: "/terminal", label: "Terminal", icon: RadioTower },
   { href: "/scanner", label: "Scanner", icon: Activity },
   { href: "/plans", label: "Planes", icon: Lock },
+  { href: "/journal", label: "Validar señales", icon: FlaskConical },
   { href: "/paper", label: "Paper", icon: WalletCards },
   { href: "/stats", label: "Estadísticas", icon: BarChart3 },
   { href: "/market", label: "Mercado", icon: LineChart },
