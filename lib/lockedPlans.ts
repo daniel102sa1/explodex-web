@@ -20,6 +20,10 @@ export type LockedPlan = {
   initialRiskScore: number;
   enteredAt?: number;
   actualEntryPrice?: number;
+  marginUsdt?: number;
+  leverage?: number;
+  notes?: string;
+  lastUpdatedAt?: number;
 };
 
 export const LOCKED_PLAN_PREFIX = "explodex:locked-plan:";
@@ -67,7 +71,8 @@ export function readLockedPlans(): LockedPlan[] {
 export function writeLockedPlan(plan: LockedPlan) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(lockedPlanKey(plan.symbol), JSON.stringify(plan));
+    const enriched = { ...plan, lastUpdatedAt: Date.now() };
+    window.localStorage.setItem(lockedPlanKey(plan.symbol), JSON.stringify(enriched));
     window.dispatchEvent(new CustomEvent(LOCKED_PLANS_EVENT, { detail: { symbol: plan.symbol, action: "write" } }));
   } catch {}
 }
