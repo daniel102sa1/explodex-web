@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock3,
   Database,
+  GitCompareArrows,
   ShieldAlert,
   Target,
   TrendingUp,
@@ -17,6 +18,34 @@ import {
 import { getLiveAnalysis, type LiveAnalysis } from "@/lib/api";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
+
+type SimilarExample = {
+  symbol?: string;
+  at?: string;
+  type?: string;
+  regime?: string;
+  outcome?: "WIN" | "LOSS" | string;
+  outcome_r?: number;
+  similarity_pct?: number;
+};
+
+type SimilarCases = {
+  available?: boolean;
+  sample: number;
+  decided: number;
+  wins?: number;
+  losses?: number;
+  avg_similarity_pct?: number;
+  observed_win_rate_pct: number | null;
+  weighted_win_rate_pct: number | null;
+  weighted_avg_r: number | null;
+  wilson_low_pct?: number | null;
+  wilson_high_pct?: number | null;
+  calibration_status: string;
+  minimum_decided_for_probability: number;
+  similarity_threshold_pct?: number;
+  examples?: SimilarExample[];
+};
 
 type EdgeStats = {
   sample: number;
@@ -28,9 +57,10 @@ type EdgeStats = {
   avg_r: number | null;
   avg_mfe_pct: number | null;
   avg_mae_pct: number | null;
-  calibration_status: "CALIBRATED" | "INSUFFICIENT_SAMPLE" | string;
+  calibration_status: string;
   minimum_decided_for_probability: number;
   cohorts?: Array<Record<string, unknown>>;
+  similar_cases?: SimilarCases | null;
 };
 
 function fmt(value?: number | null) {
@@ -148,6 +178,8 @@ export default function ExplodeXMentor({ symbol }: { symbol: string }) {
   if (!analysis || !view) return <section className="mx-auto mt-6 max-w-[1500px] px-4"><div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4 text-sm text-slate-500">Cargando Mentor ExplodeX…</div></section>;
 
   const calibrated = edge?.calibration_status === "CALIBRATED" && edge.observed_win_rate_pct != null;
+  const similar = edge?.similar_cases;
+  const similarCalibrated = similar?.calibration_status === "CALIBRATED" && similar.weighted_win_rate_pct != null;
   const toneClass = view.tone === "green" ? "border-emerald-500/30 bg-emerald-500/[.06]" : view.tone === "red" ? "border-rose-500/30 bg-rose-500/[.06]" : view.tone === "violet" ? "border-violet-500/30 bg-violet-500/[.06]" : "border-amber-500/30 bg-amber-500/[.06]";
   const actionClass = view.tone === "green" ? "text-emerald-300" : view.tone === "red" ? "text-rose-300" : view.tone === "violet" ? "text-violet-300" : "text-amber-300";
 
@@ -180,7 +212,7 @@ export default function ExplodeXMentor({ symbol }: { symbol: string }) {
 
         <div className="mt-5 rounded-2xl border border-cyan-500/15 bg-cyan-500/[.035] p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2"><Database size={16} className="text-cyan-300"/><div><div className="text-sm font-black text-white">Evidencia aprendida · Edge Engine V2</div><div className="text-[10px] text-slate-500">Casos de esta moneda comprobados después del horizonte del setup</div></div></div>
+            <div className="flex items-center gap-2"><Database size={16} className="text-cyan-300"/><div><div className="text-sm font-black text-white">Evidencia aprendida · esta moneda</div><div className="text-[10px] text-slate-500">Resultados comprobados después del horizonte de cada setup</div></div></div>
             <span className={`rounded-full border px-2.5 py-1 text-[9px] font-black ${calibrated ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300" : "border-amber-500/25 bg-amber-500/10 text-amber-200"}`}>{calibrated ? "CALIBRADO" : "NO CALIBRADO"}</span>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-6">
@@ -191,7 +223,31 @@ export default function ExplodeXMentor({ symbol }: { symbol: string }) {
             <Stat label="R promedio" value={edge?.avg_r == null ? "—" : `${edge.avg_r >= 0 ? "+" : ""}${edge.avg_r.toFixed(2)}R`} good={Number(edge?.avg_r) > 0} />
             <Stat label="MFE medio" value={edge?.avg_mfe_pct == null ? "—" : `${edge.avg_mfe_pct.toFixed(2)}%`} />
           </div>
-          <div className="mt-3 flex items-start gap-2 text-[11px] leading-5 text-slate-400"><BarChart3 size={14} className="mt-0.5 shrink-0 text-cyan-300"/>{calibrated ? `Ya hay ${edge?.decided} resultados decididos. Esta tasa es observada en datos propios, no una garantía del siguiente trade.` : `Todavía no hay suficiente muestra para mostrar una probabilidad. Faltan ${Math.max(0, (edge?.minimum_decided_for_probability ?? 30) - (edge?.decided ?? 0))} resultados decididos para la primera calibración.`}</div>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-violet-500/20 bg-violet-500/[.045] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2"><GitCompareArrows size={17} className="text-violet-300"/><div><div className="text-sm font-black text-white">Casos similares · todo el mercado</div><div className="text-[10px] text-slate-500">Compara estructura, preparación, riesgo, OI, spot, futuros, taker, libro, volatilidad y régimen</div></div></div>
+            <span className={`rounded-full border px-2.5 py-1 text-[9px] font-black ${similarCalibrated ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300" : "border-amber-500/25 bg-amber-500/10 text-amber-200"}`}>{similarCalibrated ? "MUESTRA SUFICIENTE" : "APRENDIENDO"}</span>
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-6">
+            <Stat label="Casos parecidos" value={String(similar?.sample ?? 0)} />
+            <Stat label="Similitud media" value={similar?.avg_similarity_pct == null ? "—" : `${similar.avg_similarity_pct.toFixed(1)}%`} />
+            <Stat label="Wins / Loss" value={`${similar?.wins ?? 0} / ${similar?.losses ?? 0}`} />
+            <Stat label="Tasa ponderada" value={similarCalibrated ? `${Number(similar?.weighted_win_rate_pct).toFixed(1)}%` : "—"} good={similarCalibrated && Number(similar?.weighted_win_rate_pct) >= 55} />
+            <Stat label="R parecido" value={similar?.weighted_avg_r == null ? "—" : `${similar.weighted_avg_r >= 0 ? "+" : ""}${similar.weighted_avg_r.toFixed(2)}R`} good={Number(similar?.weighted_avg_r) > 0} />
+            <Stat label="Rango 95%" value={similarCalibrated && similar?.wilson_low_pct != null && similar?.wilson_high_pct != null ? `${similar.wilson_low_pct.toFixed(0)}–${similar.wilson_high_pct.toFixed(0)}%` : "—"} />
+          </div>
+
+          <div className="mt-3 flex items-start gap-2 text-[11px] leading-5 text-slate-400"><BarChart3 size={14} className="mt-0.5 shrink-0 text-violet-300"/>{similarCalibrated ? `Encontré ${similar?.decided ?? 0} casos decididos suficientemente parecidos. La tasa ponderada da más peso a los casos más similares y el rango 95% muestra la incertidumbre estadística.` : `Todavía faltan ${Math.max(0, (similar?.minimum_decided_for_probability ?? 30) - (similar?.decided ?? 0))} casos parecidos decididos antes de tratar esta tasa como evidencia calibrada.`}</div>
+
+          {!!similar?.examples?.length && <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {similar.examples.slice(0, 6).map((item, index) => <div key={`${item.symbol}-${item.at}-${index}`} className="rounded-xl border border-slate-800 bg-slate-950/45 p-2.5">
+              <div className="flex items-center justify-between gap-2"><span className="text-xs font-black text-white">{item.symbol ?? "—"}</span><span className={`text-[9px] font-black ${item.outcome === "WIN" ? "text-emerald-300" : "text-rose-300"}`}>{item.outcome ?? "—"}</span></div>
+              <div className="mt-1 flex justify-between text-[9px] text-slate-500"><span>sim. {Number(item.similarity_pct ?? 0).toFixed(1)}%</span><span>{Number(item.outcome_r ?? 0) >= 0 ? "+" : ""}{Number(item.outcome_r ?? 0).toFixed(2)}R</span></div>
+            </div>)}
+          </div>}
         </div>
 
         <div className="mt-5 grid gap-4 lg:grid-cols-2">
@@ -210,7 +266,7 @@ export default function ExplodeXMentor({ symbol }: { symbol: string }) {
           </div>
         </div>
 
-        <div className="mt-4 flex items-start gap-2 text-[11px] text-slate-500"><TrendingUp size={13} className="mt-0.5 shrink-0"/>El Mentor explica la decisión del sistema y la confronta con resultados propios. Verde significa mejor evidencia según reglas y muestra, nunca certeza.</div>
+        <div className="mt-4 flex items-start gap-2 text-[11px] text-slate-500"><TrendingUp size={13} className="mt-0.5 shrink-0"/>El Mentor combina reglas en vivo con evidencia propia. Las estadísticas no sustituyen el trigger, la zona ni el stop y nunca representan certeza.</div>
       </div>
     </section>
   );
@@ -219,4 +275,7 @@ export default function ExplodeXMentor({ symbol }: { symbol: string }) {
 function Box({ label, value, icon, good=false, bad=false }: { label:string; value:string; icon:React.ReactNode; good?:boolean; bad?:boolean }) {
   return <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3"><div className="flex items-center gap-1.5 text-[9px] uppercase tracking-[.08em] text-slate-500">{icon}{label}</div><div className={`mt-1 font-mono text-xs font-black ${good ? "text-emerald-300" : bad ? "text-rose-300" : "text-white"}`}>{value}</div></div>;
 }
-function Stat({ label, value, good=false }: { label:string; value:string; good?:boolean }) { return <div className="rounded-xl border border-slate-800/80 bg-slate-950/45 p-2.5"><div className="text-[9px] uppercase tracking-[.08em] text-slate-600">{label}</div><div className={`mt-1 font-mono text-sm font-black ${good ? "text-emerald-300" : "text-white"}`}>{value}</div></div>; }
+
+function Stat({ label, value, good=false }: { label:string; value:string; good?:boolean }) {
+  return <div className="rounded-xl border border-slate-800/80 bg-slate-950/45 p-2.5"><div className="text-[9px] uppercase tracking-[.08em] text-slate-600">{label}</div><div className={`mt-1 font-mono text-sm font-black ${good ? "text-emerald-300" : "text-white"}`}>{value}</div></div>;
+}
