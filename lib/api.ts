@@ -223,6 +223,7 @@ export type PreMovePrediction = {
   confirmations?: string[];
   conflicts?: string[];
   sequence?: Record<string, any>;
+  decision_guard?: Record<string, any>;
   message?: string;
 };
 
@@ -262,8 +263,11 @@ export type LiveAnalysis = {
     paper_only?: boolean;
     coinglass_required_for_ready?: boolean;
     prediction_activation_required_for_ready?: boolean;
+    direction_match_required_for_ready?: boolean;
+    no_chase_required_for_ready?: boolean;
     score_is_probability?: boolean;
   };
+  ready_checks?: Record<string, any>;
   note?: string;
 };
 
@@ -275,6 +279,15 @@ async function api<T>(path: string): Promise<T> {
   if (!response.ok) throw new Error(`Backend ${response.status}: ${response.statusText}`);
   return response.json() as Promise<T>;
 }
+
+type LiveAnalysisCacheEntry = {
+  value?: LiveAnalysis;
+  expiresAt: number;
+  promise?: Promise<LiveAnalysis>;
+};
+
+const LIVE_ANALYSIS_CACHE_MS = 8_000;
+const liveAnalysisCache = new Map<string, LiveAnalysisCacheEntry>();
 
 export async function getHealth(): Promise<HealthStatus> {
   return api<HealthStatus>("/health");
@@ -328,8 +341,38 @@ export async function getPrice(symbol: string): Promise<{ symbol: string; price:
   return api<{ symbol: string; price: string; source?: string }>(`/api/v1/market/price/${encodeURIComponent(symbol)}`);
 }
 
-export async function getLiveAnalysis(symbol: string): Promise<LiveAnalysis> {
-  return api<LiveAnalysis>(`/api/v1/analysis/${encodeURIComponent(symbol)}`);
+export async function getLiveAnalysis(symbol: string, force = false): Promise<LiveAnalysis> {
+  const safeSymbol = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
+  const now = Date.now();
+  const current = liveAnalysisCache.get(safeSymbol);
+  if (!force && current?.value && current.expiresAt > now) return current.value;
+  if (!force && current?.promise) return current.promise;
+
+  const promise = api<LiveAnalysis>(`/api/v1/analysis/${encodeURIComponent(safeSymbol)}`)
+    .then((value) => {
+      liveAnalysisCache.set(safeSymbol, { value, expiresAt: Date.now() + LIVE_ANALYSIS_CACHE_MS });
+      return value;
+    })
+    .catch((error) => {
+      liveAnalysisCache.delete(safeSymbol);
+      throw error;
+    });
+
+  liveAnalysisCache.set(safeSymbol, {
+    value: current?.value,
+    expiresAt: current?.expiresAt ?? 0,
+    promise,
+  });
+  return promise;
+}
+
+export function clearLiveAnalysisCache(symbol?: string) {
+  if (!symbol) {
+    liveAnalysisCache.clear();
+    return;
+  }
+  const safeSymbol = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
+  liveAnalysisCache.delete(safeSymbol);
 }
 
 export async function getCandles(symbol: string, interval = "15m", limit = 96): Promise<Candle[]> {
