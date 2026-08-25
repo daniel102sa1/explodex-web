@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   AlertTriangle,
   BarChart3,
   BrainCircuit,
@@ -11,6 +12,7 @@ import {
   GitCompareArrows,
   ShieldAlert,
   Target,
+  TimerReset,
   TrendingUp,
   XCircle,
   Zap,
@@ -171,7 +173,7 @@ export default function ExplodeXMentor({ symbol }: { symbol: string }) {
       { label: `Confirmaciones ${confirmations.length}`, ok: confirmations.length >= 5 },
     ];
 
-    return { action, tone, headline, explanation, conflicts, evidence, p, ready };
+    return { action, tone, headline, explanation, conflicts, evidence, p, ready, activated };
   }, [analysis]);
 
   if (error) return <section className="mx-auto mt-6 max-w-[1500px] px-4"><div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-200"><ShieldAlert size={16} className="mr-2 inline"/>Mentor temporalmente no disponible: {error}</div></section>;
@@ -202,11 +204,27 @@ export default function ExplodeXMentor({ symbol }: { symbol: string }) {
             </div>
           </div>
 
-          <div className="grid min-w-[320px] grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-2">
+          <div className="grid min-w-[340px] grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-2 2xl:grid-cols-3">
+            <Box label="Precio análisis" value={fmt(analysis.current_price)} icon={<Activity size={14}/>} />
+            <Box label="Trigger" value={`${fmt(view.p.trigger_price)}${view.activated ? " · TOCADO" : " · PENDIENTE"}`} icon={<Zap size={14}/>} good={view.activated} />
             <Box label="Entrada" value={`${fmt(view.p.entry_low)} – ${fmt(view.p.entry_high)}`} icon={<Target size={14}/>} />
-            <Box label="Stop" value={fmt(view.p.stop_loss)} icon={<ShieldAlert size={14}/>} bad />
-            <Box label="TP1" value={fmt(view.p.tp1)} icon={<Zap size={14}/>} good />
-            <Box label="Tiempo" value={`${view.p.expected_duration_min_minutes ?? "—"}–${view.p.expected_duration_max_minutes ?? "—"} min`} icon={<Clock3 size={14}/>} />
+            <Box label="Invalidación" value={fmt(view.p.invalidation_price)} icon={<ShieldAlert size={14}/>} bad />
+            <Box label="Stop" value={fmt(view.p.stop_loss)} icon={<XCircle size={14}/>} bad />
+            <Box label="TP1" value={fmt(view.p.tp1)} icon={<Target size={14}/>} good />
+            <Box label="TP2" value={fmt(view.p.tp2)} icon={<Target size={14}/>} good />
+            <Box label="TP3 / runner" value={fmt(view.p.tp3)} icon={<TrendingUp size={14}/>} good />
+            <Box label="Time stop" value={view.p.time_stop_minutes ? `${view.p.time_stop_minutes} min` : "—"} icon={<TimerReset size={14}/>} />
+            <Box label="Duración esperada" value={`${view.p.expected_duration_min_minutes ?? "—"}–${view.p.expected_duration_max_minutes ?? "—"} min`} icon={<Clock3 size={14}/>} />
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-violet-500/20 bg-violet-500/[.045] p-4">
+          <div className="flex items-center gap-2 text-sm font-black text-violet-200"><Zap size={16}/> Cómo leer el trigger</div>
+          <div className="mt-2 grid gap-2 text-xs leading-5 text-slate-300 md:grid-cols-2 xl:grid-cols-4">
+            <Guide title="1. Trigger" text={`Es el precio que debe tocar/cruzar para activar la idea. En LONG se espera cruce hacia arriba; en SHORT, hacia abajo. Aquí: ${fmt(view.p.trigger_price)}.`} />
+            <Guide title="2. Entrada" text={`Después del trigger, la entrada solo es válida mientras el precio siga dentro de ${fmt(view.p.entry_low)} – ${fmt(view.p.entry_high)}. Si se escapa, no perseguir.`} />
+            <Guide title="3. Invalidación / Stop" text={`Invalidación = la estructura deja de tener sentido. Stop = salida protectora real. No se amplían para salvar una operación.`} />
+            <Guide title="4. TP1 / TP2 / TP3" text="TP1 protege, TP2 es el objetivo principal y TP3 es un runner opcional. Llegar al trigger no significa que necesariamente llegará a los TP." />
           </div>
         </div>
 
@@ -278,4 +296,8 @@ function Box({ label, value, icon, good=false, bad=false }: { label:string; valu
 
 function Stat({ label, value, good=false }: { label:string; value:string; good?:boolean }) {
   return <div className="rounded-xl border border-slate-800/80 bg-slate-950/45 p-2.5"><div className="text-[9px] uppercase tracking-[.08em] text-slate-600">{label}</div><div className={`mt-1 font-mono text-sm font-black ${good ? "text-emerald-300" : "text-white"}`}>{value}</div></div>;
+}
+
+function Guide({ title, text }: { title:string; text:string }) {
+  return <div className="rounded-xl border border-slate-800/80 bg-slate-950/45 p-3"><div className="font-black text-white">{title}</div><div className="mt-1 text-slate-400">{text}</div></div>;
 }
