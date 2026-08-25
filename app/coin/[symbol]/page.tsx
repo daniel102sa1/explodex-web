@@ -1,3 +1,4 @@
+import ExplodeXMentor from "@/components/ExplodeXMentor";
 import ManualTradeMirror from "@/components/ManualTradeMirror";
 import ProfessionalCoinWorkspace from "@/components/ProfessionalCoinWorkspace";
 
@@ -8,6 +9,7 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
   return (
     <>
       <ProfessionalCoinWorkspace symbol={symbol} />
+      <ExplodeXMentor symbol={symbol} />
       <ManualTradeMirror symbol={symbol} />
     </>
   );
