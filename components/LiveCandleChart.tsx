@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { RadioTower } from "lucide-react";
 import PriceChart, { type ChartPlan } from "@/components/PriceChart";
 import { getCandles, type Candle } from "@/lib/api";
+import { LOCKED_PLANS_EVENT, readLockedPlan } from "@/lib/lockedPlans";
 
 type Interval = "1m" | "5m" | "15m";
 
@@ -29,9 +30,31 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
   const [candles, setCandles] = useState<Candle[]>([]);
   const [source, setSource] = useState("CARGANDO");
   const [savedPlan, setSavedPlan] = useState<ChartPlan | undefined>(plan);
+  const [actualEntry, setActualEntry] = useState<number | undefined>();
   const socketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => { if (plan) setSavedPlan(plan); }, [plan]);
+
+  useEffect(() => {
+    const refresh = () => {
+      const locked = readLockedPlan(symbol);
+      const value = Number(locked?.actualEntryPrice || 0);
+      setActualEntry(value > 0 ? value : undefined);
+    };
+    refresh();
+    const onCustom = () => refresh();
+    const onStorage = (event: StorageEvent) => {
+      if (!event.key || event.key.includes(symbol.toUpperCase())) refresh();
+    };
+    window.addEventListener(LOCKED_PLANS_EVENT, onCustom as EventListener);
+    window.addEventListener("storage", onStorage);
+    const timer = setInterval(refresh, 2000);
+    return () => {
+      window.removeEventListener(LOCKED_PLANS_EVENT, onCustom as EventListener);
+      window.removeEventListener("storage", onStorage);
+      clearInterval(timer);
+    };
+  }, [symbol]);
 
   useEffect(() => {
     if (plan || !BASE_URL) return;
@@ -120,16 +143,22 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
     return () => { disposed = true; if (fallbackTimer) clearTimeout(fallbackTimer); try { socketRef.current?.close(); } catch {} };
   }, [symbol, interval]);
 
+  const chartPlan = useMemo<ChartPlan | undefined>(() => {
+    const base = plan ?? savedPlan;
+    if (!base && !actualEntry) return undefined;
+    return { ...(base ?? {}), actualEntry };
+  }, [plan, savedPlan, actualEntry]);
+
   return (
     <section className="rounded-2xl border border-slate-800/80 bg-slate-950/35 p-2.5">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
         <div>
           <div className="flex items-center gap-2 text-xs font-black text-white"><RadioTower size={14} className="text-emerald-400"/> {symbol} · vela viva</div>
-          <div className="mt-1 text-[10px] text-slate-600">WebSocket · {source} {savedPlan ? "· plan del scanner superpuesto" : ""}</div>
+          <div className="mt-1 text-[10px] text-slate-600">WebSocket · {source} {chartPlan ? "· plan superpuesto" : ""}{actualEntry ? ` · MI ENTRADA ${actualEntry}` : ""}</div>
         </div>
         <div className="flex gap-1">{(["1m", "5m", "15m"] as Interval[]).map((value) => <button key={value} onClick={() => setIntervalValue(value)} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold ${interval === value ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-slate-800 bg-slate-900 text-slate-500"}`}>{value}</button>)}</div>
       </div>
-      <PriceChart candles={candles} plan={plan ?? savedPlan} livePrice={livePrice ?? undefined} />
+      <PriceChart candles={candles} plan={chartPlan} livePrice={livePrice ?? undefined} />
     </section>
   );
 }
