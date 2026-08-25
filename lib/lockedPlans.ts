@@ -20,6 +20,13 @@ export type LockedPlan = {
   initialRiskScore: number;
   enteredAt?: number;
   actualEntryPrice?: number;
+  // Post-entry excursion memory. These values are only observational and never
+  // move the original stop farther away.
+  bestPriceSeen?: number;
+  worstPriceSeen?: number;
+  maxRSeen?: number;
+  minRSeen?: number;
+  watchdogUpdatedAt?: number;
   // Current canonical names used by the /planes board.
   marginUsdt?: number;
   leverage?: number;
