@@ -90,9 +90,14 @@ function conditionList(analysis: LiveAnalysis, prediction: PreMovePrediction, pr
   const seq = prediction.sequence ?? {};
   const direction = prediction.direction;
   const liveTrigger = triggerHit(direction, price, prediction.trigger_price);
+  const ema9 = Number(m.ema9 ?? 0);
+  const ema21 = Number(m.ema21 ?? 0);
+  const emaKnown = ema9 > 0 && ema21 > 0;
+  const emaAligned = emaKnown && (direction === "LONG" ? ema9 > ema21 : ema9 < ema21);
   return [
     { label: "Volatilidad comprimida", ready: Boolean(seq.compressed), detail: `rVol ${Number(seq.relative_volume ?? m.relative_volume ?? 0).toFixed(2)}x` },
     { label: direction === "LONG" ? "Mínimos crecientes" : "Máximos decrecientes", ready: direction === "LONG" ? Boolean(seq.higher_lows) : Boolean(seq.lower_highs), detail: "presión estructural" },
+    { label: "EMA 9/21 alineadas", ready: emaAligned, detail: emaKnown ? `EMA9 ${fmt(ema9)} · EMA21 ${fmt(ema21)}` : "dato no disponible" },
     { label: "Volumen acelerando", ready: Number(seq.volume_acceleration ?? m.volume_acceleration ?? 0) >= 1.15, detail: `${Number(seq.volume_acceleration ?? m.volume_acceleration ?? 0).toFixed(2)}x` },
     { label: "Interés abierto acompaña", ready: Math.abs(Number(m.oi_change_pct ?? 0)) >= 0.2 || Math.abs(Number(analysis.coinglass?.open_interest?.change_15m_pct ?? 0)) >= 0.2, detail: `CG 15m ${pct(analysis.coinglass?.open_interest?.change_15m_pct)}` },
     { label: "Futuros alineados", ready: direction === "LONG" ? Number(m.futures_delta_ratio ?? 0) > 0.04 : Number(m.futures_delta_ratio ?? 0) < -0.04, detail: pct(Number(m.futures_delta_ratio ?? 0) * 100) },
@@ -104,7 +109,15 @@ function conditionList(analysis: LiveAnalysis, prediction: PreMovePrediction, pr
 }
 
 type MicroTrade = { at: number; price: number; side: "BUY" | "SELL" | "UNKNOWN" };
-type Pulse = { momentum5: number; momentum15: number; buyPct: number; sellPct: number; trades: number };
+type Pulse = {
+  momentum5: number;
+  momentum15: number;
+  buyPct: number;
+  sellPct: number;
+  trades: number;
+  classifiedTrades: number;
+  aggressionAvailable: boolean;
+};
 
 function microPulse(rows: MicroTrade[], current: number): Pulse {
   const now = Date.now();
@@ -116,8 +129,17 @@ function microPulse(rows: MicroTrade[], current: number): Pulse {
   const sided = recent.filter((x) => x.side !== "UNKNOWN");
   const buys = sided.filter((x) => x.side === "BUY").length;
   const sells = sided.filter((x) => x.side === "SELL").length;
-  const total = Math.max(1, buys + sells);
-  return { momentum5, momentum15, buyPct: (buys / total) * 100, sellPct: (sells / total) * 100, trades: recent.length };
+  const total = buys + sells;
+  const aggressionAvailable = total > 0;
+  return {
+    momentum5,
+    momentum15,
+    buyPct: aggressionAvailable ? (buys / total) * 100 : 0,
+    sellPct: aggressionAvailable ? (sells / total) * 100 : 0,
+    trades: recent.length,
+    classifiedTrades: total,
+    aggressionAvailable,
+  };
 }
 
 export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }) {
@@ -126,7 +148,7 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
   const [error, setError] = useState<string | null>(null);
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const [flash, setFlash] = useState<"up" | "down" | "flat">("flat");
-  const [pulse, setPulse] = useState<Pulse>({ momentum5: 0, momentum15: 0, buyPct: 50, sellPct: 50, trades: 0 });
+  const [pulse, setPulse] = useState<Pulse>({ momentum5: 0, momentum15: 0, buyPct: 0, sellPct: 0, trades: 0, classifiedTrades: 0, aggressionAvailable: false });
   const [lastAnalysisAt, setLastAnalysisAt] = useState<number>(0);
   const [clock, setClock] = useState(Date.now());
   const lastPrice = useRef<number | null>(null);
@@ -194,7 +216,6 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
       try {
         const trade = JSON.parse(event.data);
         const price = Number(trade?.p ?? 0);
-        // Binance aggTrade: m=true means buyer was maker, therefore aggressive side was SELL.
         const side: MicroTrade["side"] = trade?.m === true ? "SELL" : trade?.m === false ? "BUY" : "UNKNOWN";
         apply(price, side);
       } catch {}
@@ -225,11 +246,16 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
     : null;
 
   const alignedMomentum = isLong ? pulse.momentum5 : -pulse.momentum5;
-  const aggressionImbalance = isLong ? pulse.buyPct - pulse.sellPct : pulse.sellPct - pulse.buyPct;
-  const pulseAdjustment = Math.max(-10, Math.min(10, alignedMomentum * 80 + aggressionImbalance * 0.08));
+  const aggressionImbalance = pulse.aggressionAvailable
+    ? (isLong ? pulse.buyPct - pulse.sellPct : pulse.sellPct - pulse.buyPct)
+    : 0;
+  const aggressionAdjustment = pulse.aggressionAvailable ? aggressionImbalance * 0.08 : 0;
+  const pulseAdjustment = Math.max(-10, Math.min(10, alignedMomentum * 80 + aggressionAdjustment));
   const livePreparation = prediction ? Math.max(0, Math.min(100, prediction.preactivation_score + pulseAdjustment)) : 0;
-  const weakening = alignedMomentum < -0.025 || aggressionImbalance < -16;
-  const strengthening = alignedMomentum > 0.025 && aggressionImbalance > 8;
+  const aggressionSupports = !pulse.aggressionAvailable || aggressionImbalance > 8;
+  const aggressionOpposes = pulse.aggressionAvailable && aggressionImbalance < -16;
+  const weakening = alignedMomentum < -0.025 || aggressionOpposes;
+  const strengthening = alignedMomentum > 0.025 && aggressionSupports;
 
   let liveDecision = "VIGILAR";
   let liveDecisionTone: "green" | "amber" | "red" | "violet" = "amber";
@@ -257,7 +283,9 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
   } else if (strengthening && triggerDistancePct != null && triggerDistancePct <= 0.35) {
     liveDecision = "FORTALECIÉNDOSE CERCA DEL TRIGGER";
     liveDecisionTone = "green";
-    liveDecisionText = "Momentum y agresión reciente acompañan la dirección prevista. Todavía no es entrada.";
+    liveDecisionText = pulse.aggressionAvailable
+      ? "Momentum y agresión reciente acompañan la dirección prevista. Todavía no es entrada."
+      : "Momentum reciente acompaña la dirección; la agresión BUY/SELL no está disponible en la fuente actual. Todavía no es entrada.";
   } else if (weakening) {
     liveDecision = "PERDIENDO FUERZA";
     liveDecisionTone = "red";
@@ -278,6 +306,7 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
     tp1: prediction.tp1,
     tp2: prediction.tp2,
     tp3: prediction.tp3,
+    ready: isReady,
   } : undefined;
 
   const analysisAge = lastAnalysisAt ? Math.max(0, Math.floor((clock - lastAnalysisAt) / 1000)) : null;
@@ -328,7 +357,7 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
                 <LivePulse label="Pulso vivo" value={`${livePreparation.toFixed(1)}/100`} status={strengthening ? "FORTALECE" : weakening ? "DEBILITA" : "ESTABLE"} tone={strengthening ? "green" : weakening ? "red" : "neutral"} icon={<Gauge size={15}/>} />
                 <LivePulse label="Momentum 5s" value={pct(pulse.momentum5, 3)} status={isLong ? "LONG +" : "SHORT +"} tone={(isLong ? pulse.momentum5 : -pulse.momentum5) > .02 ? "green" : (isLong ? pulse.momentum5 : -pulse.momentum5) < -.02 ? "red" : "neutral"} icon={pulse.momentum5 >= 0 ? <TrendingUp size={15}/> : <TrendingDown size={15}/>} />
                 <LivePulse label="Momentum 15s" value={pct(pulse.momentum15, 3)} status={`${pulse.trades} ticks`} tone="neutral" icon={<Waves size={15}/>} />
-                <LivePulse label="Agresión compra" value={`${pulse.buyPct.toFixed(0)}%`} status={`venta ${pulse.sellPct.toFixed(0)}%`} tone={pulse.buyPct > 58 ? "green" : pulse.sellPct > 58 ? "red" : "neutral"} icon={<ArrowUpRight size={15}/>} />
+                <LivePulse label="Agresión compra" value={pulse.aggressionAvailable ? `${pulse.buyPct.toFixed(0)}%` : "N/D"} status={pulse.aggressionAvailable ? `venta ${pulse.sellPct.toFixed(0)}% · ${pulse.classifiedTrades} clasif.` : "fuente sin BUY/SELL"} tone={!pulse.aggressionAvailable ? "neutral" : pulse.buyPct > 58 ? "green" : pulse.sellPct > 58 ? "red" : "neutral"} icon={<ArrowUpRight size={15}/>} />
                 <LivePulse label="Estado trigger" value={liveTriggerHit ? "TOCADO" : "PENDIENTE"} status={inEntryZone ? "EN ZONA" : chased ? "FUERA / RETEST" : "VIGILAR"} tone={isReady ? "green" : chased || invalidated ? "red" : liveTriggerHit ? "green" : "neutral"} icon={<Zap size={15}/>} />
               </section>
 
