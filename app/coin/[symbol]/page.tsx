@@ -1,6 +1,7 @@
 import ExplodeXMentor from "@/components/ExplodeXMentor";
 import ManualTradeMirror from "@/components/ManualTradeMirror";
 import ProfessionalCoinWorkspace from "@/components/ProfessionalCoinWorkspace";
+import TradeSafetyCoach from "@/components/TradeSafetyCoach";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,7 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
   return (
     <>
       <ProfessionalCoinWorkspace symbol={symbol} />
+      <TradeSafetyCoach symbol={symbol} />
       <ExplodeXMentor symbol={symbol} />
       <ManualTradeMirror symbol={symbol} />
     </>
