@@ -1,5 +1,21 @@
 export type LockedPlanDirection = "LONG" | "SHORT";
 
+export type ThesisHealthSnapshot = {
+  at: number;
+  price: number;
+  r: number;
+  health: number;
+  currentDirection?: string;
+  directionConflict: boolean;
+  emaAligned: boolean | null;
+  structure?: string;
+  structureAligned: boolean | null;
+  rsi14?: number;
+  volumeRatio?: number;
+  riskGuardPass: boolean;
+  state: "STRONG" | "STABLE" | "WEAKENING" | "DETERIORATING" | "INVALIDATED";
+};
+
 export type LockedPlan = {
   symbol: string;
   direction: LockedPlanDirection;
@@ -20,13 +36,18 @@ export type LockedPlan = {
   initialRiskScore: number;
   enteredAt?: number;
   actualEntryPrice?: number;
-  // Post-entry excursion memory. These values are only observational and never
+  // Post-entry excursion memory. These values are observational and never
   // move the original stop farther away.
   bestPriceSeen?: number;
   worstPriceSeen?: number;
   maxRSeen?: number;
   minRSeen?: number;
   watchdogUpdatedAt?: number;
+  // Progressive thesis memory sampled roughly every five minutes while the
+  // user has ExplodeX open. This is used to detect persistent deterioration,
+  // not to create a fake probability.
+  thesisSnapshots?: ThesisHealthSnapshot[];
+  thesisSnapshotUpdatedAt?: number;
   // Current canonical names used by the /planes board.
   marginUsdt?: number;
   leverage?: number;
@@ -48,6 +69,7 @@ function normalizeSymbol(symbol: string) {
 function normalizePlan(plan: LockedPlan): LockedPlan {
   const margin = plan.marginUsdt ?? plan.marginUsed;
   const notes = plan.notes ?? plan.note;
+  const snapshots = Array.isArray(plan.thesisSnapshots) ? plan.thesisSnapshots.slice(-36) : [];
   return {
     ...plan,
     symbol: normalizeSymbol(plan.symbol),
@@ -55,6 +77,7 @@ function normalizePlan(plan: LockedPlan): LockedPlan {
     marginUsed: margin,
     notes,
     note: notes,
+    thesisSnapshots: snapshots,
   };
 }
 
