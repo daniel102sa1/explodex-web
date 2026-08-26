@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Activity, ChevronDown, ChevronUp, Layers3, ShieldCheck, Target } from "lucide-react";
+import { Activity, Brain, ChevronDown, ChevronUp, ShieldCheck, Target } from "lucide-react";
 import EntryShieldX from "@/components/EntryShieldX";
 import ExplodeXMentor from "@/components/ExplodeXMentor";
 import ManualTradeMirror from "@/components/ManualTradeMirror";
@@ -16,8 +16,9 @@ import TradeSafetyCoach from "@/components/TradeSafetyCoach";
 import TraderConfidenceEngine from "@/components/TraderConfidenceEngine";
 import TraderReadPanel from "@/components/TraderReadPanel";
 import TrapDetectorX from "@/components/TrapDetectorX";
+import VerdictLearningLab from "@/components/VerdictLearningLab";
 
-type Group = "ENTRY" | "RISK" | "POST" | null;
+type Group = "ENTRY" | "RISK" | "POST" | "LEARNING";
 
 export default function ExplodeXAnalysisHub({ symbol }: { symbol: string }) {
   const [open, setOpen] = useState(false);
@@ -41,28 +42,11 @@ export default function ExplodeXAnalysisHub({ symbol }: { symbol: string }) {
       </button>
 
       {open && <div className="border-t border-slate-800">
-        <div className="grid gap-2 p-3 sm:grid-cols-3">
-          <Tab
-            active={group === "ENTRY"}
-            icon={<Target size={15}/>}
-            title="1. Entrada"
-            text="Camino, trampas, momentum, timing y confianza"
-            onClick={() => setGroup("ENTRY")}
-          />
-          <Tab
-            active={group === "RISK"}
-            icon={<ShieldCheck size={15}/>}
-            title="2. Riesgo"
-            text="Stop, R:R, estructura y tesis multi-timeframe"
-            onClick={() => setGroup("RISK")}
-          />
-          <Tab
-            active={group === "POST"}
-            icon={<Activity size={15}/>}
-            title="3. Post-entrada"
-            text="Watchdog, reclaim, deterioro y gestión"
-            onClick={() => setGroup("POST")}
-          />
+        <div className="grid gap-2 p-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Tab active={group === "ENTRY"} icon={<Target size={15}/>} title="1. Entrada" text="Camino, trampas, momentum, timing y confianza" onClick={() => setGroup("ENTRY")} />
+          <Tab active={group === "RISK"} icon={<ShieldCheck size={15}/>} title="2. Riesgo" text="Stop, R:R, estructura y tesis multi-timeframe" onClick={() => setGroup("RISK")} />
+          <Tab active={group === "POST"} icon={<Activity size={15}/>} title="3. Post-entrada" text="Watchdog, reclaim, deterioro y gestión" onClick={() => setGroup("POST")} />
+          <Tab active={group === "LEARNING"} icon={<Brain size={15}/>} title="4. Aprendizaje" text="LOCK, BURST, Fast Track y resultados reales" onClick={() => setGroup("LEARNING")} />
         </div>
 
         <div className="border-t border-slate-800 pb-4">
@@ -88,6 +72,8 @@ export default function ExplodeXAnalysisHub({ symbol }: { symbol: string }) {
             <ExplodeXMentor symbol={symbol} />
             <ManualTradeMirror symbol={symbol} />
           </>}
+
+          {group === "LEARNING" && <VerdictLearningLab symbol={symbol} />}
         </div>
       </div>}
     </div>
