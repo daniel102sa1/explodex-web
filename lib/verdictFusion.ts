@@ -48,6 +48,53 @@ function num(value: unknown, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function serverFusion(analysis: LiveAnalysis): VerdictFusion | null {
+  const raw = (analysis.prediction as any)?.verdict_fusion as Record<string, any> | undefined;
+  if (!raw || raw.version !== "server_parity_v1" || !raw.locks) return null;
+
+  const hardBlockReasonMap: Record<string, string> = {
+    invalidation_crossed: "La tesis cruzó su invalidación.",
+    risk_guard: "Risk Guard bloquea la operación.",
+    direction_conflict: "Dirección principal y predictor están en conflicto.",
+    data_limited: "Calidad de datos insuficiente para una entrada limpia.",
+  };
+
+  return {
+    direction: raw.direction as VerdictDirection,
+    locks: {
+      core: Boolean(raw.locks.core),
+      mtf: Boolean(raw.locks.mtf),
+      flow: Boolean(raw.locks.flow),
+      trap: Boolean(raw.locks.trap),
+      momentum: Boolean(raw.locks.momentum),
+      entry: Boolean(raw.locks.entry),
+    },
+    passCount: num(raw.pass_count),
+    hardBlock: Boolean(raw.hard_block),
+    hardBlockReason: raw.hard_block_reason ? (hardBlockReasonMap[String(raw.hard_block_reason)] ?? String(raw.hard_block_reason)) : undefined,
+    candidateEnter: Boolean(raw.candidate_enter),
+    fastTrack: Boolean(raw.fast_track),
+    trapRisk: num(raw.trap_risk),
+    decayRisk: num(raw.decay_risk),
+    accelerationScore: num(raw.acceleration_score),
+    burstDetected: Boolean(raw.burst_detected),
+    mtfStrength: num(raw.mtf_strength),
+    flowStrength: num(raw.flow_strength),
+    entryQuality: num(raw.entry_quality),
+    technicalConfidence: num(raw.technical_confidence),
+    inZone: Boolean(raw.in_zone),
+    nearZone: Boolean(raw.near_zone),
+    chase: Boolean(raw.chase),
+    invalidated: Boolean(raw.invalidated),
+    price: num(raw.price),
+    entryLow: num(raw.entry_low),
+    entryHigh: num(raw.entry_high),
+    stop: num(raw.stop),
+    tp1: num(raw.tp1),
+    rr1: num(raw.rr1),
+  };
+}
+
 function ema(values: number[], period: number) {
   if (!values.length) return 0;
   const alpha = 2 / (period + 1);
@@ -176,6 +223,9 @@ export function buildVerdictFusion(
   m5: Candle[],
   m15: Candle[],
 ): VerdictFusion {
+  const fromServer = serverFusion(analysis);
+  if (fromServer) return fromServer;
+
   const direction = (analysis.prediction?.direction ?? analysis.direction) as VerdictDirection;
   const side = direction === "LONG" ? 1 : -1;
   const phase = String(analysis.prediction?.phase ?? "SIN_SETUP");
