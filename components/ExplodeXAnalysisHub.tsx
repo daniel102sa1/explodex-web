@@ -21,6 +21,7 @@ import RecoveryReclaimEngine from "@/components/RecoveryReclaimEngine";
 import RiskGuardPanel from "@/components/RiskGuardPanel";
 import RollingContextValidationPanel from "@/components/RollingContextValidationPanel";
 import RunnerShadowPanel from "@/components/RunnerShadowPanel";
+import RunnerWalkForwardPanel from "@/components/RunnerWalkForwardPanel";
 import ShadowOutcomeModelPanel from "@/components/ShadowOutcomeModelPanel";
 import TemporalPathEngine from "@/components/TemporalPathEngine";
 import Tp1ContinuationResearchPanel from "@/components/Tp1ContinuationResearchPanel";
@@ -53,14 +54,14 @@ export default function ExplodeXAnalysisHub({ symbol }: { symbol: string }) {
           <Tab active={group === "ENTRY"} icon={<Target size={15}/>} title="1. Entrada" text="Zona óptima, contexto, exchanges, liquidaciones, trampas, momentum y timing" onClick={() => setGroup("ENTRY")} />
           <Tab active={group === "RISK"} icon={<ShieldCheck size={15}/>} title="2. Riesgo" text="Sizing, stop, R:R, estructura y tesis multi-timeframe" onClick={() => setGroup("RISK")} />
           <Tab active={group === "POST"} icon={<Activity size={15}/>} title="3. Post-entrada" text="Watchdog, reclaim, deterioro y gestión" onClick={() => setGroup("POST")} />
-          <Tab active={group === "LEARNING"} icon={<Brain size={15}/>} title="4. Aprendizaje" text="Memoria, edge, continuación y runner shadow, walk-forward, rolling y veto" onClick={() => setGroup("LEARNING")} />
+          <Tab active={group === "LEARNING"} icon={<Brain size={15}/>} title="4. Aprendizaje" text="Memoria, edge, continuación, runner shadow + walk-forward, rolling y veto" onClick={() => setGroup("LEARNING")} />
         </div>
 
         <div className="border-t border-slate-800 pb-4">
           {group === "ENTRY" && <><EntryZoneProgressionPanel symbol={symbol} /><ContextEnginePanel symbol={symbol} /><ExchangeLeadLagPanel symbol={symbol} /><LiquidationCascadePanel symbol={symbol} /><TemporalPathEngine symbol={symbol} /><TrapDetectorX symbol={symbol} /><MomentumDecayEngine symbol={symbol} /><EntryShieldX symbol={symbol} /><TraderConfidenceEngine symbol={symbol} /></>}
           {group === "RISK" && <><PositionSizingPanel symbol={symbol} /><RiskGuardPanel symbol={symbol} /><MultiTimeframeThesisPanel symbol={symbol} /><TradeSafetyCoach symbol={symbol} /><TraderReadPanel symbol={symbol} /></>}
           {group === "POST" && <><PostEntryWatchdog symbol={symbol} /><RecoveryReclaimEngine symbol={symbol} /><ProgressiveThesisMonitor symbol={symbol} /><ExplodeXMentor symbol={symbol} /><ManualTradeMirror symbol={symbol} /></>}
-          {group === "LEARNING" && <><VerdictLearningLab symbol={symbol} /><FusionEdgeResearchPanel /><Tp1ContinuationResearchPanel /><RunnerShadowPanel /><ShadowOutcomeModelPanel /><WalkForwardPanel /><RollingContextValidationPanel /><ContextMetaShadowPanel /><GraduatedVetoShadowPanel /></>}
+          {group === "LEARNING" && <><VerdictLearningLab symbol={symbol} /><FusionEdgeResearchPanel /><Tp1ContinuationResearchPanel /><RunnerShadowPanel /><RunnerWalkForwardPanel /><ShadowOutcomeModelPanel /><WalkForwardPanel /><RollingContextValidationPanel /><ContextMetaShadowPanel /><GraduatedVetoShadowPanel /></>}
         </div>
       </div>}
     </div>
