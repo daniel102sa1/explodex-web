@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bell, CheckCircle2, Clock3, ShieldX, Target, TrendingDown, TrendingUp } from "lucide-react";
+import { Bell, CheckCircle2, Clock3, ShieldX, Target, TrendingDown, TrendingUp, Zap } from "lucide-react";
 import { getCandles, getLiveAnalysis, type Candle, type LiveAnalysis } from "@/lib/api";
 import { buildVerdictFusion, type VerdictDirection, type VerdictFusion } from "@/lib/verdictFusion";
+import { appendVerdictJournal } from "@/lib/verdictJournal";
 
 type Verdict = "ENTER" | "WAIT" | "NO_TRADE";
 
@@ -140,24 +141,16 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
     if (!fusion || !analysis) return null;
 
     const last = history.at(-1);
-    const previousCandidateSameDirection = Boolean(
-      last && last.candidate && last.direction === fusion.direction,
-    );
+    const previousCandidateSameDirection = Boolean(last && last.candidate && last.direction === fusion.direction);
     const prior2 = history.slice(-2);
-    const priorDirectionLocked = prior2.length === 2 && prior2[0].direction === prior2[1].direction
-      ? prior2[0].direction
-      : null;
+    const priorDirectionLocked = prior2.length === 2 && prior2[0].direction === prior2[1].direction ? prior2[0].direction : null;
     const firstFlipAgainstLock = Boolean(priorDirectionLocked && priorDirectionLocked !== fusion.direction);
 
     const activeLatch = latch && latch.expiresAt > Date.now() ? latch : null;
     const latchStopHit = activeLatch
-      ? activeLatch.direction === "LONG"
-        ? fusion.price <= activeLatch.stop
-        : fusion.price >= activeLatch.stop
+      ? activeLatch.direction === "LONG" ? fusion.price <= activeLatch.stop : fusion.price >= activeLatch.stop
       : false;
-    const last2OppositeLatch = activeLatch && prior2.length === 2
-      ? prior2.every((x) => x.direction !== activeLatch.direction)
-      : false;
+    const last2OppositeLatch = activeLatch && prior2.length === 2 ? prior2.every((x) => x.direction !== activeLatch.direction) : false;
     const severeSoftBlock = fusion.trapRisk >= 75 || fusion.decayRisk >= 82;
     const latchStillNear = activeLatch ? fusion.inZone || fusion.nearZone : false;
 
@@ -195,9 +188,9 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
       next = "No perseguir. Esperar retest o un setup nuevo.";
     } else if (fusion.fastTrack && !firstFlipAgainstLock) {
       verdict = "ENTER";
-      title = "ENTRAR AHORA · PAPER";
+      title = fusion.burstDetected ? "ENTRAR AHORA · BURST · PAPER" : "ENTRAR AHORA · PAPER";
       reason = `FAST TRACK: ${fusion.passCount}/6 candados y confianza técnica ${fusion.technicalConfidence.toFixed(0)}/100.`;
-      next = "Todos los filtros fuertes coinciden; respetar stop y riesgo.";
+      next = fusion.burstDetected ? `Aceleración ${fusion.accelerationScore.toFixed(0)}/100; respetar zona y stop.` : "Todos los filtros fuertes coinciden; respetar stop y riesgo.";
     } else if (fusion.candidateEnter && previousCandidateSameDirection && !firstFlipAgainstLock) {
       verdict = "ENTER";
       title = "ENTRAR AHORA · PAPER";
@@ -209,7 +202,7 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
       reason = firstFlipAgainstLock
         ? `Direction Lock todavía conserva ${priorDirectionLocked}; una sola lectura contraria no basta.`
         : `Hay ${fusion.passCount}/6 candados, pero falta una segunda lectura para evitar falsa confirmación.`;
-      next = "Mantener la moneda visible; la siguiente lectura decide.";
+      next = fusion.burstDetected ? `⚡ Burst ${fusion.accelerationScore.toFixed(0)}/100 detectado; la siguiente lectura decide.` : "Mantener la moneda visible; la siguiente lectura decide.";
     } else if (!fusion.locks.entry) {
       verdict = "WAIT";
       title = fusion.chase ? "ESPERAR RETEST" : "ESPERAR ZONA";
@@ -233,20 +226,8 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
     }
 
     const displayed = useLatch && activeLatch
-      ? {
-          direction: activeLatch.direction,
-          entryLow: activeLatch.entryLow,
-          entryHigh: activeLatch.entryHigh,
-          stop: activeLatch.stop,
-          tp1: activeLatch.tp1,
-        }
-      : {
-          direction: fusion.direction,
-          entryLow: fusion.entryLow,
-          entryHigh: fusion.entryHigh,
-          stop: fusion.stop,
-          tp1: fusion.tp1,
-        };
+      ? { direction: activeLatch.direction, entryLow: activeLatch.entryLow, entryHigh: activeLatch.entryHigh, stop: activeLatch.stop, tp1: activeLatch.tp1 }
+      : { direction: fusion.direction, entryLow: fusion.entryLow, entryHigh: fusion.entryHigh, stop: fusion.stop, tp1: fusion.tp1 };
 
     return {
       verdict,
@@ -259,6 +240,9 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
       confidence: fusion.technicalConfidence,
       trapRisk: fusion.trapRisk,
       decayRisk: fusion.decayRisk,
+      accelerationScore: fusion.accelerationScore,
+      burstDetected: fusion.burstDetected,
+      fastTrack: fusion.fastTrack,
       shouldOpenLatch: verdict === "ENTER" && !activeLatch,
       shouldClearLatch: Boolean(activeLatch && (fusion.hardBlock || latchStopHit || severeSoftBlock || last2OppositeLatch)),
     };
@@ -288,13 +272,34 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
 
   useEffect(() => {
     if (!view) return;
+    appendVerdictJournal({
+      symbol: safeSymbol,
+      verdict: view.verdict,
+      direction: view.direction,
+      price: view.price,
+      entryLow: view.entryLow,
+      entryHigh: view.entryHigh,
+      stop: view.stop,
+      tp1: view.tp1,
+      lockCount: view.passCount,
+      technicalConfidence: view.confidence,
+      trapRisk: view.trapRisk,
+      decayRisk: view.decayRisk,
+      accelerationScore: view.accelerationScore,
+      fastTrack: view.fastTrack,
+      reason: view.reason,
+    });
+  }, [view, safeSymbol]);
+
+  useEffect(() => {
+    if (!view) return;
     const previous = previousVerdict.current;
     if (view.verdict === "ENTER" && previous !== "ENTER") {
       try {
         document.title = `🟢 ENTRAR ${safeSymbol} · ExplodeX`;
         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
           new Notification(`ExplodeX · ${safeSymbol}`, {
-            body: `${view.direction} habilitado · entrada ${formatPrice(view.entryLow)}–${formatPrice(view.entryHigh)} · LOCK ${view.passCount}/6`,
+            body: `${view.direction} habilitado · entrada ${formatPrice(view.entryLow)}–${formatPrice(view.entryHigh)} · LOCK ${view.passCount}/6${view.burstDetected ? " · BURST" : ""}`,
           });
         }
       } catch {}
@@ -320,7 +325,10 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
           <div className={`mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-black/20 ${titleTone}`}><Icon size={22}/></div>
           <div>
             <div className="text-[9px] font-black uppercase tracking-[.18em] text-slate-400">ExplodeX VERDICT · árbitro central</div>
-            <div className={`mt-1 text-2xl font-black sm:text-3xl ${titleTone}`}>{view.title}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <div className={`text-2xl font-black sm:text-3xl ${titleTone}`}>{view.title}</div>
+              {view.burstDetected && <span className="inline-flex items-center gap-1 rounded-full border border-yellow-400/25 bg-yellow-400/10 px-2.5 py-1 text-[10px] font-black text-yellow-200"><Zap size={12}/> BURST {view.accelerationScore.toFixed(0)}</span>}
+            </div>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-200">
               <span className={`inline-flex items-center gap-1 font-black ${view.direction === "LONG" ? "text-emerald-300" : "text-rose-300"}`}><DirIcon size={15}/>{view.direction}</span>
               <span>·</span><span>{view.reason}</span>
@@ -340,7 +348,7 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/15 px-3 py-2 text-[11px]">
         <span className="font-semibold text-slate-300"><Target size={13} className="mr-1.5 inline"/>{view.next}</span>
-        <span className="inline-flex items-center gap-1.5 text-slate-500"><Bell size={12}/>Actualiza ~10 s · trampa {view.trapRisk.toFixed(0)} · decay {view.decayRisk.toFixed(0)}. No es garantía de beneficio.</span>
+        <span className="inline-flex items-center gap-1.5 text-slate-500"><Bell size={12}/>Actualiza ~10 s · trampa {view.trapRisk.toFixed(0)} · decay {view.decayRisk.toFixed(0)} · accel {view.accelerationScore.toFixed(0)}. No es garantía.</span>
       </div>
     </div>
   </section>;
