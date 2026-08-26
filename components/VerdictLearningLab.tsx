@@ -1,87 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, Brain, CheckCircle2, Clock3, ShieldAlert, Zap } from "lucide-react";
-import { getCandles, type Candle } from "@/lib/api";
+import { BarChart3, Brain, CheckCircle2, Clock3, ShieldAlert } from "lucide-react";
 import {
   getVerdictProfileStats,
   readVerdictJournal,
-  updateVerdictJournalEntry,
   type VerdictJournalEntry,
 } from "@/lib/verdictJournal";
-
-function evaluate(entry: VerdictJournalEntry, candles: Candle[]) {
-  const rows = candles.filter((c) => c.time >= entry.at);
-  if (!rows.length) return null;
-
-  const direction = entry.direction;
-  let tp1At: number | undefined;
-  let stopAt: number | undefined;
-  let ambiguous = false;
-  let best = entry.price;
-  let worst = entry.price;
-
-  for (const c of rows) {
-    const hitTp = direction === "LONG" ? c.high >= entry.tp1 : c.low <= entry.tp1;
-    const hitStop = direction === "LONG" ? c.low <= entry.stop : c.high >= entry.stop;
-
-    if (direction === "LONG") {
-      best = Math.max(best, c.high);
-      worst = Math.min(worst, c.low);
-    } else {
-      best = Math.min(best, c.low);
-      worst = Math.max(worst, c.high);
-    }
-
-    if (!tp1At && hitTp) tp1At = c.time;
-    if (!stopAt && hitStop) stopAt = c.time;
-    if (hitTp && hitStop && !tp1At && !stopAt) {
-      ambiguous = true;
-      break;
-    }
-    if (tp1At || stopAt) break;
-  }
-
-  const mfePct = direction === "LONG"
-    ? (best - entry.price) / entry.price * 100
-    : (entry.price - best) / entry.price * 100;
-  const maePct = direction === "LONG"
-    ? (entry.price - worst) / entry.price * 100
-    : (worst - entry.price) / entry.price * 100;
-
-  if (ambiguous) return { outcome: "AMBIGUOUS" as const, mfePct, maePct };
-  if (tp1At && (!stopAt || tp1At < stopAt)) {
-    return {
-      outcome: "TP1_FIRST" as const,
-      tp1At,
-      mfePct,
-      maePct,
-      minutesToOutcome: (tp1At - entry.at) / 60000,
-    };
-  }
-  if (stopAt) {
-    return {
-      outcome: "STOP_FIRST" as const,
-      stopAt,
-      mfePct,
-      maePct,
-      minutesToOutcome: (stopAt - entry.at) / 60000,
-    };
-  }
-  return null;
-}
-
-function intervalForAge(ageHours: number) {
-  if (ageHours <= 24) return "5m";
-  if (ageHours <= 72) return "15m";
-  return null;
-}
 
 export default function VerdictLearningLab({ symbol }: { symbol: string }) {
   const safeSymbol = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
   const [rows, setRows] = useState<VerdictJournalEntry[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [lastRun, setLastRun] = useState<number | null>(null);
 
   useEffect(() => {
     const refresh = () => setRows(readVerdictJournal());
@@ -89,60 +18,6 @@ export default function VerdictLearningLab({ symbol }: { symbol: string }) {
     window.addEventListener("explodex:verdict-journal-changed", refresh as EventListener);
     return () => window.removeEventListener("explodex:verdict-journal-changed", refresh as EventListener);
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function run() {
-      if (busy) return;
-      const unresolved = readVerdictJournal()
-        .filter((row) => row.verdict === "ENTER" && !row.outcome)
-        .filter((row) => Date.now() - row.at >= 5 * 60_000)
-        .slice(-20);
-      if (!unresolved.length) return;
-
-      setBusy(true);
-      try {
-        const bySymbol = new Map<string, VerdictJournalEntry[]>();
-        for (const row of unresolved) {
-          const group = bySymbol.get(row.symbol) ?? [];
-          group.push(row);
-          bySymbol.set(row.symbol, group);
-        }
-
-        for (const [signalSymbol, group] of bySymbol) {
-          const oldest = Math.min(...group.map((x) => x.at));
-          const ageHours = (Date.now() - oldest) / 3600_000;
-          const interval = intervalForAge(ageHours);
-          if (!interval) continue;
-          const candles = await getCandles(signalSymbol, interval, 300);
-          if (cancelled) return;
-
-          for (const entry of group) {
-            const result = evaluate(entry, candles);
-            if (!result) continue;
-            updateVerdictJournalEntry(entry.id, {
-              ...result,
-              evaluatedAt: Date.now(),
-            });
-          }
-        }
-      } catch {}
-      finally {
-        if (!cancelled) {
-          setBusy(false);
-          setLastRun(Date.now());
-          setRows(readVerdictJournal());
-        }
-      }
-    }
-
-    run();
-    const timer = window.setInterval(run, 60_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [busy]);
 
   const stats = useMemo(() => {
     const resolved = rows.filter((row) => row.verdict === "ENTER" && (row.outcome === "TP1_FIRST" || row.outcome === "STOP_FIRST"));
@@ -153,6 +28,8 @@ export default function VerdictLearningLab({ symbol }: { symbol: string }) {
     const fast = getVerdictProfileStats({ fastTrack: true });
     const currentSymbol = resolved.filter((row) => row.symbol === safeSymbol);
     const currentWins = currentSymbol.filter((row) => row.outcome === "TP1_FIRST").length;
+    const ambiguous = rows.filter((row) => row.verdict === "ENTER" && row.outcome === "AMBIGUOUS").length;
+    const unresolved = rows.filter((row) => row.verdict === "ENTER" && !row.outcome).length;
     return {
       total: resolved.length,
       wins,
@@ -163,6 +40,8 @@ export default function VerdictLearningLab({ symbol }: { symbol: string }) {
       fast,
       currentSymbolN: currentSymbol.length,
       currentSymbolRate: currentSymbol.length ? currentWins / currentSymbol.length * 100 : null,
+      ambiguous,
+      unresolved,
     };
   }, [rows, safeSymbol]);
 
@@ -172,9 +51,9 @@ export default function VerdictLearningLab({ symbol }: { symbol: string }) {
         <div>
           <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[.14em] text-violet-300"><Brain size={16}/> Verdict Learning Lab</div>
           <div className="mt-2 text-xl font-black text-white">¿Qué versión del VERDICT funciona de verdad?</div>
-          <div className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">Etiqueta automáticamente ENTER como TP1 primero o STOP primero usando velas posteriores. Las estadísticas son históricas, no una promesa del próximo trade.</div>
+          <div className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">El worker silencioso etiqueta ENTER como TP1 primero, STOP primero o ambiguo usando velas posteriores. Estas tasas son históricas, no una promesa del próximo trade.</div>
         </div>
-        <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2 text-[10px] text-slate-400">{busy ? "Evaluando..." : lastRun ? `Última revisión ${new Date(lastRun).toLocaleTimeString()}` : "Aprendiendo"}</div>
+        <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2 text-[10px] text-slate-400">{stats.unresolved} pendientes · {stats.ambiguous} ambiguos</div>
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -193,11 +72,11 @@ export default function VerdictLearningLab({ symbol }: { symbol: string }) {
         </div>
         <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[.025] p-4">
           <div className="flex items-center gap-2 text-xs font-black text-amber-200"><ShieldAlert size={14}/> Regla de aprendizaje</div>
-          <div className="mt-2 text-xs leading-5 text-slate-400">El historial solo puede actuar como <b className="text-white">veto suave</b> cuando hay al menos 30 resultados comparables. Nunca crea una entrada, nunca aumenta el apalancamiento y nunca convierte un score en certeza.</div>
+          <div className="mt-2 text-xs leading-5 text-slate-400">El historial solo puede actuar como <b className="text-white">veto suave</b> con al menos 30 resultados comparables. Nunca crea una entrada, nunca aumenta el apalancamiento y nunca convierte un score en certeza.</div>
         </div>
       </div>
 
-      <div className="mt-4 flex items-center gap-2 text-[10px] text-slate-500"><Clock3 size={12}/><span>Las señales sin resolver permanecen fuera del win rate hasta que TP1 o STOP pueda determinarse.</span>{stats.total >= 30 && <span className="ml-auto inline-flex items-center gap-1 text-emerald-300"><CheckCircle2 size={12}/>Ya existe muestra global útil</span>}</div>
+      <div className="mt-4 flex items-center gap-2 text-[10px] text-slate-500"><Clock3 size={12}/><span>Las señales sin resolver y las velas ambiguas quedan fuera del win rate.</span>{stats.total >= 30 && <span className="ml-auto inline-flex items-center gap-1 text-emerald-300"><CheckCircle2 size={12}/>Ya existe muestra global útil</span>}</div>
     </div>
   </section>;
 }
