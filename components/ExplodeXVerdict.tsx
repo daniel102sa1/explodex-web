@@ -1,15 +1,32 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Bell, CheckCircle2, Clock3, ShieldX, Target, TrendingDown, TrendingUp } from "lucide-react";
-import { getLiveAnalysis, type LiveAnalysis } from "@/lib/api";
+import { Bell, CheckCircle2, Clock3, ShieldX, Target, TrendingDown, TrendingUp } from "lucide-react";
+import { getCandles, getLiveAnalysis, type Candle, type LiveAnalysis } from "@/lib/api";
+import { buildVerdictFusion, type VerdictDirection, type VerdictFusion } from "@/lib/verdictFusion";
 
 type Verdict = "ENTER" | "WAIT" | "NO_TRADE";
 
-function num(value: unknown, fallback = 0) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
-}
+type VerdictSample = {
+  at: number;
+  direction: VerdictDirection;
+  candidate: boolean;
+  passCount: number;
+  confidence: number;
+};
+
+type EntryLatch = {
+  direction: VerdictDirection;
+  openedAt: number;
+  expiresAt: number;
+  entryLow: number;
+  entryHigh: number;
+  stop: number;
+  tp1: number;
+};
+
+const HISTORY_PREFIX = "explodex:verdict-history:";
+const LATCH_PREFIX = "explodex:verdict-latch:";
 
 function formatPrice(value: number) {
   if (!Number.isFinite(value) || value <= 0) return "—";
@@ -18,110 +35,266 @@ function formatPrice(value: number) {
   return value.toLocaleString(undefined, { maximumSignificantDigits: 8 });
 }
 
+function readHistory(symbol: string): VerdictSample[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(`${HISTORY_PREFIX}${symbol}`);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.slice(-8) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(symbol: string, rows: VerdictSample[]) {
+  if (typeof window === "undefined") return;
+  try { localStorage.setItem(`${HISTORY_PREFIX}${symbol}`, JSON.stringify(rows.slice(-8))); } catch {}
+}
+
+function readLatch(symbol: string): EntryLatch | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(`${LATCH_PREFIX}${symbol}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as EntryLatch;
+    if (!parsed?.expiresAt || parsed.expiresAt <= Date.now()) {
+      localStorage.removeItem(`${LATCH_PREFIX}${symbol}`);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveLatch(symbol: string, latch: EntryLatch | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (!latch) localStorage.removeItem(`${LATCH_PREFIX}${symbol}`);
+    else localStorage.setItem(`${LATCH_PREFIX}${symbol}`, JSON.stringify(latch));
+  } catch {}
+}
+
 export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
   const safeSymbol = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
   const [analysis, setAnalysis] = useState<LiveAnalysis | null>(null);
+  const [m1, setM1] = useState<Candle[]>([]);
+  const [m5, setM5] = useState<Candle[]>([]);
+  const [m15, setM15] = useState<Candle[]>([]);
+  const [history, setHistory] = useState<VerdictSample[]>([]);
+  const [latch, setLatch] = useState<EntryLatch | null>(null);
   const previousVerdict = useRef<Verdict | null>(null);
 
   useEffect(() => {
+    setHistory(readHistory(safeSymbol));
+    setLatch(readLatch(safeSymbol));
+  }, [safeSymbol]);
+
+  useEffect(() => {
     let cancelled = false;
-    async function load(force = false) {
+    async function load() {
       try {
-        const value = await getLiveAnalysis(safeSymbol, force);
-        if (!cancelled) setAnalysis(value);
+        const [a, c1, c5, c15] = await Promise.all([
+          getLiveAnalysis(safeSymbol, true),
+          getCandles(safeSymbol, "1m", 72),
+          getCandles(safeSymbol, "5m", 72),
+          getCandles(safeSymbol, "15m", 72),
+        ]);
+        if (!cancelled) {
+          setAnalysis(a);
+          setM1(c1);
+          setM5(c5);
+          setM15(c15);
+        }
       } catch {}
     }
-    load(true);
-    const timer = window.setInterval(() => load(true), 10_000);
+    load();
+    const timer = window.setInterval(load, 10_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
   }, [safeSymbol]);
 
+  const fusion: VerdictFusion | null = useMemo(() => {
+    if (!analysis || m1.length < 30 || m5.length < 30 || m15.length < 30) return null;
+    return buildVerdictFusion(analysis, m1, m5, m15);
+  }, [analysis, m1, m5, m15]);
+
+  useEffect(() => {
+    if (!fusion) return;
+    const last = history.at(-1);
+    if (last && Date.now() - last.at < 8_000) return;
+    const next = [...history, {
+      at: Date.now(),
+      direction: fusion.direction,
+      candidate: fusion.candidateEnter,
+      passCount: fusion.passCount,
+      confidence: fusion.technicalConfidence,
+    }].slice(-8);
+    setHistory(next);
+    saveHistory(safeSymbol, next);
+  }, [fusion, history, safeSymbol]);
+
   const view = useMemo(() => {
-    if (!analysis) return null;
-    const direction = analysis.prediction?.direction ?? analysis.direction;
-    const phase = String(analysis.prediction?.phase ?? "SIN_SETUP");
-    const price = num(analysis.current_price);
-    const entryLow = Math.min(num(analysis.entry_low), num(analysis.entry_high));
-    const entryHigh = Math.max(num(analysis.entry_low), num(analysis.entry_high));
-    const stop = num(analysis.stop_loss);
-    const tp1 = num(analysis.tp1);
-    const setup = num(analysis.setup_score);
-    const prep = num(analysis.prediction?.preactivation_score);
-    const riskGuardPass = analysis.ready_checks?.risk_guard_pass !== false;
-    const directionMatch = analysis.ready_checks?.direction_match !== false;
-    const chase = Boolean(analysis.ready_checks?.chase_risk ?? analysis.prediction?.sequence?.chase_risk);
-    const inZone = entryLow > 0 && entryHigh > 0 && price >= entryLow && price <= entryHigh;
-    const invalidation = num(analysis.invalidation_price, stop);
-    const invalidated = direction === "LONG" ? price <= invalidation : price >= invalidation;
-    const dataLimited = analysis.data_quality === "LIMITED";
+    if (!fusion || !analysis) return null;
+
+    const last = history.at(-1);
+    const previousCandidateSameDirection = Boolean(
+      last && last.candidate && last.direction === fusion.direction,
+    );
+    const prior2 = history.slice(-2);
+    const priorDirectionLocked = prior2.length === 2 && prior2[0].direction === prior2[1].direction
+      ? prior2[0].direction
+      : null;
+    const firstFlipAgainstLock = Boolean(priorDirectionLocked && priorDirectionLocked !== fusion.direction);
+
+    const activeLatch = latch && latch.expiresAt > Date.now() ? latch : null;
+    const latchStopHit = activeLatch
+      ? activeLatch.direction === "LONG"
+        ? fusion.price <= activeLatch.stop
+        : fusion.price >= activeLatch.stop
+      : false;
+    const last2OppositeLatch = activeLatch && prior2.length === 2
+      ? prior2.every((x) => x.direction !== activeLatch.direction)
+      : false;
+    const severeSoftBlock = fusion.trapRisk >= 75 || fusion.decayRisk >= 82;
+    const latchStillNear = activeLatch ? fusion.inZone || fusion.nearZone : false;
 
     let verdict: Verdict = "WAIT";
     let title = "ESPERAR";
     let reason = "Todavía falta completar la confirmación.";
     let next = "No entrar hasta que el sistema habilite la zona.";
+    let useLatch = false;
 
-    if (invalidated) {
+    if (fusion.hardBlock || latchStopHit) {
       verdict = "NO_TRADE";
       title = "NO TRADE";
-      reason = "La tesis actual ya cruzó su invalidación.";
-      next = "Esperar un setup nuevo; no rescatar este plan ampliando el stop.";
-    } else if (!riskGuardPass) {
-      verdict = "NO_TRADE";
-      title = "NO TRADE";
-      reason = "Risk Guard bloquea esta operación.";
-      next = "No entrar aunque el precio siga moviéndose en la dirección esperada.";
-    } else if (!directionMatch) {
-      verdict = "NO_TRADE";
-      title = "NO TRADE";
-      reason = "La dirección principal y el predictor están en conflicto.";
-      next = "Esperar a que la dirección vuelva a estabilizarse.";
-    } else if (dataLimited) {
+      reason = latchStopHit ? "El plan bloqueado alcanzó su stop original." : (fusion.hardBlockReason ?? "Existe un bloqueo duro.");
+      next = "Esperar un setup nuevo; no ampliar el stop ni rescatar una tesis invalidada.";
+    } else if (activeLatch && last2OppositeLatch) {
       verdict = "WAIT";
-      title = "ESPERAR";
-      reason = "Los datos están limitados; no hay suficiente calidad para llamar una entrada limpia.";
-      next = "Esperar una lectura completa antes de actuar.";
-    } else if (chase || phase === "ESPERAR_RETEST") {
+      title = "PLAN EN REEVALUACIÓN";
+      reason = "La dirección contraria ya apareció en dos lecturas consecutivas.";
+      next = "No agregar exposición hasta que vuelva a estabilizarse.";
+    } else if (activeLatch && severeSoftBlock) {
       verdict = "WAIT";
-      title = "ESPERAR RETEST";
-      reason = "La dirección puede ser correcta, pero entrar ahora sería perseguir el precio.";
-      next = `Zona válida: ${formatPrice(entryLow)}–${formatPrice(entryHigh)}.`;
-    } else if (analysis.state === "READY" && phase === "ACTIVADO" && inZone) {
+      title = "VENTANA SUSPENDIDA";
+      reason = fusion.trapRisk >= 75 ? "Aumentó demasiado el riesgo de falsa ruptura." : "El impulso muestra agotamiento extremo.";
+      next = "Esperar reclaim o una nueva confirmación antes de entrar.";
+    } else if (activeLatch && latchStillNear) {
+      verdict = "ENTER";
+      title = "ENTRADA VIGENTE · PAPER";
+      reason = "La ventana ya fue confirmada y sigue dentro del rango permitido sin bloqueo duro.";
+      next = `Ventana bloqueada hasta ${new Date(activeLatch.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.`;
+      useLatch = true;
+    } else if (activeLatch && !latchStillNear) {
+      verdict = "WAIT";
+      title = "SE ESCAPÓ LA ZONA";
+      reason = "La entrada fue válida, pero el precio ya salió de la zona razonable.";
+      next = "No perseguir. Esperar retest o un setup nuevo.";
+    } else if (fusion.fastTrack && !firstFlipAgainstLock) {
       verdict = "ENTER";
       title = "ENTRAR AHORA · PAPER";
-      reason = "READY + activación + zona válida + Risk Guard alineados.";
-      next = "Plan habilitado; respetar el stop original y no ampliar riesgo.";
-    } else if (analysis.state === "READY" && phase === "ACTIVADO" && !inZone) {
+      reason = `FAST TRACK: ${fusion.passCount}/6 candados y confianza técnica ${fusion.technicalConfidence.toFixed(0)}/100.`;
+      next = "Todos los filtros fuertes coinciden; respetar stop y riesgo.";
+    } else if (fusion.candidateEnter && previousCandidateSameDirection && !firstFlipAgainstLock) {
+      verdict = "ENTER";
+      title = "ENTRAR AHORA · PAPER";
+      reason = `Confirmación persistente: ${fusion.passCount}/6 candados en lecturas consecutivas.`;
+      next = "La señal sobrevivió la segunda lectura; respetar el plan original.";
+    } else if (fusion.candidateEnter) {
       verdict = "WAIT";
-      title = "ESPERAR ZONA";
-      reason = "El setup está activado, pero el precio actual no está dentro de la zona de entrada.";
-      next = `Esperar ${formatPrice(entryLow)}–${formatPrice(entryHigh)}; no perseguir.`;
-    } else if (["PREACTIVACION", "VIGILAR_CONFIRMACION"].includes(phase) && prep >= 75) {
+      title = "CONFIRMANDO 1/2";
+      reason = firstFlipAgainstLock
+        ? `Direction Lock todavía conserva ${priorDirectionLocked}; una sola lectura contraria no basta.`
+        : `Hay ${fusion.passCount}/6 candados, pero falta una segunda lectura para evitar falsa confirmación.`;
+      next = "Mantener la moneda visible; la siguiente lectura decide.";
+    } else if (!fusion.locks.entry) {
       verdict = "WAIT";
-      title = "CASI LISTO · ESPERAR";
-      reason = "El setup está avanzado, pero todavía no está activado.";
-      next = `Preparación ${prep.toFixed(0)}/100. Vigilar trigger y zona.`;
+      title = fusion.chase ? "ESPERAR RETEST" : "ESPERAR ZONA";
+      reason = fusion.chase ? "La dirección puede ser correcta, pero la entrada actual está perseguida." : "El precio todavía no ofrece una entrada de calidad suficiente.";
+      next = `Zona ${formatPrice(fusion.entryLow)}–${formatPrice(fusion.entryHigh)} · calidad ${fusion.entryQuality.toFixed(0)}/100.`;
+    } else if (!fusion.locks.trap) {
+      verdict = "WAIT";
+      title = "ESPERAR · POSIBLE TRAMPA";
+      reason = `Riesgo de falsa ruptura ${fusion.trapRisk.toFixed(0)}/100.`;
+      next = "Esperar aceptación/reclaim antes de habilitar entrada.";
+    } else if (!fusion.locks.momentum) {
+      verdict = "WAIT";
+      title = "ESPERAR · IMPULSO CANSADO";
+      reason = `Decay ${fusion.decayRisk.toFixed(0)}/100; puede ser una entrada tardía.`;
+      next = "Esperar retest o nueva aceleración.";
     } else {
       verdict = "WAIT";
       title = "ESPERAR";
-      reason = phase === "SIN_SETUP" ? "No existe un setup operativo ahora mismo." : "La señal todavía no reúne todos los requisitos de entrada.";
-      next = `Setup ${setup.toFixed(0)}/100 · preparación ${prep.toFixed(0)}/100.`;
+      reason = `${fusion.passCount}/6 candados. Todavía falta confluencia suficiente.`;
+      next = `MTF ${fusion.mtfStrength.toFixed(0)} · flujo ${fusion.flowStrength.toFixed(0)} · entrada ${fusion.entryQuality.toFixed(0)}.`;
     }
 
-    return { verdict, title, reason, next, direction, price, entryLow, entryHigh, stop, tp1, setup, phase };
-  }, [analysis]);
+    const displayed = useLatch && activeLatch
+      ? {
+          direction: activeLatch.direction,
+          entryLow: activeLatch.entryLow,
+          entryHigh: activeLatch.entryHigh,
+          stop: activeLatch.stop,
+          tp1: activeLatch.tp1,
+        }
+      : {
+          direction: fusion.direction,
+          entryLow: fusion.entryLow,
+          entryHigh: fusion.entryHigh,
+          stop: fusion.stop,
+          tp1: fusion.tp1,
+        };
+
+    return {
+      verdict,
+      title,
+      reason,
+      next,
+      ...displayed,
+      price: fusion.price,
+      passCount: fusion.passCount,
+      confidence: fusion.technicalConfidence,
+      trapRisk: fusion.trapRisk,
+      decayRisk: fusion.decayRisk,
+      shouldOpenLatch: verdict === "ENTER" && !activeLatch,
+      shouldClearLatch: Boolean(activeLatch && (fusion.hardBlock || latchStopHit || severeSoftBlock || last2OppositeLatch)),
+    };
+  }, [fusion, analysis, history, latch]);
+
+  useEffect(() => {
+    if (!view) return;
+    if (view.shouldClearLatch && latch) {
+      setLatch(null);
+      saveLatch(safeSymbol, null);
+      return;
+    }
+    if (view.shouldOpenLatch && !latch) {
+      const nextLatch: EntryLatch = {
+        direction: view.direction,
+        openedAt: Date.now(),
+        expiresAt: Date.now() + 90_000,
+        entryLow: view.entryLow,
+        entryHigh: view.entryHigh,
+        stop: view.stop,
+        tp1: view.tp1,
+      };
+      setLatch(nextLatch);
+      saveLatch(safeSymbol, nextLatch);
+    }
+  }, [view, latch, safeSymbol]);
 
   useEffect(() => {
     if (!view) return;
     const previous = previousVerdict.current;
-    if (view.verdict === "ENTER" && previous && previous !== "ENTER") {
+    if (view.verdict === "ENTER" && previous !== "ENTER") {
       try {
         document.title = `🟢 ENTRAR ${safeSymbol} · ExplodeX`;
         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
           new Notification(`ExplodeX · ${safeSymbol}`, {
-            body: `${view.direction} habilitado · entrada ${formatPrice(view.entryLow)}–${formatPrice(view.entryHigh)}`,
+            body: `${view.direction} habilitado · entrada ${formatPrice(view.entryLow)}–${formatPrice(view.entryHigh)} · LOCK ${view.passCount}/6`,
           });
         }
       } catch {}
@@ -146,24 +319,28 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
         <div className="flex items-start gap-3">
           <div className={`mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-black/20 ${titleTone}`}><Icon size={22}/></div>
           <div>
-            <div className="text-[9px] font-black uppercase tracking-[.18em] text-slate-400">ExplodeX VERDICT · decisión principal</div>
+            <div className="text-[9px] font-black uppercase tracking-[.18em] text-slate-400">ExplodeX VERDICT · árbitro central</div>
             <div className={`mt-1 text-2xl font-black sm:text-3xl ${titleTone}`}>{view.title}</div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-200"><span className={`inline-flex items-center gap-1 font-black ${view.direction === "LONG" ? "text-emerald-300" : "text-rose-300"}`}><DirIcon size={15}/>{view.direction}</span><span>·</span><span>{view.reason}</span></div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-200">
+              <span className={`inline-flex items-center gap-1 font-black ${view.direction === "LONG" ? "text-emerald-300" : "text-rose-300"}`}><DirIcon size={15}/>{view.direction}</span>
+              <span>·</span><span>{view.reason}</span>
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 xl:min-w-[690px]">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-6 xl:min-w-[790px]">
           <Mini label="AHORA" value={formatPrice(view.price)} />
           <Mini label="ENTRADA" value={`${formatPrice(view.entryLow)}–${formatPrice(view.entryHigh)}`} />
           <Mini label="STOP" value={formatPrice(view.stop)} bad />
           <Mini label="TP1" value={formatPrice(view.tp1)} good />
-          <Mini label="SETUP" value={`${view.setup.toFixed(0)}/100`} />
+          <Mini label="LOCK" value={`${view.passCount}/6`} good={view.passCount >= 5} />
+          <Mini label="CONF. TÉCNICA" value={`${view.confidence.toFixed(0)}/100`} />
         </div>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/15 px-3 py-2 text-[11px]">
         <span className="font-semibold text-slate-300"><Target size={13} className="mr-1.5 inline"/>{view.next}</span>
-        <span className="inline-flex items-center gap-1.5 text-slate-500"><Bell size={12}/>Actualiza cada ~10 s. ENTER significa reglas alineadas, no beneficio garantizado.</span>
+        <span className="inline-flex items-center gap-1.5 text-slate-500"><Bell size={12}/>Actualiza ~10 s · trampa {view.trapRisk.toFixed(0)} · decay {view.decayRisk.toFixed(0)}. No es garantía de beneficio.</span>
       </div>
     </div>
   </section>;
