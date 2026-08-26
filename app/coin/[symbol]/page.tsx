@@ -2,6 +2,7 @@ import ExplodeXAnalysisHub from "@/components/ExplodeXAnalysisHub";
 import ExplodeXVerdict from "@/components/ExplodeXVerdict";
 import LockedPlanManager from "@/components/LockedPlanManager";
 import ProfessionalCoinWorkspace from "@/components/ProfessionalCoinWorkspace";
+import VerdictOutcomeWorker from "@/components/VerdictOutcomeWorker";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +10,7 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
   const { symbol } = await params;
   return (
     <>
+      <VerdictOutcomeWorker />
       <ExplodeXVerdict symbol={symbol} />
       <ProfessionalCoinWorkspace symbol={symbol} />
       <LockedPlanManager symbol={symbol} />
