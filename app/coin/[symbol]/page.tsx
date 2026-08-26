@@ -6,6 +6,7 @@ import MultiTimeframeThesisPanel from "@/components/MultiTimeframeThesisPanel";
 import PostEntryWatchdog from "@/components/PostEntryWatchdog";
 import ProgressiveThesisMonitor from "@/components/ProgressiveThesisMonitor";
 import ProfessionalCoinWorkspace from "@/components/ProfessionalCoinWorkspace";
+import RecoveryReclaimEngine from "@/components/RecoveryReclaimEngine";
 import RiskGuardPanel from "@/components/RiskGuardPanel";
 import TemporalPathEngine from "@/components/TemporalPathEngine";
 import TradeSafetyCoach from "@/components/TradeSafetyCoach";
@@ -21,6 +22,7 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
       <ProfessionalCoinWorkspace symbol={symbol} />
       <LockedPlanManager symbol={symbol} />
       <PostEntryWatchdog symbol={symbol} />
+      <RecoveryReclaimEngine symbol={symbol} />
       <ProgressiveThesisMonitor symbol={symbol} />
       <RiskGuardPanel symbol={symbol} />
       <TemporalPathEngine symbol={symbol} />
