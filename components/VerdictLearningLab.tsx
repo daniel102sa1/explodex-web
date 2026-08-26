@@ -10,11 +10,13 @@ import {
   type VerdictProfileStats,
 } from "@/lib/verdictJournal";
 
-type ServerVerdictStats = {
+type ServerVerdictCohort = {
+  symbol?: string;
+  direction?: string;
+  score_bucket?: string;
   decided?: number;
   wins?: number;
   losses?: number;
-  ambiguous?: number;
   unresolved?: number;
   win_rate_pct?: number | null;
   wilson_low_pct?: number | null;
@@ -23,6 +25,15 @@ type ServerVerdictStats = {
   avg_minutes?: number | null;
   sample_status?: string;
   can_influence_veto?: boolean;
+};
+
+type ServerVerdictStats = ServerVerdictCohort & {
+  ambiguous?: number;
+  last_evaluated_at?: string | null;
+  last_observed_at?: string | null;
+  by_direction?: ServerVerdictCohort[];
+  by_score?: ServerVerdictCohort[];
+  by_symbol?: ServerVerdictCohort[];
 };
 
 export default function VerdictLearningLab({ symbol }: { symbol: string }) {
@@ -93,6 +104,7 @@ export default function VerdictLearningLab({ symbol }: { symbol: string }) {
     };
   }, [rows, safeSymbol]);
 
+  const serverSymbol = serverStats?.by_symbol?.find((item) => item.symbol === safeSymbol) ?? null;
   const globalTotal = serverStats?.decided ?? stats.total;
   const globalRate = serverStats?.win_rate_pct ?? stats.winRate;
   const globalMfe = serverStats?.avg_mfe_pct ?? stats.globalMfe;
@@ -101,6 +113,9 @@ export default function VerdictLearningLab({ symbol }: { symbol: string }) {
   const unresolved = serverStats?.unresolved ?? stats.unresolved;
   const ambiguous = serverStats?.ambiguous ?? stats.ambiguous;
   const usefulSample = serverStats ? serverStats.can_influence_veto === true : globalTotal >= 30;
+  const symbolTotal = serverSymbol?.decided ?? stats.currentSymbolN;
+  const symbolRate = serverSymbol?.win_rate_pct ?? stats.currentSymbolRate;
+  const symbolWilson = serverSymbol?.wilson_low_pct ?? null;
 
   return <section className="mx-auto mt-5 max-w-[1500px] px-4">
     <div className="rounded-3xl border border-violet-500/15 bg-violet-500/[.018] p-5">
@@ -108,7 +123,7 @@ export default function VerdictLearningLab({ symbol }: { symbol: string }) {
         <div>
           <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[.14em] text-violet-300"><Brain size={16}/> Verdict Learning Lab</div>
           <div className="mt-2 text-xl font-black text-white">¿Qué versión del VERDICT funciona de verdad?</div>
-          <div className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">La estadística global usa primero la memoria persistente del backend. Los perfiles 5/6, 6/6, BURST y FAST TRACK siguen comparándose localmente mientras se completa su migración al servidor.</div>
+          <div className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">La estadística global y por moneda usa primero la memoria persistente del backend. Los perfiles 5/6, 6/6, BURST y FAST TRACK siguen comparándose localmente mientras se completa su migración al servidor.</div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className={`inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-[10px] ${serverOnline ? "border-emerald-500/20 bg-emerald-500/[.04] text-emerald-300" : "border-slate-800 bg-slate-950/50 text-slate-500"}`}><Database size={12}/>{serverOnline ? "Memoria 24/7 activa" : "Memoria local/fallback"}</div>
@@ -134,12 +149,13 @@ export default function VerdictLearningLab({ symbol }: { symbol: string }) {
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-800 bg-slate-950/45 p-4">
           <div className="flex items-center gap-2 text-xs font-black text-white"><BarChart3 size={14} className="text-cyan-300"/> Esta moneda</div>
-          <div className="mt-2 font-mono text-2xl font-black text-white">{stats.currentSymbolRate == null ? "—" : `${stats.currentSymbolRate.toFixed(1)}%`}</div>
-          <div className="mt-1 text-[10px] text-slate-500">{stats.currentSymbolN} ENTER resueltos para {safeSymbol}. Esta vista aún usa el journal local hasta que los perfiles por símbolo se migren al backend.</div>
+          <div className="mt-2 font-mono text-2xl font-black text-white">{symbolRate == null ? "—" : `${Number(symbolRate).toFixed(1)}%`}</div>
+          <div className="mt-1 text-[10px] text-slate-500">{symbolTotal} ENTER resueltos para {safeSymbol}{serverSymbol ? " · servidor" : " · local"}.</div>
+          <div className="mt-2 text-[9px] text-slate-600">Wilson bajo: <span className="font-mono text-slate-400">{rate(symbolWilson)}</span>{serverSymbol?.unresolved != null ? ` · ${serverSymbol.unresolved} pendientes` : ""}</div>
         </div>
         <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[.025] p-4">
           <div className="flex items-center gap-2 text-xs font-black text-amber-200"><ShieldAlert size={14}/> Regla de aprendizaje</div>
-          <div className="mt-2 text-xs leading-5 text-slate-400">El historial solo puede actuar como <b className="text-white">veto suave</b> con al menos 30 resultados comparables. El backend también calcula <b className="text-white">Wilson lower bound</b>; un win rate alto con muestra pequeña no se interpreta como certeza.</div>
+          <div className="mt-2 text-xs leading-5 text-slate-400">El historial solo puede actuar como <b className="text-white">veto suave</b> con al menos 30 resultados comparables. El backend calcula <b className="text-white">Wilson lower bound</b> por cohorte; un win rate alto con muestra pequeña no se interpreta como certeza.</div>
         </div>
       </div>
 
