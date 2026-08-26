@@ -13,6 +13,7 @@ import PostEntryWatchdog from "@/components/PostEntryWatchdog";
 import ProgressiveThesisMonitor from "@/components/ProgressiveThesisMonitor";
 import RecoveryReclaimEngine from "@/components/RecoveryReclaimEngine";
 import RiskGuardPanel from "@/components/RiskGuardPanel";
+import ShadowOutcomeModelPanel from "@/components/ShadowOutcomeModelPanel";
 import TemporalPathEngine from "@/components/TemporalPathEngine";
 import TradeSafetyCoach from "@/components/TradeSafetyCoach";
 import TraderConfidenceEngine from "@/components/TraderConfidenceEngine";
@@ -42,14 +43,14 @@ export default function ExplodeXAnalysisHub({ symbol }: { symbol: string }) {
           <Tab active={group === "ENTRY"} icon={<Target size={15}/>} title="1. Entrada" text="Contexto, camino, trampas, momentum, timing y confianza" onClick={() => setGroup("ENTRY")} />
           <Tab active={group === "RISK"} icon={<ShieldCheck size={15}/>} title="2. Riesgo" text="Sizing, stop, R:R, estructura y tesis multi-timeframe" onClick={() => setGroup("RISK")} />
           <Tab active={group === "POST"} icon={<Activity size={15}/>} title="3. Post-entrada" text="Watchdog, reclaim, deterioro y gestión" onClick={() => setGroup("POST")} />
-          <Tab active={group === "LEARNING"} icon={<Brain size={15}/>} title="4. Aprendizaje" text="LOCK, BURST, Fast Track y resultados reales" onClick={() => setGroup("LEARNING")} />
+          <Tab active={group === "LEARNING"} icon={<Brain size={15}/>} title="4. Aprendizaje" text="Memoria 24/7, calibración y modelo TP1 vs STOP" onClick={() => setGroup("LEARNING")} />
         </div>
 
         <div className="border-t border-slate-800 pb-4">
           {group === "ENTRY" && <><ContextEnginePanel symbol={symbol} /><TemporalPathEngine symbol={symbol} /><TrapDetectorX symbol={symbol} /><MomentumDecayEngine symbol={symbol} /><EntryShieldX symbol={symbol} /><TraderConfidenceEngine symbol={symbol} /></>}
           {group === "RISK" && <><PositionSizingPanel symbol={symbol} /><RiskGuardPanel symbol={symbol} /><MultiTimeframeThesisPanel symbol={symbol} /><TradeSafetyCoach symbol={symbol} /><TraderReadPanel symbol={symbol} /></>}
           {group === "POST" && <><PostEntryWatchdog symbol={symbol} /><RecoveryReclaimEngine symbol={symbol} /><ProgressiveThesisMonitor symbol={symbol} /><ExplodeXMentor symbol={symbol} /><ManualTradeMirror symbol={symbol} /></>}
-          {group === "LEARNING" && <VerdictLearningLab symbol={symbol} />}
+          {group === "LEARNING" && <><VerdictLearningLab symbol={symbol} /><ShadowOutcomeModelPanel /></>}
         </div>
       </div>}
     </div>
