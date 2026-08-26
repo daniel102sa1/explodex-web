@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Bell, CheckCircle2, Clock3, ShieldX, Target, TrendingDown, TrendingUp, Zap } from "lucide-react";
 import { getCandles, getLiveAnalysis, type Candle, type LiveAnalysis } from "@/lib/api";
 import { buildVerdictFusion, type VerdictDirection, type VerdictFusion } from "@/lib/verdictFusion";
-import { appendVerdictJournal } from "@/lib/verdictJournal";
+import { appendVerdictJournal, getVerdictProfileStats } from "@/lib/verdictJournal";
 
 type Verdict = "ENTER" | "WAIT" | "NO_TRADE";
 
@@ -140,6 +140,16 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
   const view = useMemo(() => {
     if (!fusion || !analysis) return null;
 
+    const exactHistory = getVerdictProfileStats({
+      lockCount: fusion.passCount,
+      burst: fusion.burstDetected,
+      fastTrack: fusion.fastTrack,
+      direction: fusion.direction,
+    });
+    const lockHistory = getVerdictProfileStats({ lockCount: fusion.passCount });
+    const empirical = exactHistory.sample >= 30 ? exactHistory : lockHistory;
+    const historicalWeak = empirical.sample >= 30 && empirical.status === "WEAK";
+
     const last = history.at(-1);
     const previousCandidateSameDirection = Boolean(last && last.candidate && last.direction === fusion.direction);
     const prior2 = history.slice(-2);
@@ -186,6 +196,11 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
       title = "SE ESCAPÓ LA ZONA";
       reason = "La entrada fue válida, pero el precio ya salió de la zona razonable.";
       next = "No perseguir. Esperar retest o un setup nuevo.";
+    } else if (fusion.candidateEnter && historicalWeak) {
+      verdict = "WAIT";
+      title = "ESPERAR · HISTORIAL DÉBIL";
+      reason = `Este perfil tiene ${empirical.sample} casos y un win rate histórico de ${(empirical.winRatePct ?? 0).toFixed(1)}%.`;
+      next = "Veto suave: esperar una entrada de mayor calidad. El historial no invalida la dirección por sí solo.";
     } else if (fusion.fastTrack && !firstFlipAgainstLock) {
       verdict = "ENTER";
       title = fusion.burstDetected ? "ENTRAR AHORA · BURST · PAPER" : "ENTRAR AHORA · PAPER";
@@ -243,6 +258,9 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
       accelerationScore: fusion.accelerationScore,
       burstDetected: fusion.burstDetected,
       fastTrack: fusion.fastTrack,
+      rr1: fusion.rr1,
+      empiricalSample: empirical.sample,
+      empiricalRate: empirical.winRatePct,
       shouldOpenLatch: verdict === "ENTER" && !activeLatch,
       shouldClearLatch: Boolean(activeLatch && (fusion.hardBlock || latchStopHit || severeSoftBlock || last2OppositeLatch)),
     };
@@ -281,6 +299,7 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
       entryHigh: view.entryHigh,
       stop: view.stop,
       tp1: view.tp1,
+      rr1: view.rr1,
       lockCount: view.passCount,
       technicalConfidence: view.confidence,
       trapRisk: view.trapRisk,
@@ -348,7 +367,7 @@ export default function ExplodeXVerdict({ symbol }: { symbol: string }) {
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/15 px-3 py-2 text-[11px]">
         <span className="font-semibold text-slate-300"><Target size={13} className="mr-1.5 inline"/>{view.next}</span>
-        <span className="inline-flex items-center gap-1.5 text-slate-500"><Bell size={12}/>Actualiza ~10 s · trampa {view.trapRisk.toFixed(0)} · decay {view.decayRisk.toFixed(0)} · accel {view.accelerationScore.toFixed(0)}. No es garantía.</span>
+        <span className="inline-flex items-center gap-1.5 text-slate-500"><Bell size={12}/>Actualiza ~10 s · trampa {view.trapRisk.toFixed(0)} · decay {view.decayRisk.toFixed(0)} · accel {view.accelerationScore.toFixed(0)}{view.empiricalSample >= 30 && view.empiricalRate != null ? ` · hist ${view.empiricalRate.toFixed(1)}%/${view.empiricalSample}` : ""}. No es garantía.</span>
       </div>
     </div>
   </section>;
