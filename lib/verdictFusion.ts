@@ -21,6 +21,8 @@ export type VerdictFusion = {
   fastTrack: boolean;
   trapRisk: number;
   decayRisk: number;
+  accelerationScore: number;
+  burstDetected: boolean;
   mtfStrength: number;
   flowStrength: number;
   entryQuality: number;
@@ -135,6 +137,39 @@ function breakoutTrapRisk(candles: Candle[], direction: VerdictDirection) {
   return clamp(risk);
 }
 
+function accelerationBurstScore(candles: Candle[], direction: VerdictDirection, flowStrength: number) {
+  if (candles.length < 18) return 0;
+  const side = direction === "LONG" ? 1 : -1;
+  const unit = atr(candles, 14) || Math.max((candles.at(-1)?.close ?? 1) * 0.001, 1e-12);
+  const recent = candles.slice(-4);
+  const prior = candles.slice(-8, -4);
+
+  const recentMove = recent.length > 1 ? (recent.at(-1)!.close - recent[0].open) * side / unit : 0;
+  const priorMove = prior.length > 1 ? (prior.at(-1)!.close - prior[0].open) * side / unit : 0;
+  const acceleration = recentMove - priorMove;
+
+  const recentBody = bodyEfficiency(recent, direction);
+  const priorBody = bodyEfficiency(prior, direction);
+  const recentVolume = avg(recent.map((x) => x.volume));
+  const priorVolume = avg(prior.map((x) => x.volume)) || 1;
+  const volumeExpansion = recentVolume / priorVolume;
+
+  let score = 0;
+  if (recentMove >= 0.35) score += 22;
+  else if (recentMove >= 0.18) score += 12;
+  if (acceleration >= 0.20) score += 22;
+  else if (acceleration >= 0.08) score += 12;
+  if (volumeExpansion >= 1.35) score += 20;
+  else if (volumeExpansion >= 1.10) score += 10;
+  if (recentBody >= 0.28 && recentBody > priorBody + 0.08) score += 16;
+  else if (recentBody >= 0.18) score += 8;
+  if (flowStrength >= 65) score += 14;
+  else if (flowStrength >= 55) score += 8;
+  if (opposingWick(recent, direction) <= 0.22) score += 6;
+
+  return clamp(score);
+}
+
 export function buildVerdictFusion(
   analysis: LiveAnalysis,
   m1: Candle[],
@@ -220,6 +255,10 @@ export function buildVerdictFusion(
   if (extensionAtr >= 1.35) decayRisk += 18;
   if (chase) decayRisk += 20;
   decayRisk = clamp(decayRisk);
+
+  const accelerationScore = accelerationBurstScore(m1, direction, flowStrength);
+  const burstDetected = accelerationScore >= 72 && trapRisk <= 45 && decayRisk <= 55;
+  if (burstDetected) decayRisk = clamp(decayRisk - 8);
   const momentum = decayRisk < 65;
 
   const riskUnit = Math.abs(((entryLow + entryHigh) / 2) - stop);
@@ -230,6 +269,7 @@ export function buildVerdictFusion(
   else if (rr1 < 0.9) entryQuality -= 12;
   if (trapRisk >= 60) entryQuality -= 12;
   if (decayRisk >= 65) entryQuality -= 12;
+  if (burstDetected && (inZone || nearZone)) entryQuality += 6;
   entryQuality = clamp(entryQuality);
   const entry = inZone && !chase && entryQuality >= 72;
 
@@ -253,12 +293,12 @@ export function buildVerdictFusion(
   }
 
   const technicalConfidence = clamp(
-    setup * 0.22 + prep * 0.12 + mtfStrength * 0.18 + flowStrength * 0.14 +
-    (100 - trapRisk) * 0.14 + (100 - decayRisk) * 0.10 + entryQuality * 0.10,
+    setup * 0.20 + prep * 0.11 + mtfStrength * 0.17 + flowStrength * 0.13 +
+    (100 - trapRisk) * 0.13 + (100 - decayRisk) * 0.09 + entryQuality * 0.10 + accelerationScore * 0.07,
   );
 
   const candidateEnter = !hardBlock && core && entry && trap && momentum && passCount >= 5;
-  const fastTrack = candidateEnter && passCount === 6 && technicalConfidence >= 86 && trapRisk <= 35 && decayRisk <= 42;
+  const fastTrack = candidateEnter && passCount === 6 && technicalConfidence >= 84 && trapRisk <= 38 && decayRisk <= 46 && (burstDetected || accelerationScore >= 58);
 
   return {
     direction,
@@ -270,6 +310,8 @@ export function buildVerdictFusion(
     fastTrack,
     trapRisk,
     decayRisk,
+    accelerationScore,
+    burstDetected,
     mtfStrength,
     flowStrength,
     entryQuality,
