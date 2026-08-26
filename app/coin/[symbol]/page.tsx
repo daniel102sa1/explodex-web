@@ -1,3 +1,4 @@
+import EntryShieldX from "@/components/EntryShieldX";
 import ExplodeXMentor from "@/components/ExplodeXMentor";
 import LockedPlanManager from "@/components/LockedPlanManager";
 import ManualTradeMirror from "@/components/ManualTradeMirror";
@@ -23,6 +24,7 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
       <ProgressiveThesisMonitor symbol={symbol} />
       <RiskGuardPanel symbol={symbol} />
       <TemporalPathEngine symbol={symbol} />
+      <EntryShieldX symbol={symbol} />
       <TraderConfidenceEngine symbol={symbol} />
       <MultiTimeframeThesisPanel symbol={symbol} />
       <TradeSafetyCoach symbol={symbol} />
