@@ -1,266 +1,68 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, CheckCircle2, RefreshCw, ShieldCheck, TrendingDown, TrendingUp, WalletCards } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Activity, AlertTriangle, CheckCircle2, Circle, RadioTower, RefreshCw, ShieldCheck, TrendingDown, TrendingUp, WalletCards, Zap } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
+const POLL_MS = 5000;
 
 type Coach = {
-  state?: string;
-  title?: string;
-  message?: string;
-  health_score?: number;
-  direction?: "LONG" | "SHORT" | string;
-  analysis_direction?: string;
-  direction_aligned?: boolean;
-  entry_price?: number;
-  mark_price?: number;
-  move_pct?: number;
-  unrealized_pnl?: number;
-  pnl_on_notional_pct?: number;
-  approx_margin_roi_pct?: number;
-  leverage?: number;
-  locks_passed?: number;
-  technical_confidence?: number;
-  trap_risk?: number;
-  decay_risk?: number;
-  acceleration_score?: number;
-  flow_strength?: number;
-  mtf_strength?: number;
-  prediction_phase?: string;
-  entry_zone_state?: string;
-  entry_zone_quality?: number | null;
-  invalidated?: boolean;
-  protective_orders?: {
-    stop_prices?: number[];
-    target_prices?: number[];
-    has_protective_stop?: boolean;
-    has_take_profit?: boolean;
-  };
+  state?: string; title?: string; message?: string; health_score?: number;
+  direction?: string; direction_aligned?: boolean; entry_price?: number; mark_price?: number;
+  move_pct?: number; unrealized_pnl?: number; approx_margin_roi_pct?: number; leverage?: number;
+  locks_passed?: number; locks?: Record<string, boolean>; technical_confidence?: number;
+  trap_risk?: number; decay_risk?: number; acceleration_score?: number; flow_strength?: number;
+  mtf_strength?: number; prediction_phase?: string; entry_zone_state?: string; invalidated?: boolean;
+  protective_orders?: { stop_prices?: number[]; target_prices?: number[]; has_protective_stop?: boolean; has_take_profit?: boolean };
   next_watch?: string[];
-  note?: string;
 };
 
-type Position = {
-  symbol?: string;
-  direction?: string;
-  position_amount?: number;
-  entry_price?: number;
-  mark_price?: number;
-  unrealized_pnl?: number;
-  liquidation_price?: number;
-  notional?: number;
-  leverage?: number;
-  margin_type?: string;
-};
+type Position = { symbol?: string; direction?: string; entry_price?: number; mark_price?: number; unrealized_pnl?: number; liquidation_price?: number; notional?: number; leverage?: number; margin_type?: string };
+type CoachRow = { position?: Position; coach?: Coach; analysis_available?: boolean; analysis_error?: string | null; analysis?: Record<string, any> | null };
+type Bridge = { fresh?: boolean; age_seconds?: number | null };
+type CoachResponse = { source?: string; position_count?: number; positions?: CoachRow[]; bridge?: Bridge };
+type StatusResponse = { configured?: boolean; read_only?: boolean; probe_ok?: boolean; source?: string; probe_error?: string | null; bridge?: Bridge };
+type TickPoint = { t:number; price:number; pnl:number; state:string };
 
-type CoachRow = {
-  position?: Position;
-  coach?: Coach;
-  open_orders?: Array<Record<string, unknown>>;
-  analysis_available?: boolean;
-  analysis_error?: string | null;
-  analysis?: Record<string, any> | null;
-};
+type EventItem = { t:number; symbol:string; text:string };
 
-type CoachResponse = {
-  mode?: string;
-  configured?: boolean;
-  position_count?: number;
-  shown?: number;
-  positions?: CoachRow[];
-  note?: string;
-};
+function n(v: unknown, fallback=0){const x=Number(v);return Number.isFinite(x)?x:fallback}
+function fmt(v?:number|null){if(v==null||!Number.isFinite(Number(v)))return"—";const x=Number(v);if(Math.abs(x)>=1000)return x.toLocaleString(undefined,{maximumFractionDigits:2});if(Math.abs(x)>=1)return x.toLocaleString(undefined,{maximumFractionDigits:6});return x.toLocaleString(undefined,{maximumSignificantDigits:8})}
+function pct(v?:number|null){if(v==null||!Number.isFinite(Number(v)))return"—";const x=Number(v);return`${x>=0?"+":""}${x.toFixed(2)}%`}
+function tone(s?:string){switch(s){case"STRENGTHENING":return"border-emerald-400/40 bg-emerald-400/[.08] text-emerald-200";case"HEALTHY":return"border-cyan-400/35 bg-cyan-400/[.07] text-cyan-100";case"NORMAL_PULLBACK":return"border-amber-400/35 bg-amber-400/[.07] text-amber-100";case"DETERIORATING":return"border-orange-400/35 bg-orange-400/[.07] text-orange-100";case"THESIS_DAMAGED":return"border-rose-400/40 bg-rose-400/[.08] text-rose-100";default:return"border-slate-700 bg-slate-900/60 text-slate-300"}}
+function clamp(v:number){return Math.max(0,Math.min(100,v))}
 
-type StatusResponse = {
-  configured?: boolean;
-  read_only?: boolean;
-  probe_ok?: boolean;
-  probe_error?: string | null;
-  binance_code?: number | null;
-};
+export default function BinanceLivePositionCoach(){
+  const [data,setData]=useState<CoachResponse|null>(null);const [status,setStatus]=useState<StatusResponse|null>(null);const [error,setError]=useState<string|null>(null);const [loading,setLoading]=useState(true);const [lastUpdate,setLastUpdate]=useState<number|null>(null);
+  const [history,setHistory]=useState<Record<string,TickPoint[]>>({});const [events,setEvents]=useState<EventItem[]>([]);const prev=useRef<Record<string,{state?:string;locks?:number;pnl?:number}>>({});
+  useEffect(()=>{let dead=false;async function load(){if(!BASE_URL){setError("NEXT_PUBLIC_API_BASE_URL no está configurada");setLoading(false);return}try{const [sr,cr]=await Promise.all([fetch(`${BASE_URL}/api/v1/binance-user/status?probe=true`,{cache:"no-store"}),fetch(`${BASE_URL}/api/v1/binance-user/coach?limit=8`,{cache:"no-store"})]);const sp=await sr.json().catch(()=>({}));if(!dead)setStatus(sp);if(!cr.ok){const p=await cr.json().catch(()=>({}));throw new Error(p?.detail?.message||p?.detail||`Backend ${cr.status}`)}const cp=await cr.json();if(dead)return;setData(cp);setError(null);setLastUpdate(Date.now());setHistory(old=>{const next={...old};for(const row of cp.positions??[]){const sym=String(row.position?.symbol??"");if(!sym)continue;const point={t:Date.now(),price:n(row.position?.mark_price??row.coach?.mark_price),pnl:n(row.position?.unrealized_pnl??row.coach?.unrealized_pnl),state:String(row.coach?.state??"WATCH")};next[sym]=[...(next[sym]??[]),point].slice(-48)}return next});setEvents(old=>{const add:EventItem[]=[];for(const row of cp.positions??[]){const sym=String(row.position?.symbol??"");if(!sym)continue;const cur={state:row.coach?.state,locks:row.coach?.locks_passed,pnl:n(row.position?.unrealized_pnl??row.coach?.unrealized_pnl)};const p=prev.current[sym];if(p&&p.state!==cur.state)add.push({t:Date.now(),symbol:sym,text:`Estado: ${row.coach?.title??cur.state}`});if(p&&p.locks!==cur.locks)add.push({t:Date.now(),symbol:sym,text:`LOCKS ${cur.locks??0}/6`});if(p&&Math.sign(p.pnl??0)!==Math.sign(cur.pnl??0))add.push({t:Date.now(),symbol:sym,text:`PnL cruzó ${cur.pnl>=0?"a positivo":"a negativo"}`});prev.current[sym]=cur}return [...add,...old].slice(0,16)});
+      }catch(e){if(!dead)setError(e instanceof Error?e.message:String(e))}finally{if(!dead)setLoading(false)}}load();const timer=window.setInterval(load,POLL_MS);return()=>{dead=true;window.clearInterval(timer)}},[]);
+  const rows=useMemo(()=>data?.positions??[],[data]);const totalPnl=rows.reduce((a,r)=>a+n(r.position?.unrealized_pnl??r.coach?.unrealized_pnl),0);const avgHealth=rows.length?rows.reduce((a,r)=>a+n(r.coach?.health_score),0)/rows.length:0;const source=data?.source??status?.source??"—";const bridgeActive=source==="LOCAL_BRIDGE";
+  return <main className="mx-auto min-h-screen max-w-[1600px] px-3 py-4 sm:px-5">
+    <header className="mb-4 flex flex-wrap items-end justify-between gap-4 border-b border-slate-800/80 pb-4"><div><div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.16em] text-cyan-300"><RadioTower size={14}/> Live Trading Cockpit</div><h1 className="mt-1 text-3xl font-black text-white">Mis posiciones · ExplodeX Coach</h1><p className="mt-1 max-w-4xl text-xs leading-5 text-slate-500">Seguimiento técnico en vivo de tus Futures. Solo lectura: no abre, cierra ni modifica órdenes.</p></div><div className="flex items-center gap-2"><span className={`rounded-full border px-3 py-1.5 text-[10px] font-black ${bridgeActive?"border-cyan-400/30 bg-cyan-400/[.07] text-cyan-200":"border-emerald-400/30 bg-emerald-400/[.07] text-emerald-200"}`}>{bridgeActive?"LOCAL BRIDGE ACTIVO":status?.probe_ok?"BINANCE DIRECTO":"CONECTANDO"}</span><span className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-[10px] text-slate-500">{lastUpdate?`Actualizado ${new Date(lastUpdate).toLocaleTimeString()}`:loading?"Conectando…":"Sin actualización"}</span></div></header>
 
-function num(value: unknown, fallback = 0) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
+    <section className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><Top label="Fuente" value={source}/><Top label="Posiciones" value={String(data?.position_count??0)}/><Top label="PnL total" value={`${totalPnl>=0?"+":""}${totalPnl.toFixed(3)} USDT`} good={totalPnl>=0}/><Top label="Health medio" value={`${avgHealth.toFixed(0)}/100`}/><Top label="Bridge" value={bridgeActive?`${n(data?.bridge?.age_seconds).toFixed(0)}s`:(status?.read_only?"READ ONLY":"—")} good={bridgeActive||Boolean(status?.read_only)}/></section>
+
+    {error&&<div className="mb-4 rounded-2xl border border-rose-500/30 bg-rose-500/[.06] p-4 text-sm text-rose-100"><div className="flex items-center gap-2 font-black"><AlertTriangle size={16}/> Problema de conexión</div><div className="mt-1 text-xs text-rose-200/80">{error}</div>{status?.probe_error&&<div className="mt-2 text-[10px] text-slate-500">Probe: {status.probe_error}</div>}</div>}
+
+    <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_330px]"><div className="space-y-4">{rows.map((row,i)=><PositionCard key={`${row.position?.symbol??"p"}-${i}`} row={row} history={history[String(row.position?.symbol??"")]??[]}/>)}</div><aside className="h-fit rounded-3xl border border-slate-800 bg-slate-950/55 p-4 2xl:sticky 2xl:top-24"><div className="flex items-center gap-2 text-sm font-black text-white"><Activity size={15}/> Timeline en vivo</div><div className="mt-3 space-y-2">{events.length?events.map((e,i)=><div key={`${e.t}-${i}`} className="rounded-xl border border-slate-800 bg-black/15 p-3"><div className="text-[10px] font-black text-cyan-300">{e.symbol} · {new Date(e.t).toLocaleTimeString()}</div><div className="mt-1 text-xs text-slate-400">{e.text}</div></div>):<div className="py-8 text-center text-xs text-slate-600">Los cambios de estado aparecerán aquí.</div>}</div></aside></div>
+
+    {!loading&&!error&&rows.length===0&&<div className="rounded-3xl border border-slate-800 bg-slate-950/50 p-10 text-center"><CheckCircle2 className="mx-auto text-emerald-400" size={28}/><div className="mt-3 text-lg font-black text-white">Conectado · sin posiciones abiertas</div></div>}
+    <div className="mt-4 flex items-start gap-2 rounded-2xl border border-slate-800 bg-slate-950/40 p-4 text-[10px] leading-5 text-slate-500"><ShieldCheck size={14} className="mt-0.5 shrink-0"/> Health, LOCKS y demás son señales técnicas, no probabilidades ni garantías.</div>
+  </main>
 }
 
-function fmt(value?: number | null) {
-  if (value == null || !Number.isFinite(Number(value))) return "—";
-  const x = Number(value);
-  if (Math.abs(x) >= 1000) return x.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  if (Math.abs(x) >= 1) return x.toLocaleString(undefined, { maximumFractionDigits: 6 });
-  return x.toLocaleString(undefined, { maximumSignificantDigits: 8 });
-}
+function PositionCard({row,history}:{row:CoachRow;history:TickPoint[]}){const p=row.position??{},c=row.coach??{},a=row.analysis??{};const long=String(p.direction??c.direction)==="LONG";const pnl=n(p.unrealized_pnl??c.unrealized_pnl);const mark=n(p.mark_price??c.mark_price);const entry=n(p.entry_price??c.entry_price);const stop=(c.protective_orders?.stop_prices??[])[0]??n(a.stop_loss,0);const tp1=n(a.tp1,0),tp2=n(a.tp2,0),tp3=n(a.tp3,0);const locks=c.locks??{};const progress=progressToTarget(entry,mark,tp1,long);return <section className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-950/60 shadow-xl shadow-black/10">
+  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-4"><div className="flex items-center gap-3"><div className={`grid h-11 w-11 place-items-center rounded-2xl border ${long?"border-emerald-400/30 bg-emerald-400/[.08] text-emerald-300":"border-rose-400/30 bg-rose-400/[.08] text-rose-300"}`}>{long?<TrendingUp size={20}/>:<TrendingDown size={20}/>}</div><div><div className="text-2xl font-black text-white">{p.symbol??"—"}</div><div className="text-[10px] font-black text-slate-500">{p.direction} · {p.leverage??c.leverage??1}x · {p.margin_type??"—"}</div></div></div><div className={`rounded-2xl border px-4 py-2 text-xs font-black ${tone(c.state)}`}>{c.state==="STRENGTHENING"&&<Zap size={13} className="mr-1 inline"/>}{c.title??c.state??"VIGILAR"}</div></div>
+  <div className="p-4"><div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,.8fr)]"><div><div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6"><Metric label="Entrada" value={fmt(entry)}/><Metric label="Mark" value={fmt(mark)} live/><Metric label="PnL" value={`${pnl>=0?"+":""}${pnl.toFixed(3)} USDT`} positive={pnl>=0} big/><Metric label="ROI aprox." value={pct(c.approx_margin_roi_pct)} positive={n(c.approx_margin_roi_pct)>=0}/><Metric label="Movimiento" value={pct(c.move_pct)} positive={n(c.move_pct)>=0}/><Metric label="Health" value={`${n(c.health_score).toFixed(0)}/100`}/></div>
+    <div className={`mt-3 rounded-2xl border p-4 ${tone(c.state)}`}><div className="text-base font-black">{c.message??"Analizando…"}</div><div className="mt-2 text-[10px] opacity-70">Fase {c.prediction_phase??"N/D"} · Zona {c.entry_zone_state??"N/D"} · Conf. técnica {n(c.technical_confidence).toFixed(0)}/100</div></div>
+    <div className="mt-3 grid gap-3 lg:grid-cols-2"><div className="rounded-2xl border border-slate-800 bg-black/15 p-4"><div className="mb-3 flex items-center justify-between"><b className="text-xs text-white">6 LOCKS</b><span className="text-[10px] text-slate-500">{c.locks_passed??0}/6</span></div><div className="grid grid-cols-3 gap-2">{[["core","CORE"],["mtf","MTF"],["flow","FLOW"],["trap","TRAP"],["momentum","MOM"],["entry","ENTRY"]].map(([k,l])=><div key={k} className={`rounded-xl border p-2 text-center text-[10px] font-black ${locks[k]?"border-emerald-400/25 bg-emerald-400/[.06] text-emerald-200":"border-slate-800 bg-slate-950/60 text-slate-600"}`}><Circle size={8} className={`mx-auto mb-1 ${locks[k]?"fill-current":""}`}/>{l}</div>)}</div></div><div className="rounded-2xl border border-slate-800 bg-black/15 p-4"><Gauge label="Flow" value={n(c.flow_strength)}/><Gauge label="Aceleración" value={n(c.acceleration_score)}/><Gauge label="Trap" value={100-n(c.trap_risk)}/><Gauge label="Momentum" value={100-n(c.decay_risk)}/></div></div>
+  </div><div className="rounded-2xl border border-slate-800 bg-black/15 p-4"><div className="flex items-center justify-between"><b className="text-xs text-white">Recorrido en vivo</b><span className="text-[10px] text-slate-500">últimas {history.length} lecturas</span></div><Spark points={history.map(x=>x.price)} positive={pnl>=0}/><div className="mt-4"><div className="mb-1 flex justify-between text-[9px] text-slate-600"><span>Entrada</span><span>TP1 {tp1>0?fmt(tp1):"N/D"}</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-800"><div className="h-full bg-emerald-400/70 transition-all duration-700" style={{width:`${progress}%`}}/></div><div className="mt-1 text-right text-[10px] text-slate-500">{progress.toFixed(0)}% hacia TP1</div></div><div className="mt-4 grid grid-cols-4 gap-2"><Level label="STOP" value={stop} danger/><Level label="TP1" value={tp1}/><Level label="TP2" value={tp2}/><Level label="TP3" value={tp3}/></div>{(c.next_watch??[]).length>0&&<div className="mt-4 border-t border-slate-800 pt-3"><div className="text-[10px] font-black uppercase tracking-[.1em] text-slate-500">Vigilando</div>{c.next_watch!.slice(0,3).map((x,i)=><div key={i} className="mt-1 text-[11px] text-slate-400">• {x}</div>)}</div>}</div></div>{!row.analysis_available&&row.analysis_error&&<div className="mt-3 flex items-center gap-2 text-[10px] text-amber-300"><RefreshCw size={12}/> Posición leída; análisis temporalmente limitado.</div>}</div>
+</section>}
 
-function pct(value?: number | null) {
-  if (value == null || !Number.isFinite(Number(value))) return "—";
-  const x = Number(value);
-  return `${x >= 0 ? "+" : ""}${x.toFixed(2)}%`;
-}
-
-function stateTone(state?: string) {
-  switch (state) {
-    case "STRENGTHENING": return "border-emerald-500/30 bg-emerald-500/[.07] text-emerald-200";
-    case "HEALTHY": return "border-cyan-500/25 bg-cyan-500/[.06] text-cyan-200";
-    case "NORMAL_PULLBACK": return "border-amber-500/25 bg-amber-500/[.06] text-amber-100";
-    case "DETERIORATING": return "border-orange-500/30 bg-orange-500/[.06] text-orange-200";
-    case "THESIS_DAMAGED": return "border-rose-500/30 bg-rose-500/[.07] text-rose-200";
-    default: return "border-slate-700 bg-slate-900/50 text-slate-300";
-  }
-}
-
-export default function BinanceLivePositionCoach() {
-  const [data, setData] = useState<CoachResponse | null>(null);
-  const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [lastUpdate, setLastUpdate] = useState<number | null>(null);
-
-  useEffect(() => {
-    let dead = false;
-    async function load() {
-      if (!BASE_URL) {
-        if (!dead) {
-          setError("NEXT_PUBLIC_API_BASE_URL no está configurada.");
-          setLoading(false);
-        }
-        return;
-      }
-      try {
-        const [statusResponse, coachResponse] = await Promise.all([
-          fetch(`${BASE_URL}/api/v1/binance-user/status?probe=true`, { cache: "no-store" }),
-          fetch(`${BASE_URL}/api/v1/binance-user/coach?limit=8`, { cache: "no-store" }),
-        ]);
-        const statusPayload = await statusResponse.json().catch(() => ({}));
-        if (!dead) setStatus(statusPayload);
-        if (!coachResponse.ok) {
-          const payload = await coachResponse.json().catch(() => ({}));
-          const detail = payload?.detail;
-          const message = typeof detail === "string" ? detail : detail?.message || `Backend ${coachResponse.status}`;
-          throw new Error(message);
-        }
-        const coachPayload = await coachResponse.json();
-        if (!dead) {
-          setData(coachPayload);
-          setError(null);
-          setLastUpdate(Date.now());
-        }
-      } catch (exc) {
-        if (!dead) setError(exc instanceof Error ? exc.message : String(exc));
-      } finally {
-        if (!dead) setLoading(false);
-      }
-    }
-    load();
-    const timer = window.setInterval(load, 10_000);
-    return () => { dead = true; window.clearInterval(timer); };
-  }, []);
-
-  const rows = useMemo(() => data?.positions ?? [], [data]);
-
-  return <main className="mx-auto min-h-screen max-w-[1500px] px-4 py-5">
-    <header className="mb-4 flex flex-wrap items-end justify-between gap-4 border-b border-slate-800 pb-4">
-      <div>
-        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.16em] text-cyan-300"><WalletCards size={14}/> Binance · solo lectura</div>
-        <h1 className="mt-1 text-3xl font-black text-white">Mis posiciones · Live Coach</h1>
-        <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">ExplodeX lee tus posiciones Futures y las cruza con estructura, LOCKS, momentum, flujo, riesgo de trampa y zona de entrada. No puede abrir, cerrar ni modificar órdenes.</p>
-      </div>
-      <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2 text-[10px] text-slate-500">
-        {lastUpdate ? `Actualizado ${new Date(lastUpdate).toLocaleTimeString()}` : loading ? "Conectando…" : "Sin actualización"}
-      </div>
-    </header>
-
-    <section className="mb-4 grid gap-3 sm:grid-cols-3">
-      <Info label="Conexión" value={status?.probe_ok ? "BINANCE OK" : status?.configured ? "CONFIGURADA" : "NO CONFIGURADA"} good={Boolean(status?.probe_ok)} />
-      <Info label="Modo" value={status?.read_only ? "SOLO LECTURA" : "REVISAR"} good={Boolean(status?.read_only)} />
-      <Info label="Posiciones abiertas" value={String(data?.position_count ?? 0)} />
-    </section>
-
-    {error && <div className="mb-4 rounded-2xl border border-rose-500/25 bg-rose-500/[.05] p-4 text-sm text-rose-200">
-      <div className="flex items-center gap-2 font-black"><AlertTriangle size={16}/> No pude leer las posiciones de Binance</div>
-      <div className="mt-1 text-xs text-rose-200/80">{error}</div>
-      {status?.probe_error && <div className="mt-2 text-[10px] text-slate-500">Probe: {status.probe_error}{status.binance_code != null ? ` · código ${status.binance_code}` : ""}</div>}
-    </div>}
-
-    {!loading && !error && rows.length === 0 && <div className="rounded-3xl border border-slate-800 bg-slate-950/50 p-10 text-center">
-      <CheckCircle2 className="mx-auto text-emerald-400" size={28}/>
-      <div className="mt-3 text-lg font-black text-white">Conectado · no hay posiciones Futures abiertas</div>
-      <div className="mt-1 text-xs text-slate-500">Cuando abras una posición en Binance aparecerá aquí y ExplodeX empezará a analizarla.</div>
-    </div>}
-
-    <div className="space-y-4">
-      {rows.map((row, index) => <PositionCard key={`${row.position?.symbol ?? "position"}-${index}`} row={row}/>) }
-    </div>
-
-    <div className="mt-4 flex items-start gap-2 rounded-2xl border border-slate-800 bg-slate-950/40 p-4 text-[10px] leading-5 text-slate-500">
-      <ShieldCheck size={14} className="mt-0.5 shrink-0"/> El health score es un estado técnico de 0–100, no una probabilidad. El coach no te ordena mantener, cerrar, aumentar tamaño ni mover el stop.
-    </div>
-  </main>;
-}
-
-function PositionCard({ row }: { row: CoachRow }) {
-  const p = row.position ?? {};
-  const c = row.coach ?? {};
-  const long = String(p.direction ?? c.direction) === "LONG";
-  const pnl = num(p.unrealized_pnl ?? c.unrealized_pnl);
-  const stopPrices = c.protective_orders?.stop_prices ?? [];
-  const targetPrices = c.protective_orders?.target_prices ?? [];
-
-  return <section className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-950/55">
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-4">
-      <div className="flex items-center gap-3">
-        <div className={`grid h-10 w-10 place-items-center rounded-xl border ${long ? "border-emerald-500/25 bg-emerald-500/[.07] text-emerald-300" : "border-rose-500/25 bg-rose-500/[.07] text-rose-300"}`}>
-          {long ? <TrendingUp size={19}/> : <TrendingDown size={19}/>} 
-        </div>
-        <div><div className="text-xl font-black text-white">{p.symbol ?? "—"}</div><div className="text-[10px] font-black text-slate-500">{p.direction ?? "—"} · {p.leverage ?? c.leverage ?? 1}x · {p.margin_type ?? "—"}</div></div>
-      </div>
-      <div className={`rounded-xl border px-3 py-2 text-xs font-black ${stateTone(c.state)}`}>{c.title ?? c.state ?? "VIGILAR"}</div>
-    </div>
-
-    <div className="p-4">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-        <Metric label="Entrada" value={fmt(p.entry_price ?? c.entry_price)}/>
-        <Metric label="Mark" value={fmt(p.mark_price ?? c.mark_price)}/>
-        <Metric label="Movimiento" value={pct(c.move_pct)} positive={num(c.move_pct) >= 0}/>
-        <Metric label="PnL" value={`${pnl >= 0 ? "+" : ""}${pnl.toFixed(3)} USDT`} positive={pnl >= 0}/>
-        <Metric label="ROI aprox." value={pct(c.approx_margin_roi_pct)} positive={num(c.approx_margin_roi_pct) >= 0}/>
-        <Metric label="Health" value={`${num(c.health_score).toFixed(0)}/100`}/>
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-slate-800 bg-black/15 p-4">
-        <div className="text-sm font-black text-white">{c.message ?? "Analizando posición…"}</div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-3 xl:grid-cols-6 text-[10px] text-slate-500">
-          <span>LOCKS <b className="text-slate-300">{c.locks_passed ?? 0}/6</b></span>
-          <span>Conf. técnica <b className="text-slate-300">{num(c.technical_confidence).toFixed(0)}/100</b></span>
-          <span>Trap <b className="text-slate-300">{num(c.trap_risk).toFixed(0)}/100</b></span>
-          <span>Decay <b className="text-slate-300">{num(c.decay_risk).toFixed(0)}/100</b></span>
-          <span>Aceleración <b className="text-slate-300">{num(c.acceleration_score).toFixed(0)}/100</b></span>
-          <span>Zona <b className="text-slate-300">{c.entry_zone_state ?? "N/D"}</b></span>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-          <div className="text-[10px] font-black uppercase tracking-[.1em] text-slate-400">Protección detectada en Binance</div>
-          <div className="mt-2 text-xs text-slate-500">Stop: <b className={stopPrices.length ? "text-emerald-300" : "text-amber-200"}>{stopPrices.length ? stopPrices.map(fmt).join(" · ") : "No detectado"}</b></div>
-          <div className="mt-1 text-xs text-slate-500">TP: <b className="text-slate-300">{targetPrices.length ? targetPrices.map(fmt).join(" · ") : "No detectado"}</b></div>
-        </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-          <div className="text-[10px] font-black uppercase tracking-[.1em] text-slate-400">Qué está vigilando ExplodeX</div>
-          <div className="mt-2 space-y-1 text-xs text-slate-500">{(c.next_watch ?? []).length ? c.next_watch!.map((item, i) => <div key={i}>• {item}</div>) : <div>Sin alertas técnicas relevantes en esta lectura.</div>}</div>
-        </div>
-      </div>
-
-      {!row.analysis_available && row.analysis_error && <div className="mt-3 flex items-center gap-2 text-[10px] text-amber-300"><RefreshCw size={12}/> Posición leída; análisis de mercado temporalmente no disponible: {row.analysis_error}</div>}
-    </div>
-  </section>;
-}
-
-function Metric({ label, value, positive }: { label: string; value: string; positive?: boolean }) {
-  return <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-3"><div className="text-[9px] uppercase tracking-[.1em] text-slate-600">{label}</div><div className={`mt-1 font-mono text-sm font-black ${positive === true ? "text-emerald-300" : positive === false ? "text-rose-300" : "text-white"}`}>{value}</div></div>;
-}
-
-function Info({ label, value, good = false }: { label: string; value: string; good?: boolean }) {
-  return <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4"><div className="text-[9px] font-black uppercase tracking-[.1em] text-slate-600">{label}</div><div className={`mt-1 text-lg font-black ${good ? "text-emerald-300" : "text-white"}`}>{value}</div></div>;
-}
+function progressToTarget(entry:number,mark:number,tp:number,long:boolean){if(entry<=0||tp<=0||tp===entry)return 0;const raw=long?(mark-entry)/(tp-entry):(entry-mark)/(entry-tp);return clamp(raw*100)}
+function Spark({points,positive}:{points:number[];positive:boolean}){if(points.length<2)return <div className="mt-4 grid h-28 place-items-center text-[10px] text-slate-700">Esperando historial…</div>;const min=Math.min(...points),max=Math.max(...points),range=max-min||1;const d=points.map((v,i)=>`${i===0?"M":"L"} ${(i/(points.length-1))*100} ${100-((v-min)/range)*100}`).join(" ");return <svg viewBox="0 0 100 100" preserveAspectRatio="none" className={`mt-4 h-28 w-full ${positive?"text-emerald-400":"text-rose-400"}`}><path d={d} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke"/><path d={`${d} L 100 100 L 0 100 Z`} fill="currentColor" opacity="0.06"/></svg>}
+function Gauge({label,value}:{label:string;value:number}){const v=clamp(value);return <div className="mb-2 last:mb-0"><div className="flex justify-between text-[9px] text-slate-500"><span>{label}</span><b className="text-slate-300">{v.toFixed(0)}/100</b></div><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-800"><div className="h-full bg-cyan-400/70 transition-all duration-700" style={{width:`${v}%`}}/></div></div>}
+function Metric({label,value,positive,big=false,live=false}:{label:string;value:string;positive?:boolean;big?:boolean;live?:boolean}){return <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3"><div className="flex items-center gap-1 text-[9px] uppercase tracking-[.1em] text-slate-600">{live&&<span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400"/>}{label}</div><div className={`mt-1 font-mono font-black ${big?"text-lg":"text-sm"} ${positive===true?"text-emerald-300":positive===false?"text-rose-300":"text-white"}`}>{value}</div></div>}
+function Level({label,value,danger=false}:{label:string;value:number;danger?:boolean}){return <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-2 text-center"><div className="text-[8px] text-slate-600">{label}</div><div className={`mt-1 font-mono text-[10px] font-black ${danger?"text-rose-300":"text-emerald-300"}`}>{value>0?fmt(value):"—"}</div></div>}
+function Top({label,value,good=false}:{label:string;value:string;good?:boolean}){return <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4"><div className="text-[9px] font-black uppercase tracking-[.1em] text-slate-600">{label}</div><div className={`mt-1 text-lg font-black ${good?"text-emerald-300":"text-white"}`}>{value}</div></div>}
