@@ -1,17 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Eye, EyeOff, GraduationCap, RadioTower, SlidersHorizontal, Sparkles, Target, Zap } from "lucide-react";
 import PriceChart, { type ChartPlan } from "@/components/PriceChart";
 import { getCandles, type Candle } from "@/lib/api";
 import { LOCKED_PLANS_EVENT, readLockedPlan } from "@/lib/lockedPlans";
 
-type Interval = "1m" | "5m" | "15m";
+type Interval = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 type ViewMode = "BEGINNER" | "PRO";
 type LevelKey = "entry" | "trigger" | "stop" | "targets" | "invalidation" | "myEntry";
 
-const BINANCE_INTERVAL: Record<Interval, string> = { "1m": "1m", "5m": "5m", "15m": "15m" };
-const OKX_INTERVAL: Record<Interval, string> = { "1m": "candle1m", "5m": "candle5m", "15m": "candle15m" };
+const INTERVALS: Interval[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
+const BINANCE_INTERVAL: Record<Interval, string> = {
+  "1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d",
+};
+const OKX_INTERVAL: Record<Interval, string> = {
+  "1m": "candle1m", "5m": "candle5m", "15m": "candle15m", "1h": "candle1H", "4h": "candle4H", "1d": "candle1D",
+};
+const HISTORY_LIMIT: Record<Interval, number> = {
+  "1m": 160, "5m": 160, "15m": 160, "1h": 160, "4h": 160, "1d": 160,
+};
+const HORIZON_LABEL: Record<Interval, string> = {
+  "1m": "≈2.7 h", "5m": "≈13 h", "15m": "≈40 h", "1h": "≈6.7 días", "4h": "≈26 días", "1d": "≈160 días",
+};
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
 
 function okxId(symbol: string) {
@@ -59,18 +70,16 @@ function fmt(value?: number | null) {
   return n.toLocaleString(undefined, { maximumSignificantDigits: 8 });
 }
 
-function buildPullbackGuide(candles: Candle[], plan: ChartPlan | undefined, livePrice?: number | null) {
-  const rows = candles.slice(-48);
+function buildPullbackGuide(candles: Candle[], plan: ChartPlan | undefined, livePrice: number | null | undefined, interval: Interval) {
+  const rows = candles.slice(-64);
   const direction = plan?.direction;
   if (!rows.length || !direction) {
     return {
-      state: "NO_PLAN",
-      label: "SIN PLAN ACTIVO",
-      tone: "slate",
-      score: 0,
+      state: "NO_PLAN", label: "SIN PLAN ACTIVO", tone: "slate", score: 0,
       what: ["Esperar a que ExplodeX construya un plan con dirección, zona y trigger."],
       missing: ["Dirección y niveles técnicos."],
       avoid: ["No entrar solo porque una vela se mueve rápido."],
+      interval,
     };
   }
 
@@ -82,7 +91,7 @@ function buildPullbackGuide(candles: Candle[], plan: ChartPlan | undefined, live
   const last = Number(livePrice ?? rows.at(-1)?.close ?? 0);
   const lastCandle = rows.at(-1)!;
   const atr = atr14(rows);
-  const recent = rows.slice(-20);
+  const recent = rows.slice(-24);
   const recentHigh = Math.max(...recent.map(x => x.high));
   const recentLow = Math.min(...recent.map(x => x.low));
   const long = direction === "LONG";
@@ -126,7 +135,7 @@ function buildPullbackGuide(candles: Candle[], plan: ChartPlan | undefined, live
   } else if (trendAligned && (nearEma21 || inEntry) && score >= 48) {
     state = "PULLBACK_FORMING"; label = "PULLBACK EN FORMACIÓN"; tone = "cyan";
   } else if (extended) {
-    state = "EXTENDED"; label = "SUBIDA EXTENDIDA · NO PERSEGUIR"; tone = "orange";
+    state = "EXTENDED"; label = long ? "SUBIDA EXTENDIDA · NO PERSEGUIR" : "BAJADA EXTENDIDA · NO PERSEGUIR"; tone = "orange";
   } else if (!trendAligned) {
     state = "TREND_CONFLICT"; label = "TENDENCIA SIN ALINEAR"; tone = "slate";
   }
@@ -134,8 +143,8 @@ function buildPullbackGuide(candles: Candle[], plan: ChartPlan | undefined, live
   const what: string[] = [];
   const missing: string[] = [];
   const avoid: string[] = [];
-  if (trendAligned) what.push(`EMA 9/21 mantienen sesgo ${long ? "alcista" : "bajista"}.`);
-  else missing.push("Alineación clara de EMA 9/21.");
+  if (trendAligned) what.push(`EMA 9/21 mantienen sesgo ${long ? "alcista" : "bajista"} en ${interval}.`);
+  else missing.push(`Alineación clara de EMA 9/21 en ${interval}.`);
   if (nearEma21) what.push("Precio cerca de EMA 21: zona típica de retroceso vigilable.");
   else if (!extended) missing.push("Acercamiento a EMA 21, soporte/retest o zona de entrada.");
   if (inEntry) what.push(`Precio dentro de zona teórica ${fmt(entryLow)}–${fmt(entryHigh)}.`);
@@ -144,11 +153,11 @@ function buildPullbackGuide(candles: Candle[], plan: ChartPlan | undefined, live
   else missing.push("Vela de rechazo/reanudación en la dirección del plan.");
   if (triggerHit) what.push(`Trigger ${fmt(trigger)} recuperado/tocado.`);
   else if (trigger > 0) missing.push(`Confirmar trigger ${fmt(trigger)}.`);
-  if (extended) avoid.push("No perseguir una vela ya extendida; esperar retest.");
+  if (extended) avoid.push("No perseguir un movimiento ya extendido; esperar retest.");
   if (invalidation > 0) avoid.push(`Si cruza invalidación ${fmt(invalidation)}, el plan deja de ser válido.`);
-  avoid.push("No usar este score como probabilidad de que el precio necesariamente subirá/bajará.");
+  avoid.push("El score técnico no es una probabilidad ni una garantía del siguiente movimiento.");
 
-  return { state, label, tone, score, what, missing, avoid, ema9: e9, ema21: e21, atr, pullbackDepth };
+  return { state, label, tone, score, what, missing, avoid, ema9: e9, ema21: e21, atr, pullbackDepth, interval };
 }
 
 function toneClasses(tone: string) {
@@ -185,7 +194,11 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
     window.addEventListener(LOCKED_PLANS_EVENT, onCustom as EventListener);
     window.addEventListener("storage", onStorage);
     const timer = setInterval(refresh, 2000);
-    return () => { window.removeEventListener(LOCKED_PLANS_EVENT, onCustom as EventListener); window.removeEventListener("storage", onStorage); clearInterval(timer); };
+    return () => {
+      window.removeEventListener(LOCKED_PLANS_EVENT, onCustom as EventListener);
+      window.removeEventListener("storage", onStorage);
+      clearInterval(timer);
+    };
   }, [symbol]);
 
   useEffect(() => {
@@ -196,7 +209,9 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
         const response = await fetch(`${BASE_URL}/api/v1/signals/active?limit=100`, { cache: "no-store" });
         if (!response.ok) return;
         const rows = await response.json() as Array<Record<string, any>>;
-        const row = rows.filter((item) => String(item.symbol).toUpperCase() === symbol.toUpperCase()).sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+        const row = rows
+          .filter((item) => String(item.symbol).toUpperCase() === symbol.toUpperCase())
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
         if (!row || cancelled) return;
         const reason = parseReason(row.reason);
         const prediction = parseReason(reason.prediction);
@@ -222,15 +237,18 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
     let disposed = false;
     let gotBinance = false;
     let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    const historyLimit = HISTORY_LIMIT[interval];
+
     function merge(next: Candle) {
       setCandles((current) => {
         const copy = [...current];
         const last = copy[copy.length - 1];
         if (last && last.time === next.time) copy[copy.length - 1] = next;
         else if (!last || next.time > last.time) copy.push(next);
-        return copy.slice(-96);
+        return copy.slice(-historyLimit);
       });
     }
+
     function connectOkx() {
       if (disposed) return;
       try { socketRef.current?.close(); } catch {}
@@ -243,13 +261,22 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
           const payload = JSON.parse(event.data);
           for (const row of payload?.data ?? []) {
             if (!Array.isArray(row) || row.length < 6) continue;
-            merge({ time: Number(row[0]), open: Number(row[1]), high: Number(row[2]), low: Number(row[3]), close: Number(row[4]), volume: Number(row[7] ?? row[6] ?? row[5] ?? 0) });
+            merge({
+              time: Number(row[0]), open: Number(row[1]), high: Number(row[2]), low: Number(row[3]), close: Number(row[4]), volume: Number(row[7] ?? row[6] ?? row[5] ?? 0),
+            });
           }
         } catch {}
       };
     }
+
     async function start() {
-      try { const initial = await getCandles(symbol, interval, 96); if (!disposed) setCandles(initial); } catch { if (!disposed) setCandles([]); }
+      setCandles([]);
+      try {
+        const initial = await getCandles(symbol, interval, historyLimit);
+        if (!disposed) setCandles(initial.slice(-historyLimit));
+      } catch {
+        if (!disposed) setCandles([]);
+      }
       if (disposed) return;
       const ws = new WebSocket(`wss://fstream.binance.com/ws/${symbol.toLowerCase()}@kline_${BINANCE_INTERVAL[interval]}`);
       socketRef.current = ws;
@@ -266,8 +293,13 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
       ws.onclose = () => { if (!disposed && !gotBinance) connectOkx(); };
       fallbackTimer = setTimeout(() => { if (!gotBinance) connectOkx(); }, 6000);
     }
+
     start();
-    return () => { disposed = true; if (fallbackTimer) clearTimeout(fallbackTimer); try { socketRef.current?.close(); } catch {} };
+    return () => {
+      disposed = true;
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+      try { socketRef.current?.close(); } catch {}
+    };
   }, [symbol, interval]);
 
   const basePlan = useMemo<ChartPlan | undefined>(() => {
@@ -292,7 +324,8 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
     };
   }, [basePlan, levels]);
 
-  const guide = useMemo(() => buildPullbackGuide(candles, basePlan, livePrice), [candles, basePlan, livePrice]);
+  const guide = useMemo(() => buildPullbackGuide(candles, basePlan, livePrice, interval), [candles, basePlan, livePrice, interval]);
+  const contextFrame = interval === "1h" || interval === "4h" || interval === "1d";
 
   return (
     <section className="overflow-hidden rounded-3xl border border-slate-800/80 bg-gradient-to-b from-slate-950/70 to-[#06101b]/80 shadow-2xl shadow-black/10">
@@ -300,7 +333,7 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 text-xs font-black text-white"><RadioTower size={14} className="text-emerald-400"/> {symbol} · mercado en vivo</div>
-            <div className="mt-1 text-[10px] text-slate-600">WebSocket · {source} · lectura de pullback y plan superpuesto</div>
+            <div className="mt-1 text-[10px] text-slate-600">WebSocket · {source} · {candles.length} velas · ventana {HORIZON_LABEL[interval]}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex rounded-xl border border-slate-800 bg-black/20 p-1">
@@ -308,14 +341,20 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
               <button onClick={() => setViewMode("PRO")} className={`rounded-lg px-2.5 py-1.5 text-[10px] font-black ${viewMode === "PRO" ? "bg-violet-400/10 text-violet-200" : "text-slate-500"}`}>Pro</button>
             </div>
             <button onClick={() => setShowControls(v => !v)} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-[10px] font-black text-slate-300"><SlidersHorizontal size={12}/> Qué mostrar <ChevronDown size={12}/></button>
-            <div className="flex gap-1">{(["1m", "5m", "15m"] as Interval[]).map((value) => <button key={value} onClick={() => setIntervalValue(value)} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold ${interval === value ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-slate-800 bg-slate-900 text-slate-500"}`}>{value}</button>)}</div>
+            <div className="flex flex-wrap gap-1 rounded-xl border border-slate-800 bg-black/20 p-1">
+              {INTERVALS.map((value) => <button key={value} onClick={() => setIntervalValue(value)} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold ${interval === value ? (value === "1h" || value === "4h" || value === "1d" ? "border-violet-500/30 bg-violet-500/10 text-violet-200" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200") : "border-transparent text-slate-500"}`}>{value === "1h" ? "1H" : value === "4h" ? "4H" : value === "1d" ? "1D" : value}</button>)}
+            </div>
           </div>
         </div>
 
+        <div className="mt-2 flex flex-wrap gap-2 text-[9px] font-black uppercase tracking-[.08em] text-slate-600">
+          <span className="rounded-lg border border-slate-800 bg-black/15 px-2 py-1">1m–15m = timing/entrada</span>
+          <span className={`rounded-lg border px-2 py-1 ${contextFrame ? "border-violet-400/20 bg-violet-400/[.05] text-violet-300" : "border-slate-800 bg-black/15"}`}>1H–1D = contexto/tendencia</span>
+          <span className="rounded-lg border border-slate-800 bg-black/15 px-2 py-1">API soporta hasta 300 velas</span>
+        </div>
+
         {showControls && <div className="mt-3 grid gap-2 rounded-2xl border border-slate-800 bg-black/20 p-3 sm:grid-cols-2 lg:grid-cols-6">
-          {([
-            ["entry","Zona entrada"],["trigger","Trigger"],["stop","Stop"],["targets","TP1/2/3"],["invalidation","Invalidación"],["myEntry","Mi entrada"]
-          ] as Array<[LevelKey,string]>).map(([key,label]) => <button key={key} onClick={() => setLevels(old => ({...old,[key]:!old[key]}))} className={`flex items-center justify-between rounded-xl border px-3 py-2 text-[10px] font-black ${levels[key] ? "border-cyan-400/20 bg-cyan-400/[.05] text-cyan-100" : "border-slate-800 text-slate-600"}`}><span>{label}</span>{levels[key] ? <Eye size={12}/> : <EyeOff size={12}/>}</button>)}
+          {([ ["entry","Zona entrada"],["trigger","Trigger"],["stop","Stop"],["targets","TP1/2/3"],["invalidation","Invalidación"],["myEntry","Mi entrada"] ] as Array<[LevelKey,string]>).map(([key,label]) => <button key={key} onClick={() => setLevels(old => ({...old,[key]:!old[key]}))} className={`flex items-center justify-between rounded-xl border px-3 py-2 text-[10px] font-black ${levels[key] ? "border-cyan-400/20 bg-cyan-400/[.05] text-cyan-100" : "border-slate-800 text-slate-600"}`}><span>{label}</span>{levels[key] ? <Eye size={12}/> : <EyeOff size={12}/>}</button>)}
         </div>}
       </div>
 
@@ -323,9 +362,9 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
         <div><PriceChart candles={candles} plan={chartPlan} livePrice={livePrice ?? undefined} /></div>
         <aside className="space-y-3">
           <div className={`rounded-2xl border p-4 ${toneClasses(guide.tone)}`}>
-            <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.12em]"><Sparkles size={13}/> Lectura ExplodeX</div><div className="font-mono text-xs font-black">{guide.score}/100</div></div>
+            <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.12em]"><Sparkles size={13}/> Lectura {interval.toUpperCase()}</div><div className="font-mono text-xs font-black">{guide.score}/100</div></div>
             <div className="mt-2 text-lg font-black">{guide.label}</div>
-            <div className="mt-1 text-[10px] opacity-70">Score técnico de calidad del contexto; no es probabilidad.</div>
+            <div className="mt-1 text-[10px] opacity-70">Score técnico del contexto de este marco; no es probabilidad.</div>
           </div>
 
           <GuideBlock icon={<Target size={13}/>} title="Qué buscar" rows={guide.what} empty="Todavía no hay confirmaciones claras." />
@@ -334,14 +373,14 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
 
           {viewMode === "BEGINNER" ? <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
             <div className="text-[10px] font-black uppercase tracking-[.1em] text-slate-500">Explícamelo fácil</div>
-            <p className="mt-2 text-xs leading-5 text-slate-300">{guide.state === "PULLBACK_CONFIRMED" ? "La tendencia sigue alineada, el precio regresó a una zona vigilable y ya mostró una señal de reanudación. Es una entrada potencial mejor ubicada que perseguir una subida." : guide.state === "PULLBACK_FORMING" ? "La tendencia sigue alineada y el precio está regresando a una zona interesante, pero todavía falta confirmación. Vigílalo; no es entrada lista todavía." : guide.state === "EXTENDED" ? "El movimiento puede seguir, pero comprar/vender ahora sería perseguir precio. Mejor esperar un retroceso y nueva confirmación." : guide.state === "INVALIDATED" ? "El precio cruzó la invalidación del plan. Este plan ya no debe tratarse como una oportunidad válida." : "Todavía no hay una entrada clara. Espera estructura, zona y confirmación en vez de adivinar."}</p>
-          </div> : <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4 text-[10px] leading-5 text-slate-500">EMA9 {fmt(guide.ema9)} · EMA21 {fmt(guide.ema21)} · ATR14 {fmt(guide.atr)} · profundidad pullback {(Number(guide.pullbackDepth || 0) * 100).toFixed(0)}%</div>}
+            <p className="mt-2 text-xs leading-5 text-slate-300">{contextFrame ? `Estás viendo ${interval.toUpperCase()}, así que úsalo para saber si la tendencia grande acompaña. Para afinar una entrada vuelve a 5m o 15m.` : guide.state === "PULLBACK_CONFIRMED" ? "La tendencia sigue alineada, el precio regresó a una zona vigilable y mostró reanudación. Es una entrada potencial mejor ubicada que perseguir una subida." : guide.state === "PULLBACK_FORMING" ? "La tendencia sigue alineada y el precio está regresando a una zona interesante, pero todavía falta confirmación." : guide.state === "EXTENDED" ? "El movimiento puede seguir, pero entrar ahora sería perseguir precio. Mejor esperar retroceso y nueva confirmación." : guide.state === "INVALIDATED" ? "El precio cruzó la invalidación del plan. Este plan ya no debe tratarse como una oportunidad válida." : "Todavía no hay una entrada clara. Espera estructura, zona y confirmación en vez de adivinar."}</p>
+          </div> : <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4 text-[10px] leading-5 text-slate-500">EMA9 {fmt(guide.ema9)} · EMA21 {fmt(guide.ema21)} · ATR14 {fmt(guide.atr)} · profundidad pullback {(Number(guide.pullbackDepth || 0) * 100).toFixed(0)}% · marco {interval.toUpperCase()}</div>}
         </aside>
       </div>
     </section>
   );
 }
 
-function GuideBlock({ icon, title, rows, empty }: { icon: React.ReactNode; title: string; rows: string[]; empty?: string }) {
+function GuideBlock({ icon, title, rows, empty }: { icon: ReactNode; title: string; rows: string[]; empty?: string }) {
   return <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4"><div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.1em] text-slate-500">{icon}{title}</div><div className="mt-2 space-y-1.5 text-xs leading-5 text-slate-400">{rows.length ? rows.map((row,i)=><div key={i}>• {row}</div>) : <div className="text-slate-600">{empty ?? "—"}</div>}</div></div>;
 }
