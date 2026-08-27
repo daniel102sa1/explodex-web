@@ -10,6 +10,7 @@ const items = [
   { href: "/", label: "Inicio", icon: Gauge },
   { href: "/terminal", label: "Terminal", icon: RadioTower },
   { href: "/scanner", label: "Scanner", icon: Activity },
+  { href: "/positions", label: "Mis posiciones", icon: WalletCards },
   { href: "/plans", label: "Planes", icon: Lock },
   { href: "/journal", label: "Validar señales", icon: FlaskConical },
   { href: "/paper", label: "Paper", icon: WalletCards },
