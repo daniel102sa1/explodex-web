@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Activity, ArrowDown, ArrowUp, GitBranch, RefreshCw, Route, ShieldAlert } from "lucide-react";
 import { getLiveAnalysis } from "@/lib/api";
 
@@ -23,6 +23,17 @@ type PathForecast = {
   reasons?: string[];
   score_is_probability?: boolean;
 };
+
+type CandidateState = {
+  path: string;
+  count: number;
+  startedAt: number;
+};
+
+const POLL_MS = 8_000;
+const NORMAL_CONFIRMATIONS = 3;
+const STRONG_CONFIRMATIONS = 2;
+const STRONG_EDGE_GAP = 18;
 
 function fmt(value?: number | null) {
   if (value == null || !Number.isFinite(Number(value))) return "—";
@@ -50,31 +61,69 @@ function clarityEs(value?: string) {
 export default function ForcedPathForecastPanel({ symbol }: { symbol: string }) {
   const safeSymbol = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
   const [forecast, setForecast] = useState<PathForecast | null>(null);
+  const [rawForecast, setRawForecast] = useState<PathForecast | null>(null);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingCount, setPendingCount] = useState(0);
+  const candidate = useRef<CandidateState | null>(null);
 
   useEffect(() => {
     let dead = false;
+    setForecast(null);
+    setRawForecast(null);
+    candidate.current = null;
+    setPendingCount(0);
+
     async function load() {
       try {
-        const analysis = await getLiveAnalysis(safeSymbol);
+        const analysis = await getLiveAnalysis(safeSymbol, true);
         const raw = (analysis.prediction as any)?.path_forecast as PathForecast | undefined;
-        if (!dead) {
-          setForecast(raw ?? null);
-          setError(null);
-          setUpdatedAt(Date.now());
-        }
+        if (dead) return;
+        const next = raw ?? null;
+        setRawForecast(next);
+        setError(null);
+        setUpdatedAt(Date.now());
+        if (!next?.primary_path) return;
+
+        setForecast((current) => {
+          if (!current?.primary_path) {
+            candidate.current = null;
+            setPendingCount(0);
+            return next;
+          }
+          if (current.primary_path === next.primary_path) {
+            candidate.current = null;
+            setPendingCount(0);
+            return { ...next, primary_path: current.primary_path };
+          }
+
+          const now = Date.now();
+          if (candidate.current?.path === next.primary_path) {
+            candidate.current.count += 1;
+          } else {
+            candidate.current = { path: next.primary_path, count: 1, startedAt: now };
+          }
+          const required = Number(next.edge_gap ?? 0) >= STRONG_EDGE_GAP ? STRONG_CONFIRMATIONS : NORMAL_CONFIRMATIONS;
+          setPendingCount(candidate.current.count);
+          if (candidate.current.count >= required) {
+            candidate.current = null;
+            setPendingCount(0);
+            return next;
+          }
+          return current;
+        });
       } catch (exc) {
         if (!dead) setError(exc instanceof Error ? exc.message : String(exc));
       }
     }
+
     load();
-    const timer = window.setInterval(load, 8_000);
+    const timer = window.setInterval(load, POLL_MS);
     return () => { dead = true; window.clearInterval(timer); };
   }, [safeSymbol]);
 
   if (!forecast && !error) {
-    return <section className="mx-auto mb-4 max-w-[1680px] px-3 sm:px-5 lg:px-6"><div className="rounded-3xl border border-slate-800 bg-slate-950/50 p-4 text-xs text-slate-500"><RefreshCw size={13} className="mr-2 inline animate-spin"/>Calculando Path Forecast…</div></section>;
+    return <section className="mx-auto mb-4 max-w-[1680px] px-3 sm:px-5 lg:px-6"><div className="rounded-3xl border border-slate-800 bg-slate-950/50 p-4 text-xs text-slate-500"><RefreshCw size={13} className="mr-2 inline animate-spin"/>Calculando Path Forecast estable…</div></section>;
   }
 
   if (error) {
@@ -82,6 +131,7 @@ export default function ForcedPathForecastPanel({ symbol }: { symbol: string }) 
   }
 
   const f = forecast!;
+  const rawDifferent = rawForecast?.primary_path && rawForecast.primary_path !== f.primary_path;
   const up = f.first_move === "UP";
   const longBias = f.final_bias === "LONG";
   const pullback = Boolean(f.contains_pullback);
@@ -93,10 +143,11 @@ export default function ForcedPathForecastPanel({ symbol }: { symbol: string }) 
       <div className="overflow-hidden rounded-3xl border border-violet-400/20 bg-[radial-gradient(circle_at_top_left,rgba(139,92,246,.10),transparent_38%),linear-gradient(135deg,rgba(7,17,29,.98),rgba(2,8,18,.98))] shadow-2xl shadow-black/20">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 px-5 py-4">
           <div>
-            <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.18em] text-violet-300"><Route size={14}/> Path Forecast · predicción obligatoria</div>
-            <div className="mt-1 text-xs text-slate-500">ExplodeX siempre elige un recorrido técnico principal, aunque los Entry Locks todavía no autoricen una entrada.</div>
+            <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.18em] text-violet-300"><Route size={14}/> Path Forecast · predicción estable</div>
+            <div className="mt-1 text-xs text-slate-500">El precio puede moverse cada tick; el escenario visible no cambia por un solo movimiento. Exige persistencia antes de girar.</div>
           </div>
           <div className="flex items-center gap-2">
+            {rawDifferent && <span className="rounded-full border border-amber-400/25 bg-amber-400/[.06] px-3 py-1.5 text-[10px] font-black text-amber-200">NUEVO ESCENARIO {pendingCount}/3</span>}
             <span className="rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1.5 text-[10px] font-black text-slate-300">CLARIDAD {clarityEs(f.clarity)}</span>
             <span className="rounded-full border border-cyan-400/20 bg-cyan-400/[.05] px-3 py-1.5 text-[10px] font-black text-cyan-200">{updatedAt ? new Date(updatedAt).toLocaleTimeString() : "LIVE"}</span>
           </div>
@@ -106,7 +157,7 @@ export default function ForcedPathForecastPanel({ symbol }: { symbol: string }) 
           <div>
             <div className="grid gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
               <div className="rounded-2xl border border-violet-400/25 bg-violet-400/[.06] p-4">
-                <div className="text-[9px] font-black uppercase tracking-[.14em] text-violet-300">Escenario #1</div>
+                <div className="text-[9px] font-black uppercase tracking-[.14em] text-violet-300">Escenario estable #1</div>
                 <div className="mt-2 text-2xl font-black text-white">{f.label ?? f.primary_path ?? "—"}</div>
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
                   <span className="rounded-lg border border-slate-800 bg-black/15 px-2 py-1">fuerza relativa <b className="text-white">{score.toFixed(0)}/100</b></span>
@@ -132,7 +183,7 @@ export default function ForcedPathForecastPanel({ symbol }: { symbol: string }) 
             <div className="mt-3 rounded-2xl border border-cyan-400/15 bg-cyan-400/[.035] p-4">
               <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.13em] text-cyan-300"><Activity size={13}/> Qué haría con esta predicción</div>
               <div className="mt-2 text-sm font-black text-white">{postureEs(f.trade_posture)}</div>
-              <div className="mt-1 text-xs leading-5 text-slate-500">La predicción siempre existe; la entrada sigue necesitando precio/zona/riesgo razonables. Esto evita que ExplodeX se quede siempre en silencio sin convertir cada lectura en una operación.</div>
+              <div className="mt-1 text-xs leading-5 text-slate-500">El escenario se revisa cada 8 s, pero no gira visualmente hasta repetirse 3 veces; si la diferencia técnica es muy fuerte, exige 2 lecturas. Así evitamos “sube/baja/sube/baja” por ruido.</div>
             </div>
           </div>
 
