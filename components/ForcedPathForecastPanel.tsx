@@ -65,6 +65,7 @@ export default function ForcedPathForecastPanel({ symbol }: { symbol: string }) 
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
+  const [pendingRequired, setPendingRequired] = useState(NORMAL_CONFIRMATIONS);
   const candidate = useRef<CandidateState | null>(null);
 
   useEffect(() => {
@@ -73,6 +74,7 @@ export default function ForcedPathForecastPanel({ symbol }: { symbol: string }) 
     setRawForecast(null);
     candidate.current = null;
     setPendingCount(0);
+    setPendingRequired(NORMAL_CONFIRMATIONS);
 
     async function load() {
       try {
@@ -83,7 +85,8 @@ export default function ForcedPathForecastPanel({ symbol }: { symbol: string }) 
         setRawForecast(next);
         setError(null);
         setUpdatedAt(Date.now());
-        if (!next?.primary_path) return;
+        const primaryPath = next?.primary_path;
+        if (!primaryPath) return;
 
         setForecast((current) => {
           if (!current?.primary_path) {
@@ -91,21 +94,25 @@ export default function ForcedPathForecastPanel({ symbol }: { symbol: string }) 
             setPendingCount(0);
             return next;
           }
-          if (current.primary_path === next.primary_path) {
+          if (current.primary_path === primaryPath) {
             candidate.current = null;
             setPendingCount(0);
             return { ...next, primary_path: current.primary_path };
           }
 
           const now = Date.now();
-          if (candidate.current?.path === next.primary_path) {
-            candidate.current.count += 1;
+          const existingCandidate = candidate.current;
+          if (existingCandidate && existingCandidate.path === primaryPath) {
+            existingCandidate.count += 1;
+            candidate.current = existingCandidate;
           } else {
-            candidate.current = { path: next.primary_path, count: 1, startedAt: now };
+            candidate.current = { path: primaryPath, count: 1, startedAt: now };
           }
           const required = Number(next.edge_gap ?? 0) >= STRONG_EDGE_GAP ? STRONG_CONFIRMATIONS : NORMAL_CONFIRMATIONS;
-          setPendingCount(candidate.current.count);
-          if (candidate.current.count >= required) {
+          const currentCount = candidate.current?.count ?? 0;
+          setPendingRequired(required);
+          setPendingCount(currentCount);
+          if (currentCount >= required) {
             candidate.current = null;
             setPendingCount(0);
             return next;
@@ -147,7 +154,7 @@ export default function ForcedPathForecastPanel({ symbol }: { symbol: string }) 
             <div className="mt-1 text-xs text-slate-500">El precio puede moverse cada tick; el escenario visible no cambia por un solo movimiento. Exige persistencia antes de girar.</div>
           </div>
           <div className="flex items-center gap-2">
-            {rawDifferent && <span className="rounded-full border border-amber-400/25 bg-amber-400/[.06] px-3 py-1.5 text-[10px] font-black text-amber-200">NUEVO ESCENARIO {pendingCount}/3</span>}
+            {rawDifferent && <span className="rounded-full border border-amber-400/25 bg-amber-400/[.06] px-3 py-1.5 text-[10px] font-black text-amber-200">NUEVO ESCENARIO {pendingCount}/{pendingRequired}</span>}
             <span className="rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1.5 text-[10px] font-black text-slate-300">CLARIDAD {clarityEs(f.clarity)}</span>
             <span className="rounded-full border border-cyan-400/20 bg-cyan-400/[.05] px-3 py-1.5 text-[10px] font-black text-cyan-200">{updatedAt ? new Date(updatedAt).toLocaleTimeString() : "LIVE"}</span>
           </div>

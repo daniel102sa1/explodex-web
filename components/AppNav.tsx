@@ -12,6 +12,7 @@ const items = [
   { href: "/scanner", label: "Scanner", icon: Activity },
   { href: "/positions", label: "Mis posiciones", icon: WalletCards },
   { href: "/plans", label: "Planes", icon: Lock },
+  { href: "/validation", label: "Validación", icon: FlaskConical },
   { href: "/journal", label: "Validar señales", icon: FlaskConical },
   { href: "/paper", label: "Paper", icon: WalletCards },
   { href: "/stats", label: "Estadísticas", icon: BarChart3 },
