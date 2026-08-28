@@ -31,6 +31,13 @@ function tone(value?: string) {
   return "border-rose-400/25 bg-rose-400/[.05] text-rose-100";
 }
 
+function decision(value?: string) {
+  if (value === "TRADE_NOW") return { question: "¿TRADEAR AHORA?", answer: "SÍ", detail: "ENTRADA OPERABLE" };
+  if (value === "TRADE_SOON") return { question: "¿TRADEAR AHORA?", answer: "ESPERA", detail: "CASI LISTA" };
+  if (value === "WATCHLIST") return { question: "¿TRADEAR AHORA?", answer: "TODAVÍA NO", detail: "VIGILAR" };
+  return { question: "¿TRADEAR AHORA?", answer: "NO", detail: "NO ENTRAR" };
+}
+
 function stageEs(value?: string) {
   const map: Record<string, string> = {
     ARMED: "ARMADO",
@@ -91,29 +98,38 @@ export default function PreMoveFingerprintPanel({ symbol }: { symbol: string }) 
   const conditions = Object.entries(data.trigger_conditions ?? {});
   const passed = Number(data.trigger_passes ?? 0);
   const total = Number(data.trigger_total ?? conditions.length);
+  const direct = decision(data.trade_class);
 
   return (
     <section className="mx-auto mb-4 max-w-[1680px] px-3 sm:px-5 lg:px-6">
       <div className="overflow-hidden rounded-3xl border border-cyan-400/15 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,.08),transparent_38%),linear-gradient(135deg,rgba(4,12,24,.98),rgba(2,8,17,.98))] shadow-2xl shadow-black/20">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 px-5 py-4">
           <div>
-            <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.18em] text-cyan-300"><Radar size={14}/> Pre-Move Fingerprint · ARMED Trigger</div>
-            <div className="mt-1 text-xs text-slate-500">Busca preparación temprana y luego clasifica si el setup ya es operable.</div>
+            <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.18em] text-cyan-300"><Radar size={14}/> Decisión de entrada · Pre-Move Fingerprint</div>
+            <div className="mt-1 text-xs text-slate-500">Respuesta simple primero; detalle técnico debajo.</div>
           </div>
           <div className="flex items-center gap-2 text-[10px] text-slate-500"><Activity size={12}/>{updatedAt ? new Date(updatedAt).toLocaleTimeString() : "LIVE"}</div>
         </div>
 
         <div className="grid gap-4 p-5 xl:grid-cols-[.8fr_1.2fr]">
           <div className={`rounded-3xl border p-5 ${tone(data.trade_class)}`}>
-            <div className="text-[10px] font-black uppercase tracking-[.16em] opacity-60">Clasificación operable</div>
-            <div className="mt-2 flex flex-wrap items-end gap-3"><div className="text-3xl font-black">{data.trade_label ?? data.trade_class ?? "—"}</div><span className="rounded-xl border border-current/20 bg-black/10 px-3 py-1.5 text-sm font-black">GRADO {grade}</span></div>
+            <div className="text-[11px] font-black uppercase tracking-[.18em] opacity-65">{direct.question}</div>
+            <div className="mt-2 text-5xl font-black tracking-tight">{direct.answer}</div>
+            <div className="mt-1 text-sm font-black uppercase tracking-[.12em] opacity-75">{direct.detail}</div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className="rounded-xl border border-current/20 bg-black/10 px-3 py-1.5 text-xs font-black">TÉCNICO: {data.trade_label ?? data.trade_class ?? "—"}</span>
+              <span className="rounded-xl border border-current/20 bg-black/10 px-3 py-1.5 text-xs font-black">GRADO {grade}</span>
+            </div>
+
             <div className="mt-4 grid grid-cols-2 gap-2">
               <Box label="Fingerprint" value={`${score.toFixed(0)}/100`} />
               <Box label="Etapa" value={stageEs(data.stage)} />
               <Box label="Trigger" value={`${passed}/${total}`} />
-              <Box label="6 Locks" value={`${Number(data.locks_passed ?? 0)}/6`} />
+              <Box label="6 Entry Locks" value={`${Number(data.locks_passed ?? 0)}/6`} />
             </div>
-            <div className="mt-4 rounded-2xl border border-white/10 bg-black/10 p-3 text-xs leading-5 opacity-75">{data.trade_class === "TRADE_NOW" ? "La preparación y el trigger técnico están alineados ahora. Sigue siendo una clasificación técnica, no una garantía de ganancia." : data.trade_class === "TRADE_SOON" ? "Hay una preparación fuerte y faltan pocos disparadores. Este es el grupo que conviene vigilar de cerca." : data.trade_class === "WATCHLIST" ? "La secuencia temprana existe, pero todavía no está armada para una entrada." : "No hay preparación suficiente o existe un bloqueo técnico importante."}</div>
+
+            <div className="mt-4 rounded-2xl border border-white/10 bg-black/10 p-3 text-xs leading-5 opacity-80">{data.trade_class === "TRADE_NOW" ? "ExplodeX considera que la entrada está técnicamente operable ahora. Revisa zona, stop e invalidación antes de actuar." : data.trade_class === "TRADE_SOON" ? "No entrar todavía: está cerca, pero faltan pocos disparadores. Espera que se completen." : data.trade_class === "WATCHLIST" ? "Todavía no es entrada. Solo vigilar porque hay preparación temprana." : "No entrar con este setup ahora. Falta calidad o existe un bloqueo técnico."}</div>
           </div>
 
           <div className="grid gap-3 lg:grid-cols-2">
@@ -124,8 +140,8 @@ export default function PreMoveFingerprintPanel({ symbol }: { symbol: string }) 
 
             <div className="space-y-3">
               <ListBox title="Señales tempranas detectadas" rows={data.early_signals ?? []} empty="Aún no aparece una firma temprana clara." />
-              <ListBox title="Qué falta" rows={(data.missing ?? []).map(conditionEs)} empty="No falta un disparador principal." />
-              <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[.04] p-3 text-[10px] leading-5 text-amber-100/70"><ShieldAlert size={13} className="mr-1 inline"/>El score /100 mide calidad técnica de la firma. No representa probabilidad de ganar ni significa “sí o sí”.</div>
+              <ListBox title="Qué falta para poder tradear" rows={(data.missing ?? []).map(conditionEs)} empty="No falta un disparador principal." />
+              <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[.04] p-3 text-[10px] leading-5 text-amber-100/70"><ShieldAlert size={13} className="mr-1 inline"/>“SÍ” significa que pasa las reglas técnicas actuales; no significa ganancia segura ni probabilidad garantizada.</div>
             </div>
           </div>
         </div>
