@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, AlertTriangle, Bitcoin, Newspaper, RadioTower, ShieldAlert, TrendingDown, TrendingUp, Waves } from "lucide-react";
+import { Activity, Bitcoin, Newspaper, RadioTower, ShieldAlert, TrendingDown, TrendingUp, Waves } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
 
@@ -18,10 +18,24 @@ type Impact = {
   derivatives?: { oi_15m_pct?: number; oi_1h_pct?: number; taker_buy_sell_ratio?: number; funding_median_pct?: number; liquidation_imbalance_1h?: number };
 };
 
+type Fingerprint = {
+  trade_class?: string;
+  trade_label?: string;
+  grade?: string;
+  market_impact_gate?: {
+    demoted?: boolean;
+    original_trade_class?: string;
+    original_trade_label?: string;
+    original_grade?: string;
+    support_score?: number;
+    state?: string;
+  };
+};
+
 type Payload = {
   symbol?: string;
   impact?: Impact;
-  armed_trigger?: { trade_class?: string; trade_label?: string; grade?: string; market_impact_gate?: { demoted?: boolean; original_trade_class?: string } };
+  premove_fingerprint?: Fingerprint;
 };
 
 function tone(state?: string) {
@@ -92,7 +106,7 @@ export default function MarketImpactPanel({ symbol }: { symbol: string }) {
   }
 
   const impact = data?.impact ?? {};
-  const armed = data?.armed_trigger ?? {};
+  const fingerprint = data?.premove_fingerprint ?? {};
   const factors = Object.entries(impact.factors ?? {});
   const supportive = impact.state === "SUPPORTIVE";
   const against = impact.state === "CONFLICT" || impact.state === "SHOCK_RISK";
@@ -103,7 +117,7 @@ export default function MarketImpactPanel({ symbol }: { symbol: string }) {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 px-5 py-4">
           <div>
             <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.18em] text-cyan-300"><Newspaper size={14}/> Catalyst / Market Impact</div>
-            <div className="mt-1 text-xs text-slate-500">Noticias + BTC/ETH + mercado + OI + taker + funding + liquidaciones + reacción técnica.</div>
+            <div className="mt-1 text-xs text-slate-500">Ya forma parte de la decisión maestra: noticias + BTC/ETH + mercado + OI + taker + funding + liquidaciones + reacción técnica.</div>
           </div>
           <div className="flex items-center gap-2">
             <span className={`rounded-full border px-3 py-1.5 text-[10px] font-black ${tone(impact.state)}`}>{impact.label ?? "ENTORNO MIXTO"}</span>
@@ -126,15 +140,15 @@ export default function MarketImpactPanel({ symbol }: { symbol: string }) {
 
             <div className={`mt-3 rounded-2xl border p-4 ${tone(impact.state)}`}>
               <div className="flex items-center gap-2 text-sm font-black">{supportive ? <TrendingUp size={16}/> : against ? <TrendingDown size={16}/> : <Activity size={16}/>} ¿Qué significa?</div>
-              <p className="mt-2 text-xs leading-5 opacity-80">{impact.state === "SUPPORTIVE" ? "El entorno externo acompaña la dirección técnica. Esto refuerza el contexto, pero no crea una entrada por sí solo." : impact.state === "SHOCK_RISK" ? "Hay un catalizador contrario y la reacción técnica también está deteriorándose. ExplodeX puede degradar una entrada para esperar confirmación." : impact.state === "CONFLICT" ? "Noticias/mercado/derivados están contradiciendo la dirección técnica. Conviene exigir más confirmación antes de entrar." : "El entorno no da una ventaja externa clara. La decisión depende más de estructura, zona y trigger."}</p>
+              <p className="mt-2 text-xs leading-5 opacity-80">{impact.state === "SUPPORTIVE" ? "El entorno externo acompaña la dirección técnica. Refuerza el contexto, pero no crea una entrada por sí solo." : impact.state === "SHOCK_RISK" ? "Hay un catalizador contrario y la reacción técnica también está deteriorándose. ExplodeX degrada la autorización de entrada mientras ese riesgo siga activo." : impact.state === "CONFLICT" ? "Noticias/mercado/derivados contradicen la dirección técnica. Una señal de entrada puede bajar a ESPERA o VIGILAR." : "El entorno no da una ventaja externa clara. La decisión depende más de estructura, zona y trigger."}</p>
             </div>
           </div>
 
           <aside className="space-y-3">
             <div className="rounded-2xl border border-slate-800 bg-black/15 p-4">
-              <div className="text-[10px] font-black uppercase tracking-[.12em] text-slate-500">Clasificación después del Catalyst Gate</div>
-              <div className="mt-2 flex items-center justify-between gap-3"><div className="text-2xl font-black text-white">{armed.trade_label ?? armed.trade_class ?? "—"}</div><div className="rounded-xl border border-slate-700 px-3 py-2 text-lg font-black text-cyan-200">{armed.grade ?? "—"}</div></div>
-              {armed.market_impact_gate?.demoted && <div className="mt-2 rounded-xl border border-amber-400/20 bg-amber-400/[.05] p-2.5 text-[10px] leading-4 text-amber-100">El Market Impact degradó temporalmente la clasificación original {armed.market_impact_gate.original_trade_class}. Está esperando que el entorno confirme.</div>}
+              <div className="text-[10px] font-black uppercase tracking-[.12em] text-slate-500">Clasificación real después del Catalyst Gate</div>
+              <div className="mt-2 flex items-center justify-between gap-3"><div className="text-2xl font-black text-white">{fingerprint.trade_label ?? fingerprint.trade_class ?? "—"}</div><div className="rounded-xl border border-slate-700 px-3 py-2 text-lg font-black text-cyan-200">{fingerprint.grade ?? "—"}</div></div>
+              {fingerprint.market_impact_gate?.demoted && <div className="mt-2 rounded-xl border border-amber-400/20 bg-amber-400/[.05] p-2.5 text-[10px] leading-4 text-amber-100">El Catalyst Gate degradó temporalmente {fingerprint.market_impact_gate.original_trade_class} → {fingerprint.trade_class}. Está esperando que el entorno vuelva a alinearse.</div>}
             </div>
 
             <div className="rounded-2xl border border-slate-800 bg-black/15 p-4">
@@ -146,7 +160,7 @@ export default function MarketImpactPanel({ symbol }: { symbol: string }) {
               OI 15m {Number(impact.derivatives?.oi_15m_pct ?? 0).toFixed(2)}% · OI 1h {Number(impact.derivatives?.oi_1h_pct ?? 0).toFixed(2)}% · Taker {Number(impact.derivatives?.taker_buy_sell_ratio ?? 1).toFixed(2)}x · Funding {Number(impact.derivatives?.funding_median_pct ?? 0).toFixed(4)}% · Breadth {Number(impact.broad_market?.net_breadth_pct ?? 0).toFixed(1)}%
             </div>
 
-            <div className="flex gap-2 rounded-2xl border border-amber-500/20 bg-amber-500/[.04] p-3 text-[10px] leading-5 text-amber-100/70"><ShieldAlert size={14} className="mt-0.5 shrink-0"/>Una noticia no puede crear TRADE NOW. Solo puede apoyar, advertir o degradar una entrada técnica existente. El /100 no es probabilidad.</div>
+            <div className="flex gap-2 rounded-2xl border border-amber-500/20 bg-amber-500/[.04] p-3 text-[10px] leading-5 text-amber-100/70"><ShieldAlert size={14} className="mt-0.5 shrink-0"/>Una noticia nunca puede crear TRADE NOW. Puede apoyar, advertir o degradar una entrada técnica existente. El /100 no es probabilidad.</div>
             {updatedAt && <div className="text-right text-[9px] text-slate-700">Actualizado {new Date(updatedAt).toLocaleTimeString()}</div>}
           </aside>
         </div>
