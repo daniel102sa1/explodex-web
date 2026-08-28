@@ -101,7 +101,7 @@ export default function ForcedPathForecastPanel({ symbol }: { symbol: string }) 
 
           const now = Date.now();
           const existingCandidate = candidate.current;
-          if (existingCandidate?.path === next.primary_path) {
+          if (existingCandidate && existingCandidate.path === next.primary_path) {
             existingCandidate.count += 1;
             candidate.current = existingCandidate;
           } else {
