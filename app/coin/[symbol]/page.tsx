@@ -2,6 +2,7 @@ import ExplodeXAnalysisHub from "@/components/ExplodeXAnalysisHub";
 import ExplodeXVerdict from "@/components/ExplodeXVerdict";
 import ForcedPathForecastPanel from "@/components/ForcedPathForecastPanel";
 import LockedPlanManager from "@/components/LockedPlanManager";
+import MarketImpactPanel from "@/components/MarketImpactPanel";
 import PreMoveFingerprintPanel from "@/components/PreMoveFingerprintPanel";
 import ProfessionalCoinWorkspace from "@/components/ProfessionalCoinWorkspace";
 import VerdictOutcomeWorker from "@/components/VerdictOutcomeWorker";
@@ -15,6 +16,7 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
       <VerdictOutcomeWorker />
       <ExplodeXVerdict symbol={symbol} />
       <PreMoveFingerprintPanel symbol={symbol} />
+      <MarketImpactPanel symbol={symbol} />
       <ForcedPathForecastPanel symbol={symbol} />
       <ProfessionalCoinWorkspace symbol={symbol} />
       <LockedPlanManager symbol={symbol} />
