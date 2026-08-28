@@ -84,6 +84,7 @@ export default function ForcedPathForecastPanel({ symbol }: { symbol: string }) 
         setError(null);
         setUpdatedAt(Date.now());
         if (!next?.primary_path) return;
+        const nextPrimaryPath = next.primary_path;
 
         setForecast((current) => {
           if (!current?.primary_path) {
@@ -91,21 +92,23 @@ export default function ForcedPathForecastPanel({ symbol }: { symbol: string }) 
             setPendingCount(0);
             return next;
           }
-          if (current.primary_path === next.primary_path) {
+          if (current.primary_path === nextPrimaryPath) {
             candidate.current = null;
             setPendingCount(0);
             return { ...next, primary_path: current.primary_path };
           }
 
           const now = Date.now();
-          if (candidate.current?.path === next.primary_path) {
-            candidate.current.count += 1;
+          const activeCandidate = candidate.current;
+          if (activeCandidate && activeCandidate.path === nextPrimaryPath) {
+            activeCandidate.count += 1;
           } else {
-            candidate.current = { path: next.primary_path, count: 1, startedAt: now };
+            candidate.current = { path: nextPrimaryPath, count: 1, startedAt: now };
           }
           const required = Number(next.edge_gap ?? 0) >= STRONG_EDGE_GAP ? STRONG_CONFIRMATIONS : NORMAL_CONFIRMATIONS;
-          setPendingCount(candidate.current.count);
-          if (candidate.current.count >= required) {
+          const candidateCount = candidate.current?.count ?? 0;
+          setPendingCount(candidateCount);
+          if (candidateCount >= required) {
             candidate.current = null;
             setPendingCount(0);
             return next;
