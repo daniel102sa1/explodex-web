@@ -1,6 +1,7 @@
 import ExplodeXAnalysisHub from "@/components/ExplodeXAnalysisHub";
 import ExplodeXVerdict from "@/components/ExplodeXVerdict";
 import ForcedPathForecastPanel from "@/components/ForcedPathForecastPanel";
+import HeartDecisionBanner from "@/components/HeartDecisionBanner";
 import LockedPlanManager from "@/components/LockedPlanManager";
 import MarketImpactPanel from "@/components/MarketImpactPanel";
 import PredictionStackV5Panel from "@/components/PredictionStackV5Panel";
@@ -15,6 +16,7 @@ export default async function CoinPage({ params }: { params: Promise<{ symbol: s
   return (
     <>
       <VerdictOutcomeWorker />
+      <HeartDecisionBanner symbol={symbol} />
       <ExplodeXVerdict symbol={symbol} />
       <PredictionStackV5Panel symbol={symbol} />
       <PreMoveFingerprintPanel symbol={symbol} />
