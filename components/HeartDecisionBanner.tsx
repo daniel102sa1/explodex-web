@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDownRight, ArrowUpRight, CheckCircle2, Clock3, ShieldAlert, Zap } from "lucide-react";
 import { getLiveAnalysis, type LiveAnalysis } from "@/lib/api";
 
+const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
+
 function fmt(value: unknown) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return "—";
@@ -26,14 +28,25 @@ const human: Record<string,string> = {
 export default function HeartDecisionBanner({ symbol }: { symbol: string }) {
   const safeSymbol = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
   const [analysis, setAnalysis] = useState<LiveAnalysis | null>(null);
+  const [canonicalHeart, setCanonicalHeart] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const value = await getLiveAnalysis(safeSymbol, true);
-        if (!cancelled) { setAnalysis(value); setError(null); }
+        const [value, radar] = await Promise.all([
+          getLiveAnalysis(safeSymbol, true),
+          BASE_URL
+            ? fetch(`${BASE_URL}/api/v1/predictions/live?limit=100`, { cache: "no-store" }).then(r => r.ok ? r.json() : null).catch(() => null)
+            : Promise.resolve(null),
+        ]);
+        if (cancelled) return;
+        setAnalysis(value);
+        const items = Array.isArray(radar?.items) ? radar.items : [];
+        const match = items.find((item:any) => String(item?.symbol ?? "").toUpperCase() === safeSymbol);
+        setCanonicalHeart(match?.explodex_heart ?? null);
+        setError(null);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "No se pudo cargar el Heart");
       }
@@ -43,10 +56,11 @@ export default function HeartDecisionBanner({ symbol }: { symbol: string }) {
     return () => { cancelled = true; clearInterval(timer); };
   }, [safeSymbol]);
 
-  const heart = (analysis as any)?.explodex_heart ?? (analysis?.prediction as any)?.explodex_heart;
+  const liveHeart = (analysis as any)?.explodex_heart ?? (analysis?.prediction as any)?.explodex_heart;
+  const heart = canonicalHeart ?? liveHeart;
   const decision = heart?.action_decision ?? {};
   const plan = heart?.plan ?? {};
-  const event = heart?.market_event ?? {};
+  const event = heart?.market_event ?? liveHeart?.market_event ?? {};
   const ignition = heart?.ignition ?? {};
   const action = String(decision?.action ?? "ESPERAR").toUpperCase();
   const enter = Boolean(decision?.should_enter) || action === "ENTRAR_LONG" || action === "ENTRAR_SHORT";
@@ -55,6 +69,7 @@ export default function HeartDecisionBanner({ symbol }: { symbol: string }) {
   const direction = String(decision?.direction ?? heart?.direction ?? analysis?.direction ?? "").toUpperCase();
   const prep = Number(ignition?.score ?? event?.pressure_index ?? (analysis?.prediction as any)?.preactivation_score ?? 0);
   const missing = Array.isArray(decision?.advanced_stack_missing) ? decision.advanced_stack_missing : [];
+  const sourceLabel = canonicalHeart ? "DECISIÓN CANÓNICA · SCANNER/PAPER" : "ANÁLISIS EN VIVO";
 
   const tone = enter ? "border-emerald-400/60 bg-emerald-500/[.12]" : noEnter ? "border-rose-400/45 bg-rose-500/[.08]" : retest ? "border-violet-400/45 bg-violet-500/[.08]" : "border-amber-400/45 bg-amber-500/[.08]";
   const title = enter ? `ENTRAR ${direction} AHORA` : noEnter ? "NO ENTRAR" : retest ? "ESPERAR RETEST" : "ESPERAR";
@@ -77,6 +92,7 @@ export default function HeartDecisionBanner({ symbol }: { symbol: string }) {
               <Zap size={14} className={enter ? "text-emerald-300" : "text-amber-300"}/>
               ExplodeX · decisión
               <span className="rounded-full border border-slate-700/70 px-2 py-0.5 text-slate-500">{safeSymbol}</span>
+              <span className="text-slate-600">{sourceLabel}</span>
             </div>
             <div className={`mt-3 flex items-center gap-2 text-3xl font-black sm:text-4xl ${titleClass}`}>
               {direction === "SHORT" ? <ArrowDownRight size={34}/> : direction === "LONG" ? <ArrowUpRight size={34}/> : <ShieldAlert size={30}/>} 
@@ -103,7 +119,7 @@ export default function HeartDecisionBanner({ symbol }: { symbol: string }) {
               <Metric label="TP1" value={fmt(plan?.tp1)} good/>
               <Metric label="TP2" value={fmt(plan?.tp2)} good/>
             </div>
-            <div className="mt-3 text-[10px] leading-5 text-slate-500">El índice es técnico, no una probabilidad garantizada. Los vetos duros, invalidación y no-chase siguen teniendo prioridad.</div>
+            <div className="mt-3 text-[10px] leading-5 text-slate-500">La página prioriza la misma decisión canónica que consume PAPER. El índice técnico no es una probabilidad garantizada; veto duro, invalidación y no-chase siguen mandando.</div>
           </div>
         </div>
       </div>
