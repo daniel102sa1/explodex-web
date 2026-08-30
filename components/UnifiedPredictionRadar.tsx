@@ -14,7 +14,7 @@ type Point = {
   phase: string;
 };
 
-type HeartAction = "ENTRAR_LONG" | "ENTRAR_SHORT" | "ESPERAR" | "ESPERAR_RETEST" | "NO_ENTRAR" | string;
+type HeartAction = "ENTRAR_LONG" | "ENTRAR_SHORT" | "MANTENER_LONG" | "MANTENER_SHORT" | "PLAN_COMPLETADO" | "ESPERAR" | "ESPERAR_RETEST" | "NO_ENTRAR" | string;
 
 type Item = {
   id: string;
@@ -82,6 +82,9 @@ function typeEs(value?: string) {
 function ActionBadge({ action }: { action?: HeartAction }) {
   if (action === "ENTRAR_LONG") return <span className="inline-flex items-center gap-1 font-black text-emerald-300"><Zap size={12}/> ENTRAR LONG</span>;
   if (action === "ENTRAR_SHORT") return <span className="inline-flex items-center gap-1 font-black text-rose-300"><Zap size={12}/> ENTRAR SHORT</span>;
+  if (action === "MANTENER_LONG") return <span className="inline-flex items-center gap-1 font-black text-cyan-300"><CheckCircle2 size={12}/> MANTENER LONG</span>;
+  if (action === "MANTENER_SHORT") return <span className="inline-flex items-center gap-1 font-black text-cyan-300"><CheckCircle2 size={12}/> MANTENER SHORT</span>;
+  if (action === "PLAN_COMPLETADO") return <span className="inline-flex items-center gap-1 font-black text-blue-300"><CheckCircle2 size={12}/> PLAN COMPLETADO</span>;
   if (action === "ESPERAR_RETEST") return <span className="inline-flex items-center gap-1 font-black text-violet-300"><ShieldAlert size={12}/> ESPERAR RETEST</span>;
   if (action === "NO_ENTRAR") return <span className="inline-flex items-center gap-1 font-black text-rose-300"><ShieldAlert size={12}/> NO ENTRAR</span>;
   return <span className="font-bold text-amber-200">ESPERAR</span>;
@@ -115,7 +118,7 @@ export default function UnifiedPredictionRadar() {
 
   const items = useMemo(() => {
     const rows = data?.items ?? [];
-    if (filter === "OPERABLE") return rows.filter((x) => x.operable);
+    if (filter === "OPERABLE") return rows.filter((x) => x.operable || ["MANTENER_LONG","MANTENER_SHORT"].includes(String(x.heart_action)));
     if (filter === "EARLY") return rows.filter((x) => ["PREACTIVACION", "VIGILAR_CONFIRMACION"].includes(String(x.prediction?.phase)));
     if (filter === "ACCELERATING") return rows.filter((x) => x.preparation_accelerating);
     return rows;
@@ -126,12 +129,12 @@ export default function UnifiedPredictionRadar() {
       <div className="flex flex-col gap-3 border-b border-slate-800 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="flex items-center gap-2 text-sm font-black text-white"><RadioTower size={16} className="text-cyan-300"/> Radar predictivo unificado</div>
-          <div className="mt-1 text-[10px] leading-4 text-slate-600">Decisión tomada por ExplodeX Heart · refresco cada 5 s · sin recalcular otra decisión en frontend</div>
+          <div className="mt-1 text-[10px] leading-4 text-slate-600">Decisión tomada por ExplodeX Heart · refresco cada 5 s · una entrada disparada queda memorizada hasta cierre/invalidation</div>
         </div>
         <div className="flex flex-wrap gap-2">
           {(["ALL", "OPERABLE", "EARLY", "ACCELERATING"] as const).map((value) => (
             <button key={value} onClick={() => setFilter(value)} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black ${filter === value ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-200" : "border-slate-800 text-slate-500"}`}>
-              {value === "ALL" ? "TODAS" : value === "OPERABLE" ? "ENTRAR" : value === "EARLY" ? "TEMPRANAS" : "ACELERANDO"}
+              {value === "ALL" ? "TODAS" : value === "OPERABLE" ? "ENTRAR / ACTIVAS" : value === "EARLY" ? "TEMPRANAS" : "ACELERANDO"}
             </button>
           ))}
         </div>
@@ -167,17 +170,18 @@ export default function UnifiedPredictionRadar() {
               const p = item.prediction ?? {};
               const trajectory = (item.preparation_trajectory ?? []).map((x) => Number(x.preactivation_score || 0)).filter(Boolean);
               const checksComplete = item.conditions_total > 0 && item.conditions_ready >= item.conditions_total;
+              const latched = ["MANTENER_LONG","MANTENER_SHORT"].includes(String(item.heart_action));
               return (
                 <tr key={item.id} className="border-b border-slate-900 hover:bg-slate-900/50">
                   <td className="px-3 py-3"><Link href={`/coin/${item.symbol}`} className="font-black text-white hover:text-cyan-300">{item.symbol}</Link></td>
                   <td className={`px-3 py-3 font-black ${item.direction === "LONG" ? "text-emerald-400" : "text-rose-400"}`}>
                     <span className="inline-flex items-center gap-1">{item.direction === "LONG" ? <ArrowUpRight size={13}/> : <ArrowDownRight size={13}/>} {typeEs(p.type ?? item.setup_type)}</span>
                   </td>
-                  <td className="px-3 py-3"><span className={`status-pill ${item.operable ? "status-ready" : p.phase === "PREACTIVACION" ? "status-watch" : "status-neutral"}`}>{phaseEs(p.phase)}</span></td>
+                  <td className="px-3 py-3"><span className={`status-pill ${item.operable || latched ? "status-ready" : p.phase === "PREACTIVACION" ? "status-watch" : "status-neutral"}`}>{latched ? "PLAN ACTIVO" : phaseEs(p.phase)}</span></td>
                   <td className="px-3 py-3 text-right font-black text-cyan-300">{Number(p.preactivation_score ?? 0).toFixed(1)}</td>
                   <td className="px-3 py-3 text-right font-black text-white">{item.setup_score.toFixed(1)}</td>
                   <td className="px-3 py-3 text-right text-slate-400">{item.risk_score.toFixed(1)}</td>
-                  <td className="px-3 py-3 text-center"><span className={`inline-flex items-center gap-1 font-bold ${checksComplete ? "text-emerald-300" : "text-slate-300"}`}>{checksComplete ? <CheckCircle2 size={12} className="text-emerald-400"/> : <CircleDashed size={12} className="text-amber-300"/>}{item.conditions_ready}/{item.conditions_total}</span></td>
+                  <td className="px-3 py-3 text-center"><span className={`inline-flex items-center gap-1 font-bold ${checksComplete || latched ? "text-emerald-300" : "text-slate-300"}`}>{checksComplete || latched ? <CheckCircle2 size={12} className="text-emerald-400"/> : <CircleDashed size={12} className="text-amber-300"/>}{latched ? "ACTIVO" : `${item.conditions_ready}/${item.conditions_total}`}</span></td>
                   <td className="px-3 py-3">
                     <div className="flex items-end gap-1">
                       {trajectory.slice(-6).map((score, index) => <span key={index} className="inline-block w-1.5 rounded-sm bg-violet-400/45" style={{ height: `${Math.max(4, Math.min(24, score * .24))}px` }} />)}
@@ -192,7 +196,7 @@ export default function UnifiedPredictionRadar() {
         </table>
         {!items.length && <div className="p-8 text-center text-xs text-slate-600">{error ?? "No hay predicciones en este filtro."}</div>}
       </div>
-      <div className="border-t border-slate-800 px-4 py-3 text-[10px] leading-4 text-slate-600">Los checks ahora son condiciones reales del Heart, no un conteo de textos de confirmación. ENTRAR significa autorización técnica del sistema; no garantiza ganancia y se valida primero en PAPER.</div>
+      <div className="border-t border-slate-800 px-4 py-3 text-[10px] leading-4 text-slate-600">ENTRAR es el disparo inicial. Después se convierte en MANTENER LONG/SHORT para que un recálculo posterior no borre la decisión ya activada. Sigue siendo PAPER/ayuda técnica, no garantía de beneficio.</div>
     </section>
   );
 }
