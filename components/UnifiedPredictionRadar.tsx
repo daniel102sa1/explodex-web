@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Activity, ArrowDownRight, ArrowUpRight, BrainCircuit, CheckCircle2, CircleDashed, RadioTower, ShieldAlert, Zap } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, CheckCircle2, CircleDashed, RadioTower, ShieldAlert, Zap } from "lucide-react";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
 
@@ -13,6 +13,8 @@ type Point = {
   risk_score: number;
   phase: string;
 };
+
+type HeartAction = "ENTRAR_LONG" | "ENTRAR_SHORT" | "ESPERAR" | "ESPERAR_RETEST" | "NO_ENTRAR" | string;
 
 type Item = {
   id: string;
@@ -30,6 +32,7 @@ type Item = {
   tp2: number;
   tp3: number;
   operable: boolean;
+  heart_action?: HeartAction;
   conditions_ready: number;
   conditions_total: number;
   prediction?: {
@@ -50,14 +53,6 @@ type Payload = {
   summary: { symbols: number; operable: number; preactivation: number; activated: number; accelerating: number };
   note?: string;
 };
-
-function fmt(value?: number | null) {
-  if (value == null || !Number.isFinite(Number(value))) return "—";
-  const n = Number(value);
-  if (Math.abs(n) >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  if (Math.abs(n) >= 1) return n.toLocaleString(undefined, { maximumFractionDigits: 6 });
-  return n.toLocaleString(undefined, { maximumSignificantDigits: 8 });
-}
 
 function phaseEs(value?: string) {
   const map: Record<string, string> = {
@@ -82,6 +77,14 @@ function typeEs(value?: string) {
     SIN_SETUP: "SIN SETUP",
   };
   return map[String(value ?? "").toUpperCase()] ?? String(value ?? "—").replaceAll("_", " ");
+}
+
+function ActionBadge({ action }: { action?: HeartAction }) {
+  if (action === "ENTRAR_LONG") return <span className="inline-flex items-center gap-1 font-black text-emerald-300"><Zap size={12}/> ENTRAR LONG</span>;
+  if (action === "ENTRAR_SHORT") return <span className="inline-flex items-center gap-1 font-black text-rose-300"><Zap size={12}/> ENTRAR SHORT</span>;
+  if (action === "ESPERAR_RETEST") return <span className="inline-flex items-center gap-1 font-black text-violet-300"><ShieldAlert size={12}/> ESPERAR RETEST</span>;
+  if (action === "NO_ENTRAR") return <span className="inline-flex items-center gap-1 font-black text-rose-300"><ShieldAlert size={12}/> NO ENTRAR</span>;
+  return <span className="font-bold text-amber-200">ESPERAR</span>;
 }
 
 export default function UnifiedPredictionRadar() {
@@ -123,12 +126,12 @@ export default function UnifiedPredictionRadar() {
       <div className="flex flex-col gap-3 border-b border-slate-800 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="flex items-center gap-2 text-sm font-black text-white"><RadioTower size={16} className="text-cyan-300"/> Radar predictivo unificado</div>
-          <div className="mt-1 text-[10px] leading-4 text-slate-600">Una fila por moneda · última predicción del scanner · refresco cada 5 s</div>
+          <div className="mt-1 text-[10px] leading-4 text-slate-600">Decisión tomada por ExplodeX Heart · refresco cada 5 s · sin recalcular otra decisión en frontend</div>
         </div>
         <div className="flex flex-wrap gap-2">
           {(["ALL", "OPERABLE", "EARLY", "ACCELERATING"] as const).map((value) => (
             <button key={value} onClick={() => setFilter(value)} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black ${filter === value ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-200" : "border-slate-800 text-slate-500"}`}>
-              {value === "ALL" ? "TODAS" : value === "OPERABLE" ? "READY" : value === "EARLY" ? "TEMPRANAS" : "ACELERANDO"}
+              {value === "ALL" ? "TODAS" : value === "OPERABLE" ? "ENTRAR" : value === "EARLY" ? "TEMPRANAS" : "ACELERANDO"}
             </button>
           ))}
         </div>
@@ -137,9 +140,9 @@ export default function UnifiedPredictionRadar() {
       {data && (
         <div className="grid gap-px bg-slate-800/30 sm:grid-cols-2 lg:grid-cols-5">
           <Mini label="Monedas" value={String(data.summary.symbols)} />
-          <Mini label="READY" value={String(data.summary.operable)} good />
+          <Mini label="Entrar ahora" value={String(data.summary.operable)} good />
           <Mini label="Preactivación" value={String(data.summary.preactivation)} warn />
-          <Mini label="Activadas" value={String(data.summary.activated)} />
+          <Mini label="Heart activadas" value={String(data.summary.activated)} />
           <Mini label="Acelerando" value={String(data.summary.accelerating)} good />
         </div>
       )}
@@ -154,7 +157,7 @@ export default function UnifiedPredictionRadar() {
               <th className="px-3 py-2 text-right">Preparación</th>
               <th className="px-3 py-2 text-right">Setup</th>
               <th className="px-3 py-2 text-right">Riesgo</th>
-              <th className="px-3 py-2 text-center">Cond.</th>
+              <th className="px-3 py-2 text-center">Checks Heart</th>
               <th className="px-3 py-2 text-left">Memoria</th>
               <th className="px-3 py-2 text-left">Decisión</th>
             </tr>
@@ -163,7 +166,7 @@ export default function UnifiedPredictionRadar() {
             {items.map((item) => {
               const p = item.prediction ?? {};
               const trajectory = (item.preparation_trajectory ?? []).map((x) => Number(x.preactivation_score || 0)).filter(Boolean);
-              const chase = Boolean(p.sequence?.chase_risk);
+              const checksComplete = item.conditions_total > 0 && item.conditions_ready >= item.conditions_total;
               return (
                 <tr key={item.id} className="border-b border-slate-900 hover:bg-slate-900/50">
                   <td className="px-3 py-3"><Link href={`/coin/${item.symbol}`} className="font-black text-white hover:text-cyan-300">{item.symbol}</Link></td>
@@ -174,16 +177,14 @@ export default function UnifiedPredictionRadar() {
                   <td className="px-3 py-3 text-right font-black text-cyan-300">{Number(p.preactivation_score ?? 0).toFixed(1)}</td>
                   <td className="px-3 py-3 text-right font-black text-white">{item.setup_score.toFixed(1)}</td>
                   <td className="px-3 py-3 text-right text-slate-400">{item.risk_score.toFixed(1)}</td>
-                  <td className="px-3 py-3 text-center"><span className="inline-flex items-center gap-1 font-bold text-slate-300">{item.conditions_ready >= item.conditions_total && item.conditions_total > 0 ? <CheckCircle2 size={12} className="text-emerald-400"/> : <CircleDashed size={12} className="text-amber-300"/>}{item.conditions_ready}/{item.conditions_total}</span></td>
+                  <td className="px-3 py-3 text-center"><span className={`inline-flex items-center gap-1 font-bold ${checksComplete ? "text-emerald-300" : "text-slate-300"}`}>{checksComplete ? <CheckCircle2 size={12} className="text-emerald-400"/> : <CircleDashed size={12} className="text-amber-300"/>}{item.conditions_ready}/{item.conditions_total}</span></td>
                   <td className="px-3 py-3">
                     <div className="flex items-end gap-1">
                       {trajectory.slice(-6).map((score, index) => <span key={index} className="inline-block w-1.5 rounded-sm bg-violet-400/45" style={{ height: `${Math.max(4, Math.min(24, score * .24))}px` }} />)}
                       <span className={`ml-1 text-[9px] font-black ${item.preparation_accelerating ? "text-emerald-300" : (item.preparation_velocity ?? 0) < 0 ? "text-rose-300" : "text-slate-600"}`}>{item.preparation_accelerating ? "ACELERA" : `${(item.preparation_velocity ?? 0) >= 0 ? "+" : ""}${Number(item.preparation_velocity ?? 0).toFixed(0)}`}</span>
                     </div>
                   </td>
-                  <td className="px-3 py-3">
-                    {item.operable ? <span className="inline-flex items-center gap-1 font-black text-emerald-300"><Zap size={12}/> READY</span> : chase ? <span className="inline-flex items-center gap-1 font-black text-rose-300"><ShieldAlert size={12}/> RETEST</span> : <span className="font-bold text-amber-200">ESPERAR</span>}
-                  </td>
+                  <td className="px-3 py-3"><ActionBadge action={item.heart_action} /></td>
                 </tr>
               );
             })}
@@ -191,7 +192,7 @@ export default function UnifiedPredictionRadar() {
         </table>
         {!items.length && <div className="p-8 text-center text-xs text-slate-600">{error ?? "No hay predicciones en este filtro."}</div>}
       </div>
-      <div className="border-t border-slate-800 px-4 py-3 text-[10px] leading-4 text-slate-600">READY solo significa que las reglas del sistema están alineadas; no es certeza de ganancia. PAPER continúa siendo obligatorio hasta calibrar una muestra suficiente.</div>
+      <div className="border-t border-slate-800 px-4 py-3 text-[10px] leading-4 text-slate-600">Los checks ahora son condiciones reales del Heart, no un conteo de textos de confirmación. ENTRAR significa autorización técnica del sistema; no garantiza ganancia y se valida primero en PAPER.</div>
     </section>
   );
 }
