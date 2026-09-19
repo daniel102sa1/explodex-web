@@ -76,6 +76,43 @@ type Summary = {
     state?: string;
     risk_multiplier?: number;
     halt_new_entries?: boolean;
+    metrics?: {
+      expectancy_kelly?: {
+        status?: string;
+        expectancy_r?: number | null;
+        full_kelly_fraction?: number | null;
+        quarter_kelly_reference_fraction?: number | null;
+      };
+      paper_monte_carlo?: {
+        status?: string;
+        median_ending_return_pct?: number | null;
+        p90_max_drawdown_pct?: number | null;
+        drawdown_ge_20pct_frequency_pct?: number | null;
+      };
+    };
+  };
+  quant_brain?: {
+    version?: string;
+    stance_counts?: Record<string, number>;
+    rows?: Array<{
+      symbol?: string;
+      direction?: string;
+      state?: string;
+      stance?: string;
+      directional_edge?: number | null;
+      evidence_strength?: number | null;
+      risk_multiplier?: number | null;
+      preferred_strategy?: string | null;
+      regime?: string | null;
+      hurst?: number | null;
+      entropy?: number | null;
+      btc_beta?: number | null;
+      btc_correlation?: number | null;
+      calibration_status?: string | null;
+      calibration_sample?: number | null;
+      block_new_entry?: boolean;
+      strong_conflict?: boolean;
+    }>;
   };
 };
 
@@ -127,6 +164,10 @@ export default function PaperHeartStatus() {
   const btcStress = String(btc?.stress ?? "—");
   const btcBlocked = Boolean(btc?.block_new_entries);
   const btcRiskPct = btc?.risk_multiplier == null ? "—" : `${Math.round(Number(btc.risk_multiplier) * 100)}%`;
+  const quantRows = summary?.quant_brain?.rows ?? [];
+  const quantTop = quantRows[0];
+  const kelly = summary?.quant_risk_guard?.metrics?.expectancy_kelly;
+  const paperMc = summary?.quant_risk_guard?.metrics?.paper_monte_carlo;
 
   return (
     <section className="terminal-panel p-4">
@@ -165,6 +206,37 @@ export default function PaperHeartStatus() {
             </div>
             <div className="mt-2 text-[10px] leading-4 text-slate-500">
               BTC cambia el tamaño y la exigencia de las nuevas entradas. Puede dar más margen estructural antes de entrar, pero después reduce tamaño; nunca aleja un stop ya abierto.
+            </div>
+          </div>}
+
+          {!!quantRows.length && <div className="mt-3 rounded-2xl border border-violet-500/20 bg-violet-500/[.035] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-black uppercase tracking-[.11em] text-violet-200">QUANT BRAIN · matemáticas dentro del Heart</div>
+              <span className="rounded-full border border-violet-500/25 px-2 py-1 text-[10px] font-black text-violet-200">{quantTop?.stance ?? "—"}</span>
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-6 text-[11px] text-slate-400">
+              <div>Activo: <b className="text-white">{quantTop?.symbol ?? "—"} · {quantTop?.direction ?? "—"}</b></div>
+              <div>Edge cuant.: <b className={Number(quantTop?.directional_edge ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}>{quantTop?.directional_edge == null ? "—" : Number(quantTop.directional_edge).toFixed(1)}</b></div>
+              <div>Fuerza evidencia: <b className="text-white">{quantTop?.evidence_strength == null ? "—" : Number(quantTop.evidence_strength).toFixed(1)}</b></div>
+              <div>Riesgo Quant: <b className="text-white">{quantTop?.risk_multiplier == null ? "—" : `${Math.round(Number(quantTop.risk_multiplier) * 100)}%`}</b></div>
+              <div>Régimen: <b className="text-white">{clean(quantTop?.regime ?? undefined)}</b></div>
+              <div>Estrategia: <b className="text-white">{clean(quantTop?.preferred_strategy ?? undefined)}</b></div>
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5 text-[10px] text-slate-500">
+              <div>Hurst <b className="text-slate-300">{quantTop?.hurst == null ? "—" : Number(quantTop.hurst).toFixed(3)}</b></div>
+              <div>Entropía <b className="text-slate-300">{quantTop?.entropy == null ? "—" : Number(quantTop.entropy).toFixed(3)}</b></div>
+              <div>Beta BTC <b className="text-slate-300">{quantTop?.btc_beta == null ? "—" : Number(quantTop.btc_beta).toFixed(2)}</b></div>
+              <div>Corr. BTC <b className="text-slate-300">{quantTop?.btc_correlation == null ? "—" : Number(quantTop.btc_correlation).toFixed(2)}</b></div>
+              <div>Calibración <b className="text-slate-300">{quantTop?.calibration_status ?? "—"} · n={quantTop?.calibration_sample ?? 0}</b></div>
+            </div>
+            {(kelly || paperMc) && <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <Stat label="Expectancy R" value={kelly?.expectancy_r == null ? "—" : Number(kelly.expectancy_r).toFixed(3)} good={Number(kelly?.expectancy_r ?? 0) > 0} />
+              <Stat label="Kelly ref. ¼" value={kelly?.quarter_kelly_reference_fraction == null ? "—" : `${(Number(kelly.quarter_kelly_reference_fraction) * 100).toFixed(1)}%`} />
+              <Stat label="MC p90 drawdown" value={paperMc?.p90_max_drawdown_pct == null ? "—" : `${Number(paperMc.p90_max_drawdown_pct).toFixed(1)}%`} />
+              <Stat label="MC DD≥20%" value={paperMc?.drawdown_ge_20pct_frequency_pct == null ? "—" : `${Number(paperMc.drawdown_ge_20pct_frequency_pct).toFixed(1)}%`} />
+            </div>}
+            <div className="mt-2 text-[10px] leading-4 text-slate-500">
+              Edge, Hurst, entropía, Markov y Monte Carlo son evidencia/modelos, no garantías. El Quant Brain puede apoyar o bloquear, pero no inventa dirección ni convierte ESPERAR en ENTRAR.
             </div>
           </div>}
 
