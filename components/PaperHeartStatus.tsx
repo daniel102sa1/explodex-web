@@ -44,6 +44,27 @@ type UnifiedDiagnostics = {
   status?: string;
   structure_retest_execution?: LaneExecution;
   structure_retest_learning?: { opened?: number };
+  effective_new_entry_risk_multiplier?: number;
+  regime?: {
+    regime?: string;
+    label?: string;
+  };
+  btc_overlay?: {
+    stress?: string;
+    direction?: string;
+    atr_pct?: number;
+    atr_percentile_recent?: number;
+    abs_move_5m_pct?: number;
+    abs_move_15m_pct?: number;
+    abs_move_60m_pct?: number;
+    risk_multiplier?: number;
+    stop_buffer_multiplier?: number;
+    countertrend_multiplier?: number;
+    force_defensive?: boolean;
+    block_new_entries?: boolean;
+    min_quality_bonus?: number;
+    confirmation_minutes?: number;
+  };
 };
 
 type Summary = {
@@ -102,6 +123,10 @@ export default function PaperHeartStatus() {
   const candidates = Number(u?.candidates ?? 0);
   const opened = Number(u?.opened_last_cycle ?? 0);
   const structureOpened = Number(structure?.opened ?? u?.structure_retest_learning?.opened ?? 0);
+  const btc = u?.btc_overlay;
+  const btcStress = String(btc?.stress ?? "—");
+  const btcBlocked = Boolean(btc?.block_new_entries);
+  const btcRiskPct = btc?.risk_multiplier == null ? "—" : `${Math.round(Number(btc.risk_multiplier) * 100)}%`;
 
   return (
     <section className="terminal-panel p-4">
@@ -115,14 +140,33 @@ export default function PaperHeartStatus() {
 
       {error ? <div className="mt-4 text-xs text-rose-300">Diagnóstico no disponible: {error}</div> : !d && !u ? <div className="mt-4 text-xs text-slate-500"><Activity size={13} className="mr-1 inline animate-pulse"/>Esperando diagnóstico del backend…</div> : (
         <>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-7">
             <Stat label="Señales revisadas" value={String(checked)} />
             <Stat label="Candidatos" value={String(candidates)} good={candidates > 0} />
             <Stat label="Abiertas ciclo" value={String(opened)} good={opened > 0} />
             <Stat label="Retest abiertas" value={String(structureOpened)} good={structureOpened > 0} />
             <Stat label="Posiciones abiertas" value={String(summary?.open_positions?.length ?? 0)} good={(summary?.open_positions?.length ?? 0) > 0} />
+            <Stat label="BTC stress" value={btcStress} good={btcStress === "NORMAL"} />
             <Stat label="Risk guard" value={summary?.quant_risk_guard?.state ?? (u?.defensive ? "DEFENSIVE" : "NORMAL")} />
           </div>
+
+          {btc && <div className={`mt-3 rounded-2xl border p-3 ${btcBlocked ? "border-rose-500/25 bg-rose-500/[.05]" : btcStress === "HIGH" || btcStress === "EXTREME" ? "border-amber-500/25 bg-amber-500/[.04]" : "border-slate-800 bg-slate-950/35"}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-black uppercase tracking-[.11em] text-white">BTC ADAPTIVE REGIME</div>
+              <span className={`rounded-full border px-2 py-1 text-[10px] font-black ${btcBlocked ? "border-rose-500/30 text-rose-300" : "border-slate-700 text-slate-300"}`}>{btcBlocked ? "NUEVAS ENTRADAS BLOQUEADAS" : btcStress}</span>
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-6 text-[11px] text-slate-400">
+              <div>Dirección BTC: <b className="text-white">{btc.direction ?? "—"}</b></div>
+              <div>ATR BTC: <b className="text-white">{btc.atr_pct == null ? "—" : `${Number(btc.atr_pct).toFixed(3)}%`}</b></div>
+              <div>Percentil vol.: <b className="text-white">{btc.atr_percentile_recent == null ? "—" : `${Number(btc.atr_percentile_recent).toFixed(0)}`}</b></div>
+              <div>Riesgo permitido: <b className="text-white">{btcRiskPct}</b></div>
+              <div>Buffer stop nuevo: <b className="text-white">{btc.stop_buffer_multiplier == null ? "—" : `${Number(btc.stop_buffer_multiplier).toFixed(2)}x`}</b></div>
+              <div>Confirma en: <b className="text-white">{btc.confirmation_minutes ?? "—"}m</b></div>
+            </div>
+            <div className="mt-2 text-[10px] leading-4 text-slate-500">
+              BTC cambia el tamaño y la exigencia de las nuevas entradas. Puede dar más margen estructural antes de entrar, pero después reduce tamaño; nunca aleja un stop ya abierto.
+            </div>
+          </div>}
 
           <div className="mt-3 grid gap-3 xl:grid-cols-3">
             <div className={`rounded-2xl border p-3 ${opened > 0 ? "border-emerald-500/20 bg-emerald-500/[.05]" : "border-amber-500/20 bg-amber-500/[.04]"}`}>
