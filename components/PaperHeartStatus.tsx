@@ -65,6 +65,38 @@ type UnifiedDiagnostics = {
     min_quality_bonus?: number;
     confirmation_minutes?: number;
   };
+  chati_sarpon_612_live_monitor?: {
+    version?: string;
+    open_positions_checked?: number;
+    portfolio_new_entry_risk_multiplier?: number;
+    counts?: Record<string, number>;
+    positions?: Array<{
+      position_id?: number;
+      symbol?: string;
+      side?: string;
+      phase?: string;
+      score?: number | null;
+      management?: string;
+      chati?: {
+        ratio_5m?: number | null;
+        ratio_15m?: number | null;
+        ratio_15m_source?: string;
+        futures_delta_ratio?: number | null;
+        spot_delta_ratio?: number | null;
+        five_minute_aligned?: boolean;
+        fifteen_minute_aligned?: boolean;
+      };
+      oi_change_pct?: number | null;
+      btc?: {
+        trend?: string;
+        stress?: string;
+        hard_conflict?: boolean;
+      };
+      contradictions?: string[];
+      progress_r?: number | null;
+      data_status?: string;
+    }>;
+  };
 };
 
 type Summary = {
@@ -89,6 +121,23 @@ type Summary = {
         p90_max_drawdown_pct?: number | null;
         drawdown_ge_20pct_frequency_pct?: number | null;
       };
+    };
+  };
+  loss_autopsy?: {
+    overall?: {
+      trades?: number;
+      stops?: number;
+      stop_rate?: number;
+      win_rate?: number;
+      net_pnl?: number;
+      expectancy_net?: number;
+      profit_factor?: number;
+      costs?: number;
+    };
+    portfolio_brake?: {
+      mode?: string;
+      drawdown_24h_pct?: number;
+      reason?: string;
     };
   };
   quant_brain?: {
@@ -126,6 +175,18 @@ function topEntries(record?: Record<string, number>, limit=4) {
 }
 function clean(value?: string) { return String(value ?? "—").replaceAll("_", " "); }
 function fmt(v?: number) { return v == null || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString(undefined,{maximumSignificantDigits:8}); }
+function pctValue(v?: number | null, scale=1) { return v == null || !Number.isFinite(Number(v)) ? "—" : `${(Number(v)*scale).toFixed(1)}%`; }
+function phaseLabel(phase?: string) {
+  if (phase === "GREEN_CONFIRMATION") return "🟢 CONFIRMACIÓN";
+  if (phase === "RED_DAMAGED") return "🔴 DAÑADO";
+  if (phase === "YELLOW_PREACTIVATION") return "🟡 PREACTIVACIÓN";
+  return clean(phase);
+}
+function phaseTone(phase?: string) {
+  if (phase === "GREEN_CONFIRMATION") return "border-emerald-500/25 bg-emerald-500/[.05] text-emerald-200";
+  if (phase === "RED_DAMAGED") return "border-rose-500/25 bg-rose-500/[.05] text-rose-200";
+  return "border-amber-500/25 bg-amber-500/[.04] text-amber-200";
+}
 
 export default function PaperHeartStatus() {
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -168,6 +229,11 @@ export default function PaperHeartStatus() {
   const quantTop = quantRows[0];
   const kelly = summary?.quant_risk_guard?.metrics?.expectancy_kelly;
   const paperMc = summary?.quant_risk_guard?.metrics?.paper_monte_carlo;
+  const manualMonitor = u?.chati_sarpon_612_live_monitor;
+  const manualPositions = manualMonitor?.positions ?? [];
+  const manualCounts = manualMonitor?.counts ?? {};
+  const loss = summary?.loss_autopsy?.overall;
+  const lossBrake = summary?.loss_autopsy?.portfolio_brake;
 
   return (
     <section className="terminal-panel p-4">
@@ -207,6 +273,70 @@ export default function PaperHeartStatus() {
             <div className="mt-2 text-[10px] leading-4 text-slate-500">
               BTC cambia el tamaño y la exigencia de las nuevas entradas. Puede dar más margen estructural antes de entrar, pero después reduce tamaño; nunca aleja un stop ya abierto.
             </div>
+          </div>}
+
+          {manualMonitor && <div className="mt-3 rounded-2xl border border-cyan-500/20 bg-cyan-500/[.035] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-black uppercase tracking-[.11em] text-cyan-200">CHATI + SARPON + 612 · MONITOR VIVO</div>
+                <div className="mt-1 text-[10px] text-slate-500">PREACTIVACIÓN no es entrada. Revisa 5m/15m, OI, absorción, estructura y BTC mientras el trade sigue abierto.</div>
+              </div>
+              <span className="rounded-full border border-cyan-500/25 px-2 py-1 text-[10px] font-black text-cyan-100">
+                Riesgo nuevas entradas · {pctValue(manualMonitor.portfolio_new_entry_risk_multiplier, 100)}
+              </span>
+            </div>
+
+            <div className="mt-3 grid gap-2 sm:grid-cols-4">
+              <Stat label="🟢 Confirmadas" value={String(Number(manualCounts.GREEN_CONFIRMATION ?? 0))} good={Number(manualCounts.GREEN_CONFIRMATION ?? 0)>0} />
+              <Stat label="🟡 Preactivación" value={String(Number(manualCounts.YELLOW_PREACTIVATION ?? 0))} />
+              <Stat label="🔴 Dañadas" value={String(Number(manualCounts.RED_DAMAGED ?? 0))} />
+              <Stat label="Datos stale" value={String(Number(manualCounts.STALE_DATA ?? 0))} />
+            </div>
+
+            {!!manualPositions.length ? <div className="mt-3 grid gap-2 xl:grid-cols-2">
+              {manualPositions.map((p, i) => <div key={`${p.position_id ?? p.symbol}-${i}`} className={`rounded-xl border p-3 ${phaseTone(p.phase)}`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-black text-white">{p.symbol ?? "—"} <span className="ml-1 text-[10px] text-slate-400">{p.side ?? "—"}</span></div>
+                  <span className="text-[10px] font-black">{phaseLabel(p.phase)}</span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] text-slate-400 sm:grid-cols-4">
+                  <div>612 score <b className="text-white">{p.score == null ? "—" : Number(p.score).toFixed(1)}</b></div>
+                  <div>5m ratio <b className="text-white">{p.chati?.ratio_5m == null ? "—" : Number(p.chati.ratio_5m).toFixed(2)}</b></div>
+                  <div>15m ratio <b className="text-white">{p.chati?.ratio_15m == null ? "—" : Number(p.chati.ratio_15m).toFixed(2)}</b></div>
+                  <div>OI Δ <b className="text-white">{p.oi_change_pct == null ? "—" : `${Number(p.oi_change_pct).toFixed(2)}%`}</b></div>
+                  <div>Fut. delta <b className="text-white">{p.chati?.futures_delta_ratio == null ? "—" : Number(p.chati.futures_delta_ratio).toFixed(3)}</b></div>
+                  <div>Spot delta <b className="text-white">{p.chati?.spot_delta_ratio == null ? "—" : Number(p.chati.spot_delta_ratio).toFixed(3)}</b></div>
+                  <div>BTC <b className="text-white">{clean(p.btc?.trend)} / {clean(p.btc?.stress)}</b></div>
+                  <div>Progreso <b className="text-white">{p.progress_r == null ? "—" : `${Number(p.progress_r).toFixed(2)}R`}</b></div>
+                </div>
+                <div className="mt-2 text-[10px] leading-4 text-slate-300"><b>Manejo:</b> {clean(p.management)}</div>
+                <div className="mt-1 text-[9px] text-slate-500">15m: {clean(p.chati?.ratio_15m_source)} · datos {clean(p.data_status)}</div>
+                {!!p.contradictions?.length && <div className="mt-2 flex flex-wrap gap-1.5">
+                  {p.contradictions.slice(0,5).map(x=><span key={x} className="rounded-full border border-current/15 px-2 py-0.5 text-[9px] opacity-80">{clean(x)}</span>)}
+                </div>}
+              </div>)}
+            </div> : <div className="mt-3 text-[10px] text-slate-500">No hay posiciones PAPER abiertas para vigilar en este momento.</div>}
+
+            <div className="mt-3 text-[10px] leading-4 text-slate-500">
+              El score 612 es una regla de confluencia, no una probabilidad de ganar. Un estado 🔴 reduce nueva exposición, pero nunca aleja un stop vivo ni cambia LONG↔SHORT por sí solo.
+            </div>
+          </div>}
+
+          {(loss || lossBrake) && <div className="mt-3 rounded-2xl border border-rose-500/15 bg-rose-500/[.025] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-black uppercase tracking-[.11em] text-rose-200">AUTOPSIA DE PÉRDIDAS PAPER</div>
+              <span className={`rounded-full border px-2 py-1 text-[10px] font-black ${lossBrake?.mode === "DEFENSIVE" ? "border-rose-500/30 text-rose-300" : "border-slate-700 text-slate-300"}`}>{lossBrake?.mode ?? "—"}</span>
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-3 lg:grid-cols-7">
+              <Stat label="Trades" value={String(loss?.trades ?? 0)} />
+              <Stat label="Stops" value={String(loss?.stops ?? 0)} />
+              <Stat label="Stop rate" value={pctValue(loss?.stop_rate,100)} />
+              <Stat label="Win rate" value={pctValue(loss?.win_rate,100)} good={Number(loss?.win_rate ?? 0)>=0.5} />
+              <Stat label="Profit factor" value={loss?.profit_factor == null ? "—" : Number(loss.profit_factor).toFixed(2)} good={Number(loss?.profit_factor ?? 0)>1} />
+              <Stat label="Expectancy neta" value={loss?.expectancy_net == null ? "—" : Number(loss.expectancy_net).toFixed(3)} good={Number(loss?.expectancy_net ?? 0)>0} />
+              <Stat label="Net PnL" value={loss?.net_pnl == null ? "—" : Number(loss.net_pnl).toFixed(2)} good={Number(loss?.net_pnl ?? 0)>0} />
+            </div>
+            <div className="mt-2 text-[10px] leading-4 text-slate-500">{lossBrake?.reason ?? "La autopsia usa operaciones PAPER cerradas para reducir o vetar patrones repetidamente malos."}</div>
           </div>}
 
           {!!quantRows.length && <div className="mt-3 rounded-2xl border border-violet-500/20 bg-violet-500/[.035] p-3">
