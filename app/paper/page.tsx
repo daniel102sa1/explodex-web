@@ -3,6 +3,7 @@ import PaperHeartStatus from "@/components/PaperHeartStatus";
 import PaperPortfolioLab from "@/components/PaperPortfolioLab";
 import PaperTradeAudit from "@/components/PaperTradeAudit";
 import PaperVNextEvaluation from "@/components/PaperVNextEvaluation";
+import PaperFormulaBrain from "@/components/PaperFormulaBrain";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,7 @@ export default function PaperPage() {
       </header>
       <div className="mb-4"><PaperHeartStatus /></div>
       <div className="mb-4"><PaperVNextEvaluation /></div>
+      <div className="mb-4"><PaperFormulaBrain /></div>
       <div className="mb-5"><PaperTradeAudit /></div>
       <PaperPortfolioLab />
     </main>
