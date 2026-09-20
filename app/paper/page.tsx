@@ -2,6 +2,7 @@ import { WalletCards } from "lucide-react";
 import PaperHeartStatus from "@/components/PaperHeartStatus";
 import PaperPortfolioLab from "@/components/PaperPortfolioLab";
 import PaperTradeAudit from "@/components/PaperTradeAudit";
+import PaperVNextEvaluation from "@/components/PaperVNextEvaluation";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ export default function PaperPage() {
         <p className="mt-1 max-w-4xl text-xs leading-5 text-slate-500">ExplodeX simula únicamente las entradas que autoriza el Heart y que siguen ejecutables al precio actual. Incluye la lane experimental STRUCTURE RETEST: ruptura → retest → continuación, con stop estructural y tamaño adaptado a ese stop.</p>
       </header>
       <div className="mb-4"><PaperHeartStatus /></div>
+      <div className="mb-4"><PaperVNextEvaluation /></div>
       <div className="mb-5"><PaperTradeAudit /></div>
       <PaperPortfolioLab />
     </main>
