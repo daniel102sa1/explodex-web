@@ -15,11 +15,14 @@ export default function PaperPage() {
         <h1 className="mt-1 text-3xl font-black text-white">Cuenta simulada · 1,000 USDT</h1>
         <p className="mt-1 max-w-4xl text-xs leading-5 text-slate-500">ExplodeX simula únicamente las entradas que autoriza el Heart y que siguen ejecutables al precio actual. Incluye la lane experimental STRUCTURE RETEST: ruptura → retest → continuación, con stop estructural y tamaño adaptado a ese stop.</p>
       </header>
-      <div className="mb-4"><PaperHeartStatus /></div>
-      <div className="mb-4"><PaperVNextEvaluation /></div>
-      <div className="mb-4"><PaperFormulaBrain /></div>
-      <div className="mb-5"><PaperTradeAudit /></div>
       <PaperPortfolioLab />
+      <div className="mt-7 border-t border-slate-800/70 pt-5">
+        <div className="mb-3 text-xs font-black uppercase tracking-[.13em] text-slate-400">Diagnóstico avanzado</div>
+        <div className="mb-4"><PaperHeartStatus /></div>
+        <div className="mb-4"><PaperVNextEvaluation /></div>
+        <div className="mb-4"><PaperFormulaBrain /></div>
+        <div className="mb-5"><PaperTradeAudit /></div>
+      </div>
     </main>
   );
 }
