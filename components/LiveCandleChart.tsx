@@ -178,7 +178,14 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
   const [viewMode, setViewMode] = useState<ViewMode>("BEGINNER");
   const [showControls, setShowControls] = useState(false);
   const [levels, setLevels] = useState<Record<LevelKey, boolean>>({ entry: true, trigger: true, stop: true, targets: true, invalidation: true, myEntry: true });
+  const [internalLivePrice, setInternalLivePrice] = useState<number | null>(null);
+  const [priceSource, setPriceSource] = useState("CARGANDO");
+  const [priceFlash, setPriceFlash] = useState<"up" | "down" | "flat">("flat");
   const socketRef = useRef<WebSocket | null>(null);
+  const priceSocketRef = useRef<WebSocket | null>(null);
+  const lastLiveTickRef = useRef<number | null>(null);
+  const pendingLivePriceRef = useRef<number | null>(null);
+  const priceRafRef = useRef<number | null>(null);
 
   useEffect(() => { if (plan) setSavedPlan(plan); }, [plan]);
 
@@ -302,6 +309,82 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
     };
   }, [symbol, interval]);
 
+  useEffect(() => {
+    let disposed = false;
+    let gotBinance = false;
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+    setInternalLivePrice(null);
+    setPriceSource("CARGANDO");
+    setPriceFlash("flat");
+    lastLiveTickRef.current = null;
+    pendingLivePriceRef.current = null;
+
+    function paintLatest(sourceName: string) {
+      if (priceRafRef.current != null) return;
+      priceRafRef.current = window.requestAnimationFrame(() => {
+        priceRafRef.current = null;
+        const next = pendingLivePriceRef.current;
+        if (disposed || next == null || !Number.isFinite(next) || next <= 0) return;
+        const previous = lastLiveTickRef.current;
+        setPriceFlash(previous == null ? "flat" : next > previous ? "up" : next < previous ? "down" : "flat");
+        lastLiveTickRef.current = next;
+        setInternalLivePrice(next);
+        setPriceSource(sourceName);
+      });
+    }
+
+    function applyTick(price: number, sourceName: string) {
+      if (disposed || !Number.isFinite(price) || price <= 0) return;
+      pendingLivePriceRef.current = price;
+      paintLatest(sourceName);
+    }
+
+    function connectOkx() {
+      if (disposed) return;
+      try { priceSocketRef.current?.close(); } catch {}
+      const ws = new WebSocket("wss://ws.okx.com:8443/ws/v5/public");
+      priceSocketRef.current = ws;
+      ws.onopen = () => ws.send(JSON.stringify({ op: "subscribe", args: [{ channel: "tickers", instId: okxId(symbol) }] }));
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          const price = Number(payload?.data?.[0]?.last ?? 0);
+          applyTick(price, "OKX TICKER");
+        } catch {}
+      };
+    }
+
+    try {
+      const ws = new WebSocket(`wss://fstream.binance.com/ws/${symbol.toLowerCase()}@aggTrade`);
+      priceSocketRef.current = ws;
+      ws.onmessage = (event) => {
+        gotBinance = true;
+        try {
+          const price = Number(JSON.parse(event.data)?.p ?? 0);
+          applyTick(price, "BINANCE TRADES");
+        } catch {}
+      };
+      ws.onerror = () => { if (!gotBinance) connectOkx(); };
+      ws.onclose = () => { if (!disposed && !gotBinance) connectOkx(); };
+      fallbackTimer = setTimeout(() => { if (!gotBinance) connectOkx(); }, 3500);
+    } catch {
+      connectOkx();
+    }
+
+    return () => {
+      disposed = true;
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+      if (priceRafRef.current != null) {
+        window.cancelAnimationFrame(priceRafRef.current);
+        priceRafRef.current = null;
+      }
+      try { priceSocketRef.current?.close(); } catch {}
+    };
+  }, [symbol]);
+
+  const effectiveLivePrice = internalLivePrice ?? livePrice ?? candles.at(-1)?.close ?? null;
+
   const basePlan = useMemo<ChartPlan | undefined>(() => {
     const base = plan ?? savedPlan;
     if (!base && !actualEntry) return undefined;
@@ -324,7 +407,7 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
     };
   }, [basePlan, levels]);
 
-  const guide = useMemo(() => buildPullbackGuide(candles, basePlan, livePrice, interval), [candles, basePlan, livePrice, interval]);
+  const guide = useMemo(() => buildPullbackGuide(candles, basePlan, effectiveLivePrice, interval), [candles, basePlan, effectiveLivePrice, interval]);
   const contextFrame = interval === "1h" || interval === "4h" || interval === "1d";
 
   return (
@@ -333,7 +416,13 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 text-xs font-black text-white"><RadioTower size={14} className="text-emerald-400"/> {symbol} · mercado en vivo</div>
-            <div className="mt-1 text-[10px] text-slate-600">WebSocket · {source} · {candles.length} velas · ventana {HORIZON_LABEL[interval]}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-600">
+              <span>Velas · {source} · {candles.length} · ventana {HORIZON_LABEL[interval]}</span>
+              <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono font-black transition ${priceFlash === "up" ? "border-emerald-400/30 bg-emerald-400/[.07] text-emerald-300" : priceFlash === "down" ? "border-rose-400/30 bg-rose-400/[.07] text-rose-300" : "border-cyan-400/20 bg-cyan-400/[.04] text-cyan-200"}`}>
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current"/>
+                LIVE {fmt(effectiveLivePrice)} · {priceSource}
+              </span>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex rounded-xl border border-slate-800 bg-black/20 p-1">
@@ -359,7 +448,7 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
       </div>
 
       <div className="grid gap-3 p-3 xl:grid-cols-[minmax(0,1fr)_330px]">
-        <div><PriceChart candles={candles} plan={chartPlan} livePrice={livePrice ?? undefined} /></div>
+        <div><PriceChart candles={candles} plan={chartPlan} livePrice={effectiveLivePrice ?? undefined} /></div>
         <aside className="space-y-3">
           <div className={`rounded-2xl border p-4 ${toneClasses(guide.tone)}`}>
             <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.12em]"><Sparkles size={13}/> Lectura {interval.toUpperCase()}</div><div className="font-mono text-xs font-black">{guide.score}/100</div></div>

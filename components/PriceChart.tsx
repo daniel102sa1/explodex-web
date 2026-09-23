@@ -142,7 +142,7 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
     : null;
 
   const rawLevels = plan ? [
-    { key: "now", label: "AHORA", value: last, stroke: "#f8fafc", dash: "2 4", priority: 100 },
+    { key: "now", label: "AHORA LIVE", value: last, stroke: "#67e8f9", dash: "2 4", priority: 100 },
     { key: "my-entry", label: "MI ENTRADA", value: Number(plan.actualEntry || 0), stroke: "#f472b6", dash: "8 4", priority: 98 },
     { key: "trigger", label: "TRIGGER", value: Number(plan.trigger || 0), stroke: "#a78bfa", dash: "6 5", priority: 90 },
     { key: "invalidation", label: "INVALIDACIÓN", value: Number(plan.invalidation || 0), stroke: "#fb923c", dash: "4 5", priority: 80 },
@@ -151,7 +151,7 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
     { key: "tp2", label: "TP2", value: Number(plan.tp2 || 0), stroke: "#22d3ee", dash: "4 4", priority: 60 },
     { key: "tp3", label: "TP3", value: Number(plan.tp3 || 0), stroke: "#60a5fa", dash: "4 4", priority: 50 },
   ].filter((x) => Number.isFinite(x.value) && x.value > 0) : [
-    { key: "now", label: "AHORA", value: last, stroke: "#f8fafc", dash: "2 4", priority: 100 },
+    { key: "now", label: "AHORA LIVE", value: last, stroke: "#67e8f9", dash: "2 4", priority: 100 },
   ];
 
   const railItems: RailItem[] = rawLevels.map((level) => {
@@ -252,10 +252,11 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
           const exactY = clampY(item.actualY);
           const tag = `${item.out === "up" ? "↑ " : item.out === "down" ? "↓ " : ""}${item.label} ${fmt(item.value)}`;
           return <g key={item.key}>
-            {item.visible && <line x1={padLeft} x2={plotRight} y1={item.actualY} y2={item.actualY} stroke={item.stroke} strokeWidth={item.key === "my-entry" ? "2" : item.key === "now" ? "1" : "1.15"} strokeDasharray={item.dash || undefined} opacity={item.key === "my-entry" ? ".98" : item.key === "now" ? ".52" : ".78"} />}
-            <path d={`M ${plotRight} ${exactY} L ${railX-7} ${item.railY}`} fill="none" stroke={item.stroke} strokeWidth={item.key === "my-entry" ? "1.4" : "1"} opacity={item.key === "my-entry" ? ".9" : ".5"} />
-            <circle cx={railX-7} cy={item.railY} r={item.key === "my-entry" ? "3.2" : "2.4"} fill={item.stroke} />
-            <rect x={railX} y={item.railY-9} width={railWidth-26} height={18} rx="5" fill={item.key === "my-entry" ? "rgba(80,7,36,.94)" : "rgba(3,7,18,.92)"} stroke={item.stroke} strokeOpacity={item.key === "my-entry" ? ".9" : ".4"} />
+            {item.visible && <line x1={padLeft} x2={plotRight} y1={item.actualY} y2={item.actualY} stroke={item.stroke} strokeWidth={item.key === "my-entry" ? "2" : item.key === "now" ? "1.5" : "1.15"} strokeDasharray={item.dash || undefined} opacity={item.key === "my-entry" ? ".98" : item.key === "now" ? ".82" : ".78"} />}
+            {item.key === "now" && item.visible && <circle cx={plotRight-2} cy={item.actualY} r="4" fill={item.stroke} className="animate-pulse" opacity=".95" />}
+            <path d={`M ${plotRight} ${exactY} L ${railX-7} ${item.railY}`} fill="none" stroke={item.stroke} strokeWidth={item.key === "my-entry" ? "1.4" : item.key === "now" ? "1.35" : "1"} opacity={item.key === "my-entry" ? ".9" : item.key === "now" ? ".8" : ".5"} />
+            <circle cx={railX-7} cy={item.railY} r={item.key === "my-entry" ? "3.2" : item.key === "now" ? "3.1" : "2.4"} fill={item.stroke} className={item.key === "now" ? "animate-pulse" : undefined} />
+            <rect x={railX} y={item.railY-9} width={railWidth-26} height={18} rx="5" fill={item.key === "my-entry" ? "rgba(80,7,36,.94)" : item.key === "now" ? "rgba(8,47,73,.94)" : "rgba(3,7,18,.92)"} stroke={item.stroke} strokeOpacity={item.key === "my-entry" ? ".9" : item.key === "now" ? ".85" : ".4"} />
             <text x={railX+7} y={item.railY+3} fill={item.stroke} fontSize="9" fontWeight="800">{tag}</text>
           </g>;
         })}
