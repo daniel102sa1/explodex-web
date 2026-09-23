@@ -74,7 +74,7 @@ const reasonLabel: Record<string, string> = {
 const phaseLabel: Record<string, string> = {
   idle: "esperando",
   loading_universe: "cargando universo",
-  early_filter: "filtro temprano",
+  early_filter: "radar amplio",
   deep_analysis: "análisis profundo",
   persisting: "guardando resultados",
   finished: "finalizado",
@@ -159,13 +159,13 @@ export default function ScannerProgress() {
             </div>
             <h2 className="mt-2 text-2xl font-black text-white">{running ? "Analizando mercado ahora" : failed ? "Último ciclo con error" : "Último ciclo terminado"}</h2>
             <p className="mt-2 max-w-2xl text-sm text-slate-400">
-              {running ? `Viendo: ${currentText}` : failed ? "El sistema reintentará automáticamente en el siguiente ciclo." : "El sistema volverá a escanear automáticamente según el intervalo configurado."}
+              {running ? `Radar revisa el universo líquido y el análisis profundo se concentra en las mejores candidatas. Ahora: ${currentText}` : failed ? "El sistema reintentará automáticamente en el siguiente ciclo." : "El radar vuelve a revisar el universo automáticamente y prioriza las monedas con RVOL, aceleración, compresión y presión cerca de ruptura."}
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
             <Box icon={<Coins size={16}/>} label="Universo" value={data.universe_size} tone="cyan" />
-            <Box icon={<Filter size={16}/>} label="Filtro temprano" value={data.early_pool_size} tone="violet" />
+            <Box icon={<Filter size={16}/>} label="Radar activo" value={data.early_pool_size} tone="violet" />
             <Box icon={<SearchCheck size={16}/>} label="Analizadas" value={`${data.deep_completed}/${data.deep_total}`} tone="blue" />
             <Box icon={<Sparkles size={16}/>} label="Candidatas" value={data.candidates_found} tone={data.candidates_found ? "emerald" : "slate"} />
           </div>
