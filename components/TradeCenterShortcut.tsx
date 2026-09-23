@@ -1,0 +1,1 @@
+import Link from"next/link";export default function X(){return <Link href="/trades" className="fixed bottom-4 right-4 z-50 rounded-2xl border border-cyan-400/30 bg-[#07111d]/95 px-4 py-3 text-xs font-black text-cyan-200 shadow-xl backdrop-blur">📊 Historial y Operaciones</Link>}
