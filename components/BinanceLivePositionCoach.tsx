@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, AlertTriangle, CheckCircle2, Circle, RadioTower, RefreshCw, ShieldCheck, TrendingDown, TrendingUp, WalletCards, Zap } from "lucide-react";
+import LiveCandleChart from "@/components/LiveCandleChart";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
 const POLL_MS = 5000;
@@ -23,6 +24,7 @@ type Bridge = { fresh?: boolean; age_seconds?: number | null };
 type CoachResponse = { source?: string; position_count?: number; positions?: CoachRow[]; bridge?: Bridge };
 type StatusResponse = { configured?: boolean; read_only?: boolean; probe_ok?: boolean; source?: string; probe_error?: string | null; bridge?: Bridge };
 type TickPoint = { t:number; price:number; pnl:number; state:string };
+type LiveMark = { price:number; t:number };
 
 type EventItem = { t:number; symbol:string; text:string };
 
@@ -32,32 +34,130 @@ function pct(v?:number|null){if(v==null||!Number.isFinite(Number(v)))return"—"
 function tone(s?:string){switch(s){case"STRENGTHENING":return"border-emerald-400/40 bg-emerald-400/[.08] text-emerald-200";case"HEALTHY":return"border-cyan-400/35 bg-cyan-400/[.07] text-cyan-100";case"NORMAL_PULLBACK":return"border-amber-400/35 bg-amber-400/[.07] text-amber-100";case"DETERIORATING":return"border-orange-400/35 bg-orange-400/[.07] text-orange-100";case"THESIS_DAMAGED":return"border-rose-400/40 bg-rose-400/[.08] text-rose-100";default:return"border-slate-700 bg-slate-900/60 text-slate-300"}}
 function clamp(v:number){return Math.max(0,Math.min(100,v))}
 
+function useLiveMarks(symbols:string[]){
+  const key=useMemo(()=>[...new Set(symbols.map(x=>String(x||"").toUpperCase()).filter(Boolean))].sort().join(","),[symbols]);
+  const [marks,setMarks]=useState<Record<string,LiveMark>>({});
+  const [trails,setTrails]=useState<Record<string,number[]>>({});
+  const [status,setStatus]=useState("SIN POSICIONES");
+
+  useEffect(()=>{
+    const list=key?key.split(",").filter(Boolean):[];
+    if(!list.length){setStatus("SIN POSICIONES");return}
+    let dead=false;
+    let socket:WebSocket|null=null;
+    let retry:number|undefined;
+
+    const connect=()=>{
+      if(dead)return;
+      setStatus("CONECTANDO");
+      const streams=list.map(symbol=>`${symbol.toLowerCase()}@markPrice@1s`).join("/");
+      try{
+        socket=new WebSocket(`wss://fstream.binance.com/stream?streams=${streams}`);
+      }catch{
+        retry=window.setTimeout(connect,1500);
+        return;
+      }
+      socket.onopen=()=>{if(!dead)setStatus("BINANCE WS · 1s")};
+      socket.onmessage=(event)=>{
+        try{
+          const payload=JSON.parse(event.data);
+          const tick=payload?.data??payload;
+          const symbol=String(tick?.s??"").toUpperCase();
+          const price=Number(tick?.p??tick?.markPrice);
+          if(!symbol||!Number.isFinite(price)||price<=0)return;
+          const t=Number(tick?.E??Date.now());
+          setMarks(old=>({...old,[symbol]:{price,t}}));
+          setTrails(old=>({...old,[symbol]:[...(old[symbol]??[]),price].slice(-120)}));
+        }catch{}
+      };
+      socket.onerror=()=>{try{socket?.close()}catch{}};
+      socket.onclose=()=>{
+        if(dead)return;
+        setStatus("RECONECTANDO");
+        retry=window.setTimeout(connect,1500);
+      };
+    };
+
+    connect();
+    return()=>{
+      dead=true;
+      if(retry)window.clearTimeout(retry);
+      try{socket?.close()}catch{}
+    };
+  },[key]);
+
+  return{marks,trails,status};
+}
+
 export default function BinanceLivePositionCoach(){
   const [data,setData]=useState<CoachResponse|null>(null);const [status,setStatus]=useState<StatusResponse|null>(null);const [error,setError]=useState<string|null>(null);const [loading,setLoading]=useState(true);const [lastUpdate,setLastUpdate]=useState<number|null>(null);
   const [history,setHistory]=useState<Record<string,TickPoint[]>>({});const [events,setEvents]=useState<EventItem[]>([]);const prev=useRef<Record<string,{state?:string;locks?:number;pnl?:number}>>({});
   useEffect(()=>{let dead=false;async function load(){if(!BASE_URL){setError("NEXT_PUBLIC_API_BASE_URL no está configurada");setLoading(false);return}try{const [sr,cr]=await Promise.all([fetch(`${BASE_URL}/api/v1/binance-user/status?probe=true`,{cache:"no-store"}),fetch(`${BASE_URL}/api/v1/binance-user/coach?limit=8`,{cache:"no-store"})]);const sp=await sr.json().catch(()=>({}));if(!dead)setStatus(sp);if(!cr.ok){const p=await cr.json().catch(()=>({}));throw new Error(p?.detail?.message||p?.detail||`Backend ${cr.status}`)}const cp=await cr.json();if(dead)return;setData(cp);setError(null);setLastUpdate(Date.now());setHistory(old=>{const next={...old};for(const row of cp.positions??[]){const sym=String(row.position?.symbol??"");if(!sym)continue;const point={t:Date.now(),price:n(row.position?.mark_price??row.coach?.mark_price),pnl:n(row.position?.unrealized_pnl??row.coach?.unrealized_pnl),state:String(row.coach?.state??"WATCH")};next[sym]=[...(next[sym]??[]),point].slice(-48)}return next});setEvents(old=>{const add:EventItem[]=[];for(const row of cp.positions??[]){const sym=String(row.position?.symbol??"");if(!sym)continue;const cur={state:row.coach?.state,locks:row.coach?.locks_passed,pnl:n(row.position?.unrealized_pnl??row.coach?.unrealized_pnl)};const p=prev.current[sym];if(p&&p.state!==cur.state)add.push({t:Date.now(),symbol:sym,text:`Estado: ${row.coach?.title??cur.state}`});if(p&&p.locks!==cur.locks)add.push({t:Date.now(),symbol:sym,text:`LOCKS ${cur.locks??0}/6`});if(p&&Math.sign(p.pnl??0)!==Math.sign(cur.pnl??0))add.push({t:Date.now(),symbol:sym,text:`PnL cruzó ${cur.pnl>=0?"a positivo":"a negativo"}`});prev.current[sym]=cur}return [...add,...old].slice(0,16)});
       }catch(e){if(!dead)setError(e instanceof Error?e.message:String(e))}finally{if(!dead)setLoading(false)}}load();const timer=window.setInterval(load,POLL_MS);return()=>{dead=true;window.clearInterval(timer)}},[]);
-  const rows=useMemo(()=>data?.positions??[],[data]);const totalPnl=rows.reduce((a,r)=>a+n(r.position?.unrealized_pnl??r.coach?.unrealized_pnl),0);const avgHealth=rows.length?rows.reduce((a,r)=>a+n(r.coach?.health_score),0)/rows.length:0;const source=data?.source??status?.source??"—";const bridgeActive=source==="LOCAL_BRIDGE";
+  const rows=useMemo(()=>data?.positions??[],[data]);
+  const symbols=useMemo(()=>rows.map(r=>String(r.position?.symbol??"").toUpperCase()).filter(Boolean),[rows]);
+  const {marks:liveMarks,trails:liveTrails,status:priceWsStatus}=useLiveMarks(symbols);
+  const totalPnl=rows.reduce((a,r)=>a+n(r.position?.unrealized_pnl??r.coach?.unrealized_pnl),0);
+  const avgHealth=rows.length?rows.reduce((a,r)=>a+n(r.coach?.health_score),0)/rows.length:0;
+  const source=data?.source??status?.source??"—";
+  const bridgeActive=source==="LOCAL_BRIDGE";
   return <main className="mx-auto min-h-screen max-w-[1600px] px-3 py-4 sm:px-5">
-    <header className="mb-4 flex flex-wrap items-end justify-between gap-4 border-b border-slate-800/80 pb-4"><div><div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.16em] text-cyan-300"><RadioTower size={14}/> Live Trading Cockpit</div><h1 className="mt-1 text-3xl font-black text-white">Mis posiciones · ExplodeX Coach</h1><p className="mt-1 max-w-4xl text-xs leading-5 text-slate-500">Seguimiento técnico en vivo de tus Futures. Solo lectura: no abre, cierra ni modifica órdenes.</p></div><div className="flex items-center gap-2"><span className={`rounded-full border px-3 py-1.5 text-[10px] font-black ${bridgeActive?"border-cyan-400/30 bg-cyan-400/[.07] text-cyan-200":"border-emerald-400/30 bg-emerald-400/[.07] text-emerald-200"}`}>{bridgeActive?"LOCAL BRIDGE ACTIVO":status?.probe_ok?"BINANCE DIRECTO":"CONECTANDO"}</span><span className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-[10px] text-slate-500">{lastUpdate?`Actualizado ${new Date(lastUpdate).toLocaleTimeString()}`:loading?"Conectando…":"Sin actualización"}</span></div></header>
+    <header className="mb-4 flex flex-wrap items-end justify-between gap-4 border-b border-slate-800/80 pb-4"><div><div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.16em] text-cyan-300"><RadioTower size={14}/> Live Trading Cockpit</div><h1 className="mt-1 text-3xl font-black text-white">Mis posiciones · ExplodeX Coach</h1><p className="mt-1 max-w-4xl text-xs leading-5 text-slate-500">Seguimiento técnico en vivo de tus Futures. Solo lectura: no abre, cierra ni modifica órdenes.</p></div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full border px-3 py-1.5 text-[10px] font-black ${bridgeActive?"border-cyan-400/30 bg-cyan-400/[.07] text-cyan-200":"border-emerald-400/30 bg-emerald-400/[.07] text-emerald-200"}`}>{bridgeActive?"LOCAL BRIDGE ACTIVO":status?.probe_ok?"BINANCE DIRECTO":"CONECTANDO"}</span><span className="rounded-full border border-emerald-400/25 bg-emerald-400/[.06] px-3 py-1.5 text-[10px] font-black text-emerald-200"><span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400"/>{priceWsStatus}</span><span className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-[10px] text-slate-500">{lastUpdate?`Coach ${new Date(lastUpdate).toLocaleTimeString()}`:loading?"Conectando…":"Sin actualización"}</span></div></header>
 
     <section className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><Top label="Fuente" value={source}/><Top label="Posiciones" value={String(data?.position_count??0)}/><Top label="PnL total" value={`${totalPnl>=0?"+":""}${totalPnl.toFixed(3)} USDT`} good={totalPnl>=0}/><Top label="Health medio" value={`${avgHealth.toFixed(0)}/100`}/><Top label="Bridge" value={bridgeActive?`${n(data?.bridge?.age_seconds).toFixed(0)}s`:(status?.read_only?"READ ONLY":"—")} good={bridgeActive||Boolean(status?.read_only)}/></section>
 
     {error&&<div className="mb-4 rounded-2xl border border-rose-500/30 bg-rose-500/[.06] p-4 text-sm text-rose-100"><div className="flex items-center gap-2 font-black"><AlertTriangle size={16}/> Problema de conexión</div><div className="mt-1 text-xs text-rose-200/80">{error}</div>{status?.probe_error&&<div className="mt-2 text-[10px] text-slate-500">Probe: {status.probe_error}</div>}</div>}
 
-    <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_330px]"><div className="space-y-4">{rows.map((row,i)=><PositionCard key={`${row.position?.symbol??"p"}-${i}`} row={row} history={history[String(row.position?.symbol??"")]??[]}/>)}</div><aside className="h-fit rounded-3xl border border-slate-800 bg-slate-950/55 p-4 2xl:sticky 2xl:top-24"><div className="flex items-center gap-2 text-sm font-black text-white"><Activity size={15}/> Timeline en vivo</div><div className="mt-3 space-y-2">{events.length?events.map((e,i)=><div key={`${e.t}-${i}`} className="rounded-xl border border-slate-800 bg-black/15 p-3"><div className="text-[10px] font-black text-cyan-300">{e.symbol} · {new Date(e.t).toLocaleTimeString()}</div><div className="mt-1 text-xs text-slate-400">{e.text}</div></div>):<div className="py-8 text-center text-xs text-slate-600">Los cambios de estado aparecerán aquí.</div>}</div></aside></div>
+    <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_330px]"><div className="space-y-4">{rows.map((row,i)=>{const sym=String(row.position?.symbol??"").toUpperCase();return <PositionCard key={`${sym||"p"}-${i}`} row={row} history={history[sym]??[]} liveMark={liveMarks[sym]} livePrices={liveTrails[sym]??[]}/>})}</div><aside className="h-fit rounded-3xl border border-slate-800 bg-slate-950/55 p-4 2xl:sticky 2xl:top-24"><div className="flex items-center gap-2 text-sm font-black text-white"><Activity size={15}/> Timeline en vivo</div><div className="mt-3 space-y-2">{events.length?events.map((e,i)=><div key={`${e.t}-${i}`} className="rounded-xl border border-slate-800 bg-black/15 p-3"><div className="text-[10px] font-black text-cyan-300">{e.symbol} · {new Date(e.t).toLocaleTimeString()}</div><div className="mt-1 text-xs text-slate-400">{e.text}</div></div>):<div className="py-8 text-center text-xs text-slate-600">Los cambios de estado aparecerán aquí.</div>}</div></aside></div>
 
     {!loading&&!error&&rows.length===0&&<div className="rounded-3xl border border-slate-800 bg-slate-950/50 p-10 text-center"><CheckCircle2 className="mx-auto text-emerald-400" size={28}/><div className="mt-3 text-lg font-black text-white">Conectado · sin posiciones abiertas</div></div>}
     <div className="mt-4 flex items-start gap-2 rounded-2xl border border-slate-800 bg-slate-950/40 p-4 text-[10px] leading-5 text-slate-500"><ShieldCheck size={14} className="mt-0.5 shrink-0"/> Health, LOCKS y demás son señales técnicas, no probabilidades ni garantías.</div>
   </main>
 }
 
-function PositionCard({row,history}:{row:CoachRow;history:TickPoint[]}){const p=row.position??{},c=row.coach??{},a=row.analysis??{};const long=String(p.direction??c.direction)==="LONG";const pnl=n(p.unrealized_pnl??c.unrealized_pnl);const mark=n(p.mark_price??c.mark_price);const entry=n(p.entry_price??c.entry_price);const stop=(c.protective_orders?.stop_prices??[])[0]??n(a.stop_loss,0);const tp1=n(a.tp1,0),tp2=n(a.tp2,0),tp3=n(a.tp3,0);const locks=c.locks??{};const progress=progressToTarget(entry,mark,tp1,long);return <section className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-950/60 shadow-xl shadow-black/10">
+function PositionCard({row,history,liveMark,livePrices}:{row:CoachRow;history:TickPoint[];liveMark?:LiveMark;livePrices:number[]}){
+  const p=row.position??{},c=row.coach??{},a=row.analysis??{};
+  const symbol=String(p.symbol??"").toUpperCase();
+  const long=String(p.direction??c.direction)==="LONG";
+  const pnl=n(p.unrealized_pnl??c.unrealized_pnl);
+  const backendMark=n(p.mark_price??c.mark_price);
+  const liveFresh=Boolean(liveMark&&Date.now()-liveMark.t<5000);
+  const mark=liveFresh?n(liveMark?.price,backendMark):backendMark;
+  const entry=n(p.entry_price??c.entry_price);
+  const stop=(c.protective_orders?.stop_prices??[])[0]??n(a.stop_loss,0);
+  const tp1=n(a.tp1,0),tp2=n(a.tp2,0),tp3=n(a.tp3,0);
+  const invalidation=n(a?.prediction?.invalidation_price??a.invalidation_price,0);
+  const trigger=n(a?.prediction?.trigger_price,0);
+  const locks=c.locks??{};
+  const progress=progressToTarget(entry,mark,tp1,long);
+  const plotPrices=livePrices.length>=2?livePrices:history.map(x=>x.price);
+  const [showChart,setShowChart]=useState(symbol==="BTCUSDT");
+  const chartPlan={
+    direction:(long?"LONG":"SHORT") as "LONG"|"SHORT",
+    trigger:trigger||undefined,
+    entryLow:entry||undefined,
+    entryHigh:entry||undefined,
+    actualEntry:entry||undefined,
+    stop:stop||undefined,
+    invalidation:invalidation||undefined,
+    tp1:tp1||undefined,
+    tp2:tp2||undefined,
+    tp3:tp3||undefined,
+    ready:true,
+  };
+  return <section className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-950/60 shadow-xl shadow-black/10">
   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-4"><div className="flex items-center gap-3"><div className={`grid h-11 w-11 place-items-center rounded-2xl border ${long?"border-emerald-400/30 bg-emerald-400/[.08] text-emerald-300":"border-rose-400/30 bg-rose-400/[.08] text-rose-300"}`}>{long?<TrendingUp size={20}/>:<TrendingDown size={20}/>}</div><div><div className="text-2xl font-black text-white">{p.symbol??"—"}</div><div className="text-[10px] font-black text-slate-500">{p.direction} · {p.leverage??c.leverage??1}x · {p.margin_type??"—"}</div></div></div><div className={`rounded-2xl border px-4 py-2 text-xs font-black ${tone(c.state)}`}>{c.state==="STRENGTHENING"&&<Zap size={13} className="mr-1 inline"/>}{c.title??c.state??"VIGILAR"}</div></div>
-  <div className="p-4"><div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,.8fr)]"><div><div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6"><Metric label="Entrada" value={fmt(entry)}/><Metric label="Mark" value={fmt(mark)} live/><Metric label="PnL" value={`${pnl>=0?"+":""}${pnl.toFixed(3)} USDT`} positive={pnl>=0} big/><Metric label="ROI aprox." value={pct(c.approx_margin_roi_pct)} positive={n(c.approx_margin_roi_pct)>=0}/><Metric label="Movimiento" value={pct(c.move_pct)} positive={n(c.move_pct)>=0}/><Metric label="Health" value={`${n(c.health_score).toFixed(0)}/100`}/></div>
+  <div className="p-4"><div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,.8fr)]"><div><div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6"><Metric label="Entrada" value={fmt(entry)}/><Metric label={liveFresh?"Mark WS":"Mark"} value={fmt(mark)} live/><Metric label="PnL" value={`${pnl>=0?"+":""}${pnl.toFixed(3)} USDT`} positive={pnl>=0} big/><Metric label="ROI aprox." value={pct(c.approx_margin_roi_pct)} positive={n(c.approx_margin_roi_pct)>=0}/><Metric label="Movimiento" value={pct(c.move_pct)} positive={n(c.move_pct)>=0}/><Metric label="Health" value={`${n(c.health_score).toFixed(0)}/100`}/></div>
     <div className={`mt-3 rounded-2xl border p-4 ${tone(c.state)}`}><div className="text-base font-black">{c.message??"Analizando…"}</div><div className="mt-2 text-[10px] opacity-70">Fase {c.prediction_phase??"N/D"} · Zona {c.entry_zone_state??"N/D"} · Conf. técnica {n(c.technical_confidence).toFixed(0)}/100</div></div>
     <div className="mt-3 grid gap-3 lg:grid-cols-2"><div className="rounded-2xl border border-slate-800 bg-black/15 p-4"><div className="mb-3 flex items-center justify-between"><b className="text-xs text-white">6 LOCKS</b><span className="text-[10px] text-slate-500">{c.locks_passed??0}/6</span></div><div className="grid grid-cols-3 gap-2">{[["core","CORE"],["mtf","MTF"],["flow","FLOW"],["trap","TRAP"],["momentum","MOM"],["entry","ENTRY"]].map(([k,l])=><div key={k} className={`rounded-xl border p-2 text-center text-[10px] font-black ${locks[k]?"border-emerald-400/25 bg-emerald-400/[.06] text-emerald-200":"border-slate-800 bg-slate-950/60 text-slate-600"}`}><Circle size={8} className={`mx-auto mb-1 ${locks[k]?"fill-current":""}`}/>{l}</div>)}</div></div><div className="rounded-2xl border border-slate-800 bg-black/15 p-4"><Gauge label="Flow" value={n(c.flow_strength)}/><Gauge label="Aceleración" value={n(c.acceleration_score)}/><Gauge label="Trap" value={100-n(c.trap_risk)}/><Gauge label="Momentum" value={100-n(c.decay_risk)}/></div></div>
-  </div><div className="rounded-2xl border border-slate-800 bg-black/15 p-4"><div className="flex items-center justify-between"><b className="text-xs text-white">Recorrido en vivo</b><span className="text-[10px] text-slate-500">últimas {history.length} lecturas</span></div><Spark points={history.map(x=>x.price)} positive={pnl>=0}/><div className="mt-4"><div className="mb-1 flex justify-between text-[9px] text-slate-600"><span>Entrada</span><span>TP1 {tp1>0?fmt(tp1):"N/D"}</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-800"><div className="h-full bg-emerald-400/70 transition-all duration-700" style={{width:`${progress}%`}}/></div><div className="mt-1 text-right text-[10px] text-slate-500">{progress.toFixed(0)}% hacia TP1</div></div><div className="mt-4 grid grid-cols-4 gap-2"><Level label="STOP" value={stop} danger/><Level label="TP1" value={tp1}/><Level label="TP2" value={tp2}/><Level label="TP3" value={tp3}/></div>{(c.next_watch??[]).length>0&&<div className="mt-4 border-t border-slate-800 pt-3"><div className="text-[10px] font-black uppercase tracking-[.1em] text-slate-500">Vigilando</div>{c.next_watch!.slice(0,3).map((x,i)=><div key={i} className="mt-1 text-[11px] text-slate-400">• {x}</div>)}</div>}</div></div>{!row.analysis_available&&row.analysis_error&&<div className="mt-3 flex items-center gap-2 text-[10px] text-amber-300"><RefreshCw size={12}/> Posición leída; análisis temporalmente limitado.</div>}</div>
+  </div><div className="rounded-2xl border border-slate-800 bg-black/15 p-4"><div className="flex items-center justify-between"><b className="text-xs text-white">Recorrido en vivo</b><span className="text-[10px] text-slate-500">{liveFresh?"precio WS · 1s":`últimas ${history.length} lecturas`}</span></div><Spark points={plotPrices} positive={pnl>=0}/><div className="mt-4"><div className="mb-1 flex justify-between text-[9px] text-slate-600"><span>Entrada</span><span>TP1 {tp1>0?fmt(tp1):"N/D"}</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-800"><div className="h-full bg-emerald-400/70 transition-all duration-700" style={{width:`${progress}%`}}/></div><div className="mt-1 text-right text-[10px] text-slate-500">{progress.toFixed(0)}% hacia TP1</div></div><div className="mt-4 grid grid-cols-4 gap-2"><Level label="STOP" value={stop} danger/><Level label="TP1" value={tp1}/><Level label="TP2" value={tp2}/><Level label="TP3" value={tp3}/></div>{(c.next_watch??[]).length>0&&<div className="mt-4 border-t border-slate-800 pt-3"><div className="text-[10px] font-black uppercase tracking-[.1em] text-slate-500">Vigilando</div>{c.next_watch!.slice(0,3).map((x,i)=><div key={i} className="mt-1 text-[11px] text-slate-400">• {x}</div>)}</div>}</div></div>
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 pt-4">
+      <div className="flex items-center gap-2 text-[10px] text-slate-500"><RadioTower size={12} className={liveFresh?"text-emerald-400":"text-slate-600"}/><span>{liveFresh?"Precio de la posición actualizado por Binance WebSocket cada ~1s.":"El gráfico mantiene su propio WebSocket; el precio de tarjeta usa el último dato disponible."}</span></div>
+      <button onClick={()=>setShowChart(v=>!v)} className="rounded-xl border border-cyan-400/25 bg-cyan-400/[.05] px-3 py-2 text-[10px] font-black text-cyan-200">{showChart?"Ocultar gráfico":"Ver gráfico en tiempo real"}</button>
+    </div>
+    {showChart&&symbol&&<div className="mt-4"><LiveCandleChart symbol={symbol} livePrice={liveFresh?mark:undefined} plan={chartPlan}/></div>}
+    {!row.analysis_available&&row.analysis_error&&<div className="mt-3 flex items-center gap-2 text-[10px] text-amber-300"><RefreshCw size={12}/> Posición leída; análisis temporalmente limitado.</div>}
+  </div>
 </section>}
 
 function progressToTarget(entry:number,mark:number,tp:number,long:boolean){if(entry<=0||tp<=0||tp===entry)return 0;const raw=long?(mark-entry)/(tp-entry):(entry-mark)/(entry-tp);return clamp(raw*100)}
