@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Eye, EyeOff, GraduationCap, RadioTower, SlidersHorizontal, Sparkles, Target, Zap } from "lucide-react";
-import PriceChart, { type ChartPlan } from "@/components/PriceChart";
+import PriceChart, { type ChartPatternOverlay, type ChartPlan } from "@/components/PriceChart";
 import { getCandles, type Candle } from "@/lib/api";
 import { LOCKED_PLANS_EVENT, readLockedPlan } from "@/lib/lockedPlans";
 
@@ -169,7 +169,7 @@ function toneClasses(tone: string) {
   return "border-slate-700 bg-slate-900/50 text-slate-300";
 }
 
-export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: string; plan?: ChartPlan; livePrice?: number | null }) {
+export default function LiveCandleChart({ symbol, plan, livePrice, patternOverlay }: { symbol: string; plan?: ChartPlan; livePrice?: number | null; patternOverlay?: ChartPatternOverlay }) {
   const [interval, setIntervalValue] = useState<Interval>("5m");
   const [candles, setCandles] = useState<Candle[]>([]);
   const [source, setSource] = useState("CARGANDO");
@@ -448,7 +448,7 @@ export default function LiveCandleChart({ symbol, plan, livePrice }: { symbol: s
       </div>
 
       <div className="grid gap-3 p-3 xl:grid-cols-[minmax(0,1fr)_330px]">
-        <div><PriceChart candles={candles} plan={chartPlan} livePrice={effectiveLivePrice ?? undefined} /></div>
+        <div><PriceChart candles={candles} plan={chartPlan} livePrice={effectiveLivePrice ?? undefined} pattern={patternOverlay} /></div>
         <aside className="space-y-3">
           <div className={`rounded-2xl border p-4 ${toneClasses(guide.tone)}`}>
             <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.12em]"><Sparkles size={13}/> Lectura {interval.toUpperCase()}</div><div className="font-mono text-xs font-black">{guide.score}/100</div></div>
