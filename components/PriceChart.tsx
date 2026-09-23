@@ -1,5 +1,13 @@
 import type { Candle } from "@/lib/api";
 
+export type ChartPatternOverlay = {
+  name: string;
+  bias: "LONG" | "SHORT" | "NEUTRAL";
+  state: string;
+  level?: number | null;
+  score?: number | null;
+};
+
 export type ChartPlan = {
   direction?: "LONG" | "SHORT";
   trigger?: number;
@@ -75,7 +83,7 @@ type RailItem = {
   out: "up" | "down" | null;
 };
 
-export default function PriceChart({ candles, plan, livePrice }: { candles: Candle[]; plan?: ChartPlan; livePrice?: number }) {
+export default function PriceChart({ candles, plan, livePrice, pattern }: { candles: Candle[]; plan?: ChartPlan; livePrice?: number; pattern?: ChartPatternOverlay }) {
   if (!candles.length) return <div className="rounded-2xl border border-dashed border-slate-800 p-8 text-center text-sm text-slate-500">Sin datos de gráfico.</div>;
 
   const width = 1120;
@@ -113,7 +121,7 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
   let minPrice = marketLow - marketSpan * 0.10;
   let maxPrice = marketHigh + marketSpan * 0.10;
 
-  const nearby = [plan?.trigger, plan?.entryLow, plan?.entryHigh, plan?.actualEntry]
+  const nearby = [plan?.trigger, plan?.entryLow, plan?.entryHigh, plan?.actualEntry, pattern?.level ?? undefined]
     .filter((v): v is number => Number.isFinite(Number(v)) && Number(v) > 0)
     .filter((v) => v >= marketLow - marketSpan * 0.45 && v <= marketHigh + marketSpan * 0.45);
   if (nearby.length) {
@@ -143,6 +151,7 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
 
   const rawLevels = plan ? [
     { key: "now", label: "AHORA LIVE", value: last, stroke: "#67e8f9", dash: "2 4", priority: 100 },
+    { key: "pattern", label: pattern ? `PATRÓN ${pattern.name.replaceAll("_"," ")}` : "PATRÓN", value: Number(pattern?.level || 0), stroke: pattern?.bias === "LONG" ? "#34d399" : pattern?.bias === "SHORT" ? "#fb7185" : "#a78bfa", dash: "7 5", priority: 94 },
     { key: "my-entry", label: "MI ENTRADA", value: Number(plan.actualEntry || 0), stroke: "#f472b6", dash: "8 4", priority: 98 },
     { key: "trigger", label: "TRIGGER", value: Number(plan.trigger || 0), stroke: "#a78bfa", dash: "6 5", priority: 90 },
     { key: "invalidation", label: "INVALIDACIÓN", value: Number(plan.invalidation || 0), stroke: "#fb923c", dash: "4 5", priority: 80 },
@@ -213,6 +222,10 @@ export default function PriceChart({ candles, plan, livePrice }: { candles: Cand
       <svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full" role="img" aria-label="Gráfico de velas con EMA, plan operativo y entrada real">
         <rect x={plotRight + 7} y={0} width={railWidth + 8} height={priceHeight + 4} rx="10" fill="rgba(2,6,23,.40)" stroke="rgba(51,65,85,.45)" />
         <text x={railX} y={13} fill="#64748b" fontSize="9" fontWeight="800">NIVELES DEL PLAN</text>
+        {pattern && <g>
+          <rect x={padLeft} y={padTop} width="260" height="23" rx="6" fill="rgba(2,6,23,.86)" stroke={pattern.bias === "LONG" ? "#34d399" : pattern.bias === "SHORT" ? "#fb7185" : "#a78bfa"} strokeOpacity=".45" />
+          <text x={padLeft+8} y={padTop+15} fill={pattern.bias === "LONG" ? "#6ee7b7" : pattern.bias === "SHORT" ? "#fda4af" : "#c4b5fd"} fontSize="9" fontWeight="800">{`PATRÓN · ${pattern.name.replaceAll("_"," ")} · ${pattern.state}`}</text>
+        </g>}
 
         {[0.2, 0.4, 0.6, 0.8].map((ratio) => (
           <line key={ratio} x1={padLeft} x2={plotRight} y1={padTop + (priceHeight-padTop*2)*ratio} y2={padTop + (priceHeight-padTop*2)*ratio} stroke="rgba(148,163,184,.09)" strokeWidth="1" />

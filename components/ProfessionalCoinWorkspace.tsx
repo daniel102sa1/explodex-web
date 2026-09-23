@@ -25,6 +25,7 @@ import {
   Zap,
 } from "lucide-react";
 import LiveCandleChart from "@/components/LiveCandleChart";
+import PatternVision, { topPatternOverlay } from "@/components/PatternVision";
 import { getLiveAnalysis, type LiveAnalysis, type PreMovePrediction } from "@/lib/api";
 
 function fmt(value?: number | null) {
@@ -226,6 +227,7 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
   }, [safeSymbol]);
 
   const prediction = analysis?.prediction;
+  const patternOverlay = useMemo(() => topPatternOverlay(prediction), [prediction]);
   const price = Number(livePrice ?? analysis?.current_price ?? 0);
   const conditions = useMemo(() => analysis && prediction ? conditionList(analysis, prediction, price) : [], [analysis, prediction, price]);
   const readyCount = conditions.filter((x) => x.ready).length;
@@ -351,7 +353,8 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
         {analysis && prediction ? (
           <div className="grid xl:grid-cols-[1.65fr_.85fr]">
             <div className="border-r border-slate-800/80 p-4">
-              <LiveCandleChart symbol={safeSymbol} plan={plan} livePrice={price} />
+              <LiveCandleChart symbol={safeSymbol} plan={plan} livePrice={price} patternOverlay={patternOverlay} />
+              <PatternVision symbol={safeSymbol} analysis={analysis} />
 
               <section className="mb-3 mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
                 <LivePulse label="Pulso vivo" value={`${livePreparation.toFixed(1)}/100`} status={strengthening ? "FORTALECE" : weakening ? "DEBILITA" : "ESTABLE"} tone={strengthening ? "green" : weakening ? "red" : "neutral"} icon={<Gauge size={15}/>} />
