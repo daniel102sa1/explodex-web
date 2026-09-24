@@ -247,6 +247,22 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
   const prediction = analysis?.prediction;
   const patternOverlay = useMemo(() => topPatternOverlay(prediction), [prediction]);
   const price = Number(livePrice ?? analysis?.current_price ?? 0);
+  const positionEntry = openPosition ? Number(openPosition.entry_price) : 0;
+  const positionStop = openPosition ? Number(openPosition.hard_stop ?? openPosition.stop_loss) : 0;
+  const positionTarget = openPosition ? Number(openPosition.tp1 ?? openPosition.take_profit) : 0;
+  const positionQty = openPosition ? Number(openPosition.quantity ?? 0) : 0;
+  const positionDir = openPosition?.side === "SHORT" ? -1 : 1;
+  const positionLivePnl = openPosition
+    ? (positionQty > 0 ? positionDir * (price - positionEntry) * positionQty : Number(openPosition.unrealized_pnl ?? 0))
+    : 0;
+  const positionMovePct = openPosition && positionEntry > 0 ? positionDir * (price - positionEntry) / positionEntry * 100 : null;
+  const positionRoiMargin = openPosition && Number(openPosition.margin_used) > 0 ? positionLivePnl / Number(openPosition.margin_used) * 100 : null;
+  const positionStopDistancePct = openPosition && price > 0 ? positionDir * (price - positionStop) / price * 100 : null;
+  const positionTpDistancePct = openPosition && price > 0 ? positionDir * (positionTarget - price) / price * 100 : null;
+  const positionTargetDistance = openPosition ? positionDir * (positionTarget - positionEntry) : 0;
+  const positionProgressPct = openPosition && positionTargetDistance > 0 ? positionDir * (price - positionEntry) / positionTargetDistance * 100 : null;
+  const positionElapsedMinutes = openPosition ? Math.max(0, Math.floor((Date.now() - new Date(openPosition.opened_at).getTime()) / 60000)) : 0;
+  const positionRemainingMinutes = openPosition?.max_hold_minutes != null ? Math.max(0, Number(openPosition.max_hold_minutes) - positionElapsedMinutes) : null;
   const conditions = useMemo(() => analysis && prediction ? conditionList(analysis, prediction, price) : [], [analysis, prediction, price]);
   const readyCount = conditions.filter((x) => x.ready).length;
   const phase = prediction?.phase ?? "SIN_SETUP";
@@ -280,7 +296,11 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
   let liveDecision = "VIGILAR";
   let liveDecisionTone: "green" | "amber" | "red" | "violet" = "amber";
   let liveDecisionText = "Esperando que la secuencia gane fuerza.";
-  if (!directionMatch && analysis && prediction) {
+  if (openPosition) {
+    liveDecision = `${openPosition.side} ABIERTA · GESTIONAR`;
+    liveDecisionTone = positionLivePnl >= 0 ? "green" : "amber";
+    liveDecisionText = `La entrada ya existe. Gestiona el plan original: entrada ${fmt(positionEntry)}, SL estructural fijo ${fmt(positionStop)} y TP ${fmt(positionTarget)}. El análisis nuevo sirve como contexto, no para reescribir esta operación.`;
+  } else if (!directionMatch && analysis && prediction) {
     liveDecision = "CONFLICTO · NO TRADE";
     liveDecisionTone = "red";
     liveDecisionText = "El setup técnico y el predictor apuntan a direcciones diferentes.";
@@ -369,7 +389,7 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
         <div className="flex flex-col gap-4 border-b border-slate-800/80 bg-gradient-to-r from-emerald-500/[.06] via-transparent to-violet-500/[.05] p-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-3xl font-black tracking-tight text-white">{safeSymbol}</h1>
-            <span className={`status-pill ${isLong ? "status-long" : "status-short"}`}>{isLong ? <ArrowUpRight size={14}/> : <ArrowDownRight size={14}/>} {prediction ? typeEs(prediction.type) : analysis?.direction ?? "—"}</span>
+            <span className={`status-pill ${openPosition ? (openPosition.side === "LONG" ? "status-long" : "status-short") : (isLong ? "status-long" : "status-short")}`}>{openPosition ? (openPosition.side === "LONG" ? <ArrowUpRight size={14}/> : <ArrowDownRight size={14}/>) : (isLong ? <ArrowUpRight size={14}/> : <ArrowDownRight size={14}/>)} {openPosition ? `${openPosition.side} · OPERACIÓN ABIERTA` : (prediction ? typeEs(prediction.type) : analysis?.direction ?? "—")}</span>
             <span className={`status-pill ${isReady ? "status-ready" : phase === "PREACTIVACION" ? "status-watch" : "status-neutral"}`}>{phaseEs(phase)}</span>
             <span className="status-pill status-neutral">{analysis?.source ?? "CARGANDO"}</span>
           </div>
@@ -436,44 +456,75 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
             <aside className="bg-[#050b13]/65 p-4">
               <div className={`rounded-2xl border p-4 ${decisionClasses}`}>
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-[10px] font-black uppercase tracking-[.18em] opacity-60">Decisión dinámica</div>
+                  <div className="text-[10px] font-black uppercase tracking-[.18em] opacity-60">{openPosition ? "Estado de la operación" : "Decisión dinámica"}</div>
                   <span className="inline-flex items-center gap-1 text-[9px] font-bold opacity-70"><Activity size={11}/> LIVE</span>
                 </div>
                 <div className="mt-2 text-xl font-black">{liveDecision}</div>
                 <p className="mt-2 text-xs leading-5 opacity-75">{liveDecisionText}</p>
               </div>
 
-              <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-950/55 p-3">
+              {openPosition ? <div className="mt-3 rounded-2xl border border-cyan-500/20 bg-cyan-500/[.035] p-3">
+                <div className="mb-2 flex items-center justify-between"><span className="text-[10px] font-black uppercase tracking-[.12em] text-cyan-300">Progreso de la operación</span><span className={`font-mono text-[10px] font-black ${Number(positionProgressPct ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{positionProgressPct == null ? "—" : `${positionProgressPct.toFixed(1)}%`}</span></div>
+                <div className="h-2 overflow-hidden rounded-full bg-slate-900"><div className="h-full rounded-full bg-cyan-400 transition-all duration-300" style={{ width: `${Math.max(0, Math.min(100, Number(positionProgressPct ?? 0)))}%` }} /></div>
+                <div className="mt-2 grid grid-cols-3 text-[9px] text-slate-600"><span>SL {fmt(positionStop)}</span><span className="text-center">entrada {fmt(positionEntry)}</span><span className="text-right">TP {fmt(positionTarget)}</span></div>
+              </div> : <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-950/55 p-3">
                 <div className="mb-2 flex items-center justify-between"><span className="text-[10px] font-black uppercase tracking-[.12em] text-slate-500">Ruta al trigger</span><span className="font-mono text-[10px] text-violet-300">{triggerDistancePct == null ? "—" : `${triggerDistancePct.toFixed(3)}%`}</span></div>
                 <div className="h-2 overflow-hidden rounded-full bg-slate-900"><div className={`h-full rounded-full transition-all duration-300 ${invalidated || weakening ? "bg-rose-400" : strengthening ? "bg-emerald-400" : "bg-violet-400"}`} style={{ width: `${Math.max(3, Math.min(100, 100 - (triggerDistancePct ?? 1) * 120))}%` }} /></div>
                 <div className="mt-2 flex justify-between text-[9px] text-slate-600"><span>precio {fmt(price)}</span><span>trigger {fmt(prediction.trigger_price)}</span></div>
-              </div>
+              </div>}
 
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <Level label="Trigger" value={prediction.trigger_price} icon={<Zap size={14}/>} liveState={liveTriggerHit ? "TOCADO" : triggerDistancePct == null ? undefined : `${triggerDistancePct.toFixed(3)}%`} />
-                <Level label="Invalidación" value={prediction.invalidation_price} danger icon={<ShieldAlert size={14}/>} liveState={invalidated ? "CRUZADA" : "VIGENTE"} />
-                <Level label="Entrada baja" value={prediction.entry_low} icon={<Target size={14}/>} />
-                <Level label="Entrada alta" value={prediction.entry_high} icon={<Target size={14}/>} liveState={inEntryZone ? "PRECIO EN ZONA" : undefined} />
-                <Level label={openPosition ? "SL FIJO operación" : "Stop loss"} value={openPosition ? (openPosition.hard_stop ?? openPosition.stop_loss) : prediction.stop_loss} danger icon={<XCircle size={14}/>} />
-                <Level label="TP1" value={openPosition ? (openPosition.tp1 ?? openPosition.take_profit) : prediction.tp1} good icon={<Target size={14}/>} />
-                <Level label="TP2" value={openPosition ? (openPosition.tp2 ?? undefined) : prediction.tp2} good icon={<Target size={14}/>} />
-                <Level label="TP3 / runner" value={openPosition ? (openPosition.tp3 ?? undefined) : prediction.tp3} good icon={<Target size={14}/>} />
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <Small label="Duración esperada" value={duration(prediction.expected_duration_min_minutes, prediction.expected_duration_max_minutes)} />
-                <Small label="Time stop" value={prediction.time_stop_minutes ? `${prediction.time_stop_minutes} min` : "—"} />
-              </div>
+              {openPosition ? <>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <Level label="Entrada real" value={positionEntry} icon={<Target size={14}/>} />
+                  <Level label="Precio vivo" value={price} icon={<RadioTower size={14}/>} />
+                  <Level label="SL estructural fijo" value={positionStop} danger icon={<XCircle size={14}/>} liveState={positionStopDistancePct == null ? undefined : `${positionStopDistancePct.toFixed(2)}% margen`} />
+                  <Level label="TP principal" value={positionTarget} good icon={<Target size={14}/>} liveState={positionTpDistancePct == null ? undefined : `${positionTpDistancePct.toFixed(2)}% falta`} />
+                  <Level label="TP2" value={openPosition.tp2 ?? undefined} good icon={<Target size={14}/>} />
+                  <Level label="TP3 / runner" value={openPosition.tp3 ?? undefined} good icon={<Target size={14}/>} />
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Small label="PnL flotante bruto" value={`${positionLivePnl >= 0 ? "+" : ""}${positionLivePnl.toFixed(3)} USDT`} />
+                  <Small label="ROI margen sim." value={positionRoiMargin == null ? "—" : `${positionRoiMargin >= 0 ? "+" : ""}${positionRoiMargin.toFixed(2)}%`} />
+                  <Small label="Margen usado" value={`${Number(openPosition.margin_used).toFixed(2)} USDT`} />
+                  <Small label="Exposición" value={openPosition.notional == null ? "—" : `${Number(openPosition.notional).toFixed(2)} USDT`} />
+                  <Small label="Riesgo planificado" value={openPosition.actual_stop_risk_usdt == null ? "—" : `${Number(openPosition.actual_stop_risk_usdt).toFixed(2)} USDT`} />
+                  <Small label="Movimiento desde entrada" value={positionMovePct == null ? "—" : `${positionMovePct >= 0 ? "+" : ""}${positionMovePct.toFixed(2)}%`} />
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Small label="Horizonte del plan" value={openPosition.planned_horizon ? String(openPosition.planned_horizon).replaceAll("_"," ") : "—"} />
+                  <Small label="Tiempo restante" value={positionRemainingMinutes == null ? "—" : positionRemainingMinutes <= 0 ? "TIME-STOP vencido" : positionRemainingMinutes >= 60 ? `${(positionRemainingMinutes/60).toFixed(1)} h` : `${positionRemainingMinutes} min`} />
+                </div>
+              </> : <>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <Level label="Trigger" value={prediction.trigger_price} icon={<Zap size={14}/>} liveState={liveTriggerHit ? "TOCADO" : triggerDistancePct == null ? undefined : `${triggerDistancePct.toFixed(3)}%`} />
+                  <Level label="Invalidación" value={prediction.invalidation_price} danger icon={<ShieldAlert size={14}/>} liveState={invalidated ? "CRUZADA" : "VIGENTE"} />
+                  <Level label="Entrada baja" value={prediction.entry_low} icon={<Target size={14}/>} />
+                  <Level label="Entrada alta" value={prediction.entry_high} icon={<Target size={14}/>} liveState={inEntryZone ? "PRECIO EN ZONA" : undefined} />
+                  <Level label="Stop loss" value={prediction.stop_loss} danger icon={<XCircle size={14}/>} />
+                  <Level label="TP1" value={prediction.tp1} good icon={<Target size={14}/>} />
+                  <Level label="TP2" value={prediction.tp2} good icon={<Target size={14}/>} />
+                  <Level label="TP3 / runner" value={prediction.tp3} good icon={<Target size={14}/>} />
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <Small label="Duración esperada" value={duration(prediction.expected_duration_min_minutes, prediction.expected_duration_max_minutes)} />
+                  <Small label="Time stop" value={prediction.time_stop_minutes ? `${prediction.time_stop_minutes} min` : "—"} />
+                </div>
+              </>}
 
               <section className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-                <div className="flex items-center gap-2"><TimerReset size={16} className="text-cyan-300"/><h3 className="font-black text-white">Gestión automática</h3></div>
-                <div className="mt-3 space-y-2 text-xs leading-5 text-slate-400">
+                <div className="flex items-center gap-2"><TimerReset size={16} className="text-cyan-300"/><h3 className="font-black text-white">{openPosition ? "Reglas de esta operación" : "Gestión automática"}</h3></div>
+                {openPosition ? <div className="mt-3 space-y-2 text-xs leading-5 text-slate-400">
+                  <p><b className="text-slate-200">Plan congelado:</b> la entrada, dirección, SL y objetivos no se reemplazan por un análisis nuevo.</p>
+                  <p><b className="text-slate-200">SL:</b> permanece en <span className="font-mono text-rose-300">{fmt(positionStop)}</span>. No se mueve a break-even automáticamente.</p>
+                  <p><b className="text-slate-200">TP:</b> el objetivo principal sigue en <span className="font-mono text-emerald-300">{fmt(positionTarget)}</span>; TP2/TP3 solo se muestran si fueron definidos al entrar.</p>
+                  <p><b className="text-slate-200">Contexto nuevo:</b> SARPON, flujo, BTC, OI y patrones sirven para vigilar el trade, no para cambiar LONG↔SHORT ni ampliar el stop.</p>
+                  <p><b className="text-slate-200">Tiempo:</b> se conserva el horizonte original; al vencer, el manager PAPER puede cerrar por TIME-STOP.</p>
+                </div> : <div className="mt-3 space-y-2 text-xs leading-5 text-slate-400">
                   <p><b className="text-slate-200">Entrada:</b> solo después del trigger y dentro de la zona.</p>
-                  <p><b className="text-slate-200">TP1:</b> proteger y mover stop a break-even si la estructura sigue válida.</p>
-                  <p><b className="text-slate-200">TP2:</b> beneficio principal en paper.</p>
-                  <p><b className="text-slate-200">TP3:</b> runner de investigación, sin ampliar stop.</p>
+                  <p><b className="text-slate-200">SL:</b> se fija estructuralmente antes de entrar y luego no se amplía ni se acerca automáticamente.</p>
+                  <p><b className="text-slate-200">TP:</b> los objetivos quedan definidos antes de abrir la simulación.</p>
                   <p><b className="text-slate-200">Tiempo:</b> si no logra seguimiento suficiente antes del time-stop, el paper manager puede cerrar.</p>
-                </div>
+                </div>}
               </section>
 
               {!!prediction.confirmations?.length && <section className="mt-4"><div className="mb-2 text-xs font-black uppercase tracking-[.14em] text-emerald-300">A favor</div><div className="flex flex-wrap gap-1.5">{prediction.confirmations.map((x) => <span key={x} className="rounded-full border border-emerald-500/20 bg-emerald-500/[.06] px-2.5 py-1 text-[11px] text-emerald-200">{x}</span>)}</div></section>}
