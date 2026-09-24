@@ -120,10 +120,17 @@ export type CanonicalPaperSummary = {
   version?: string;
   execution_version?: string;
   display_scope?: string;
+  starting_balance?: number;
   cash_balance: number;
   equity: number;
   unrealized_pnl: number;
   realized_pnl?: number;
+  total_costs?: number;
+  closed_trades?: number;
+  winners?: number;
+  losers?: number;
+  win_rate_pct?: number | null;
+  assumptions?: Record<string, number>;
   open_positions: CanonicalPaperPosition[];
   unified_paper_diagnostics?: Record<string, any>;
 };
