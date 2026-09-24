@@ -25,7 +25,7 @@ function n(value: unknown, fallback = 0) {
 function pretty(value: string) {
   return String(value || "—")
     .replaceAll("_", " ")
-    .replace(/w/g, (x) => x.toUpperCase());
+    .replace(/\b\w/g, (x) => x.toUpperCase());
 }
 
 export function detectedPatterns(prediction?: PreMovePrediction | null): PatternItem[] {
@@ -54,6 +54,48 @@ export function detectedPatterns(prediction?: PreMovePrediction | null): Pattern
       score: n(row?.quality, 68),
       source: "Confluencia profesional",
       evidence: Array.isArray(row?.evidence) ? row.evidence.map(String) : [],
+    });
+  }
+
+  const geometric = p?.professional_arsenal?.price_action_pattern_vision;
+  for (const row of geometric?.top_patterns ?? []) {
+    const ratios = row?.ratios && typeof row.ratios === "object"
+      ? Object.entries(row.ratios).map(([key, value]) => `${key} ${Number(value).toFixed(3)}`)
+      : [];
+    out.push({
+      name: String(row?.name || "PRICE_ACTION_PATTERN"),
+      bias: row?.bias === "LONG" ? "LONG" : row?.bias === "SHORT" ? "SHORT" : "NEUTRAL",
+      state: String(row?.state || "DETECTED"),
+      level: n(row?.neckline || row?.completion_point || row?.level) || null,
+      score: n(row?.quality, 65),
+      source: row?.ratios ? "Armónico XABCD" : "Pattern Vision geométrico",
+      evidence: [
+        ...ratios,
+        row?.neckline ? `neckline ${n(row.neckline).toFixed(6)}` : "",
+        geometric?.market_cycle?.state ? `ciclo ${geometric.market_cycle.state}` : "",
+      ].filter(Boolean),
+    });
+  }
+
+  const impulse = p?.impulse_pullback_confirmation ?? p?.professional_arsenal?.impulse_pullback_confirmation;
+  if (impulse?.available && impulse?.phase && impulse.phase !== "NO_SETUP") {
+    const zoneLow = n(impulse?.pending_zone?.low);
+    const zoneHigh = n(impulse?.pending_zone?.high);
+    const zoneMid = zoneLow > 0 && zoneHigh > 0 ? (zoneLow + zoneHigh) / 2 : 0;
+    out.push({
+      name: impulse?.direction === "SHORT" ? "IMPULSE_PULLBACK_SHORT" : "IMPULSE_PULLBACK_LONG",
+      bias: impulse?.direction === "SHORT" ? "SHORT" : impulse?.direction === "LONG" ? "LONG" : "NEUTRAL",
+      state: String(impulse?.phase || "FORMING"),
+      level: zoneMid || null,
+      score: n(impulse?.quality_score, 60),
+      source: "Impulso · BOS · retroceso",
+      evidence: [
+        impulse?.impulse?.broke_structure ? "ruptura de estructura" : "",
+        impulse?.pending_zone?.type ? String(impulse.pending_zone.type) : "",
+        impulse?.pending_zone?.touched ? "zona retesteada" : "esperando retroceso",
+        impulse?.reaction?.confirmed ? String(impulse?.reaction?.type || "reacción confirmada") : "esperando reacción",
+        impulse?.chased ? "NO CHASE" : "",
+      ].filter(Boolean),
     });
   }
 
@@ -216,6 +258,22 @@ function ReferencePattern({ name, bias }: { name: string; bias: PatternOverlay["
   } else if (key.includes("BEAR_FLAG")) {
     path = "M20 20 L74 82 L96 66 L118 54 L142 64 L166 50 L188 60 L210 82";
     extra = <><line x1="82" y1="70" x2="188" y2="52" stroke={muted}/><line x1="94" y1="86" x2="188" y2="70" stroke={muted}/></>;
+  } else if (key.includes("RISING_WEDGE")) {
+    path = "M18 82 L52 52 L78 68 L110 38 L138 50 L168 28 L202 34";
+    extra = <><line x1="38" y1="58" x2="208" y2="26" stroke={muted}/><line x1="38" y1="86" x2="208" y2="38" stroke={muted}/></>;
+  } else if (key.includes("FALLING_WEDGE")) {
+    path = "M18 20 L52 48 L78 32 L110 62 L138 50 L168 72 L202 66";
+    extra = <><line x1="38" y1="18" x2="208" y2="62" stroke={muted}/><line x1="38" y1="48" x2="208" y2="74" stroke={muted}/></>;
+  } else if (["GARTLEY","BAT","BUTTERFLY","CRAB"].some((x)=>key.includes(x))) {
+    path = bias === "SHORT"
+      ? "M18 18 L70 82 L108 42 L142 66 L188 28"
+      : "M18 82 L70 18 L108 58 L142 34 L188 72";
+    extra = <><text x="14" y="14" fill={muted} fontSize="9">X</text><text x="68" y="96" fill={muted} fontSize="9">A</text><text x="106" y="38" fill={muted} fontSize="9">B</text><text x="140" y="78" fill={muted} fontSize="9">C</text><text x="188" y="24" fill={muted} fontSize="9">D</text></>;
+  } else if (key.includes("IMPULSE_PULLBACK")) {
+    path = bias === "SHORT"
+      ? "M18 18 L92 82 L132 48 L164 62 L210 84"
+      : "M18 82 L92 18 L132 52 L164 38 L210 16";
+    extra = <line x1="112" y1="48" x2="188" y2="48" stroke={muted} strokeDasharray="5 4"/>;
   } else if (key.includes("DOUBLE_TOP")) {
     path = "M18 78 L58 28 L96 72 L136 30 L174 70 L210 84";
   } else if (key.includes("DOUBLE_BOTTOM")) {
