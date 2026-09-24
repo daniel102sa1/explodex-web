@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import LiveCandleChart from "@/components/LiveCandleChart";
 import PatternVision, { topPatternOverlay } from "@/components/PatternVision";
-import { getLiveAnalysis, type LiveAnalysis, type PreMovePrediction } from "@/lib/api";
+import { getCanonicalPaperSummary, getLiveAnalysis, type CanonicalPaperPosition, type LiveAnalysis, type PreMovePrediction } from "@/lib/api";
 
 function fmt(value?: number | null) {
   if (value == null || !Number.isFinite(Number(value))) return "—";
@@ -146,6 +146,7 @@ function microPulse(rows: MicroTrade[], current: number): Pulse {
 export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }) {
   const safeSymbol = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
   const [analysis, setAnalysis] = useState<LiveAnalysis | null>(null);
+  const [openPosition, setOpenPosition] = useState<CanonicalPaperPosition | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const [flash, setFlash] = useState<"up" | "down" | "flat">("flat");
@@ -178,6 +179,23 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
     }
     load();
     const timer = setInterval(load, 20_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [safeSymbol]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadOpenPosition() {
+      try {
+        const summary = await getCanonicalPaperSummary("all");
+        if (cancelled) return;
+        const match = (summary.open_positions ?? []).find((p) => String(p.symbol).toUpperCase() === safeSymbol) ?? null;
+        setOpenPosition(match);
+      } catch {
+        if (!cancelled) setOpenPosition(null);
+      }
+    }
+    loadOpenPosition();
+    const timer = setInterval(loadOpenPosition, 5_000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [safeSymbol]);
 
@@ -298,7 +316,18 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
     liveDecisionText = prediction?.management?.before_trigger ?? "Esperar el trigger y las confirmaciones faltantes.";
   }
 
-  const plan = prediction ? {
+  const plan = openPosition ? {
+    direction: openPosition.side,
+    trigger: openPosition.entry_price,
+    entryLow: openPosition.entry_price,
+    entryHigh: openPosition.entry_price,
+    invalidation: openPosition.hard_stop ?? openPosition.stop_loss,
+    stop: openPosition.hard_stop ?? openPosition.stop_loss,
+    tp1: openPosition.tp1 ?? openPosition.take_profit,
+    tp2: openPosition.tp2 ?? undefined,
+    tp3: openPosition.tp3 ?? undefined,
+    ready: true,
+  } : prediction ? {
     direction: prediction.direction,
     trigger: prediction.trigger_price,
     entryLow: prediction.entry_low,
@@ -322,6 +351,12 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
 
   return (
     <main className="mx-auto min-h-screen max-w-[1680px] px-3 py-4 sm:px-5 lg:px-6">
+      {openPosition && <section className="mb-4 overflow-hidden rounded-2xl border border-cyan-500/30 bg-cyan-500/[.06]">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div><div className="text-[10px] font-black uppercase tracking-[.16em] text-cyan-300">OPERACIÓN PAPER ABIERTA · PLAN CONGELADO</div><div className="mt-1 flex flex-wrap items-center gap-3"><b className="text-xl text-white">{openPosition.symbol} {openPosition.side}</b><span className="rounded-lg border border-cyan-400/20 px-2 py-1 text-xs font-black text-cyan-200">x{openPosition.leverage}</span><span className="text-xs text-slate-400">El gráfico usa la entrada y el SL real de esta posición, no un SL recalculado.</span></div></div>
+          <div className="grid grid-cols-3 gap-3 text-right text-[10px]"><div><span className="text-slate-600">Entrada</span><div className="font-mono font-black text-white">{fmt(openPosition.entry_price)}</div></div><div><span className="text-slate-600">SL fijo</span><div className="font-mono font-black text-rose-300">{fmt(openPosition.hard_stop??openPosition.stop_loss)}</div></div><div><span className="text-slate-600">PnL</span><div className={`font-mono font-black ${Number(openPosition.unrealized_pnl)>=0?"text-emerald-300":"text-rose-300"}`}>{Number(openPosition.unrealized_pnl)>=0?"+":""}{Number(openPosition.unrealized_pnl).toFixed(2)} USDT</div></div></div>
+        </div>
+      </section>}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <Link href="/scanner" className="inline-flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-white"><ArrowLeft size={15}/> Volver</Link>
         <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
@@ -419,10 +454,10 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
                 <Level label="Invalidación" value={prediction.invalidation_price} danger icon={<ShieldAlert size={14}/>} liveState={invalidated ? "CRUZADA" : "VIGENTE"} />
                 <Level label="Entrada baja" value={prediction.entry_low} icon={<Target size={14}/>} />
                 <Level label="Entrada alta" value={prediction.entry_high} icon={<Target size={14}/>} liveState={inEntryZone ? "PRECIO EN ZONA" : undefined} />
-                <Level label="Stop loss" value={prediction.stop_loss} danger icon={<XCircle size={14}/>} />
-                <Level label="TP1" value={prediction.tp1} good icon={<Target size={14}/>} />
-                <Level label="TP2" value={prediction.tp2} good icon={<Target size={14}/>} />
-                <Level label="TP3 / runner" value={prediction.tp3} good icon={<Target size={14}/>} />
+                <Level label={openPosition ? "SL FIJO operación" : "Stop loss"} value={openPosition ? (openPosition.hard_stop ?? openPosition.stop_loss) : prediction.stop_loss} danger icon={<XCircle size={14}/>} />
+                <Level label="TP1" value={openPosition ? (openPosition.tp1 ?? openPosition.take_profit) : prediction.tp1} good icon={<Target size={14}/>} />
+                <Level label="TP2" value={openPosition ? (openPosition.tp2 ?? undefined) : prediction.tp2} good icon={<Target size={14}/>} />
+                <Level label="TP3 / runner" value={openPosition ? (openPosition.tp3 ?? undefined) : prediction.tp3} good icon={<Target size={14}/>} />
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-2">
