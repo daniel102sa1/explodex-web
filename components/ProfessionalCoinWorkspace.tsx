@@ -245,6 +245,9 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
   }, [safeSymbol]);
 
   const prediction = analysis?.prediction;
+  const fundamental = analysis?.fundamental_intelligence;
+  const catalyst = analysis?.catalyst_context;
+  const pumpState = analysis?.pump_state_machine;
   const patternOverlay = useMemo(() => topPatternOverlay(prediction), [prediction]);
   const price = Number(livePrice ?? analysis?.current_price ?? 0);
   const positionEntry = openPosition ? Number(openPosition.entry_price) : 0;
@@ -456,17 +459,17 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
                 <div className="rounded-2xl border border-emerald-500/15 bg-emerald-500/[.025] p-4">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2"><Sparkles size={16} className="text-emerald-300"/><h2 className="font-black text-white">Análisis fundamental / tokenomics</h2></div>
-                    <span className="rounded-full border border-emerald-500/20 px-2 py-0.5 text-[9px] font-black text-emerald-200">{analysis.fundamental_intelligence?.available ? "DATOS" : "SIN COBERTURA"}</span>
+                    <span className="rounded-full border border-emerald-500/20 px-2 py-0.5 text-[9px] font-black text-emerald-200">{fundamental?.available ? "DATOS" : "SIN COBERTURA"}</span>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    <Small label="Market cap" value={money(analysis.fundamental_intelligence?.market?.market_cap_usd)} />
-                    <Small label="FDV" value={money(analysis.fundamental_intelligence?.market?.fully_diluted_valuation_usd)} />
-                    <Small label="FDV / MCap" value={analysis.fundamental_intelligence?.tokenomics?.fdv_to_market_cap == null ? "—" : `${Number(analysis.fundamental_intelligence.tokenomics.fdv_to_market_cap).toFixed(2)}x`} />
-                    <Small label="Float circ./total" value={analysis.fundamental_intelligence?.tokenomics?.circulating_to_total_supply == null ? "—" : `${(Number(analysis.fundamental_intelligence.tokenomics.circulating_to_total_supply) * 100).toFixed(1)}%`} />
-                    <Small label="Volumen / MCap" value={analysis.fundamental_intelligence?.liquidity_proxy?.volume_to_market_cap_24h == null ? "—" : `${(Number(analysis.fundamental_intelligence.liquidity_proxy.volume_to_market_cap_24h) * 100).toFixed(1)}%`} />
-                    <Small label="Riesgo fundamental" value={analysis.fundamental_intelligence?.risk?.risk_score == null ? "—" : `${Number(analysis.fundamental_intelligence.risk.risk_score).toFixed(0)}/100`} />
+                    <Small label="Market cap" value={money(fundamental?.market?.market_cap_usd)} />
+                    <Small label="FDV" value={money(fundamental?.market?.fully_diluted_valuation_usd)} />
+                    <Small label="FDV / MCap" value={fundamental?.tokenomics?.fdv_to_market_cap == null ? "—" : `${Number(fundamental?.tokenomics?.fdv_to_market_cap).toFixed(2)}x`} />
+                    <Small label="Float circ./total" value={fundamental?.tokenomics?.circulating_to_total_supply == null ? "—" : `${(Number(fundamental?.tokenomics?.circulating_to_total_supply) * 100).toFixed(1)}%`} />
+                    <Small label="Volumen / MCap" value={fundamental?.liquidity_proxy?.volume_to_market_cap_24h == null ? "—" : `${(Number(fundamental?.liquidity_proxy?.volume_to_market_cap_24h) * 100).toFixed(1)}%`} />
+                    <Small label="Riesgo fundamental" value={fundamental?.risk?.risk_score == null ? "—" : `${Number(fundamental?.risk?.risk_score).toFixed(0)}/100`} />
                   </div>
-                  {!!analysis.fundamental_intelligence?.risk?.flags?.length && <div className="mt-3 flex flex-wrap gap-1.5">{analysis.fundamental_intelligence.risk.flags.slice(0,5).map((flag) => <span key={flag} className="rounded-full border border-amber-500/20 bg-amber-500/[.04] px-2 py-1 text-[9px] text-amber-200">{String(flag).replaceAll("_"," ")}</span>)}</div>}
+                  {!!fundamental?.risk?.flags?.length && <div className="mt-3 flex flex-wrap gap-1.5">{(fundamental?.risk?.flags ?? []).slice(0,5).map((flag) => <span key={flag} className="rounded-full border border-amber-500/20 bg-amber-500/[.04] px-2 py-1 text-[9px] text-amber-200">{String(flag).replaceAll("_"," ")}</span>)}</div>}
                   <p className="mt-3 text-[10px] leading-4 text-slate-500">Esta capa solo puede reducir riesgo en PAPER; no crea entradas ni aumenta apalancamiento.</p>
                 </div>
 
@@ -476,13 +479,13 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
                     <span className="rounded-full border border-violet-500/20 px-2 py-0.5 text-[9px] font-black text-violet-200">SHADOW</span>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
-                    <Small label="Fase" value={String(analysis.pump_state_machine?.state ?? "—").replaceAll("_"," ")} />
-                    <Small label="Score de fase" value={analysis.pump_state_machine?.state_score == null ? "—" : `${Number(analysis.pump_state_machine.state_score).toFixed(0)}/100`} />
-                    <Small label="Sesgo descriptivo" value={String(analysis.pump_state_machine?.dominant_direction ?? "—").replaceAll("_"," ")} />
-                    <Small label="Validación OOS" value={analysis.pump_state_machine?.validated_out_of_sample ? "VALIDADO" : "AÚN NO"} />
+                    <Small label="Fase" value={String(pumpState?.state ?? "—").replaceAll("_"," ")} />
+                    <Small label="Score de fase" value={pumpState?.state_score == null ? "—" : `${Number(pumpState?.state_score).toFixed(0)}/100`} />
+                    <Small label="Sesgo descriptivo" value={String(pumpState?.dominant_direction ?? "—").replaceAll("_"," ")} />
+                    <Small label="Validación OOS" value={pumpState?.validated_out_of_sample ? "VALIDADO" : "AÚN NO"} />
                   </div>
-                  <p className="mt-3 text-[11px] leading-5 text-slate-400">{analysis.pump_state_machine?.next_required_confirmation ?? "Esperando datos suficientes."}</p>
-                  {!!analysis.pump_state_machine?.evidence?.length && <div className="mt-2 flex flex-wrap gap-1.5">{analysis.pump_state_machine.evidence.slice(0,5).map((item) => <span key={item} className="rounded-full border border-violet-500/20 px-2 py-1 text-[9px] text-violet-200">{String(item).replaceAll("_"," ")}</span>)}</div>}
+                  <p className="mt-3 text-[11px] leading-5 text-slate-400">{pumpState?.next_required_confirmation ?? "Esperando datos suficientes."}</p>
+                  {!!pumpState?.evidence?.length && <div className="mt-2 flex flex-wrap gap-1.5">{(pumpState?.evidence ?? []).slice(0,5).map((item) => <span key={item} className="rounded-full border border-violet-500/20 px-2 py-1 text-[9px] text-violet-200">{String(item).replaceAll("_"," ")}</span>)}</div>}
                 </div>
 
                 <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/[.02] p-4">
@@ -501,20 +504,20 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
                 <div className="rounded-2xl border border-amber-500/15 bg-amber-500/[.02] p-4">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2"><RadioTower size={16} className="text-amber-300"/><h2 className="font-black text-white">Catalizadores</h2></div>
-                    <span className="text-[9px] font-black text-slate-500">{analysis.catalyst_context?.sentiment ?? "N/D"}</span>
+                    <span className="text-[9px] font-black text-slate-500">{catalyst?.sentiment ?? "N/D"}</span>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
-                    <Small label="Eventos detectados" value={String(analysis.catalyst_context?.catalyst_summary?.detected_events ?? 0)} />
-                    <Small label="Alta magnitud" value={String(analysis.catalyst_context?.catalyst_summary?.high_magnitude_events ?? 0)} />
+                    <Small label="Eventos detectados" value={String(catalyst?.catalyst_summary?.detected_events ?? 0)} />
+                    <Small label="Alta magnitud" value={String(catalyst?.catalyst_summary?.high_magnitude_events ?? 0)} />
                   </div>
                   <div className="mt-3 space-y-2">
-                    {(analysis.catalyst_context?.structured_events ?? []).slice(0,3).map((event, index) => <div key={`${event.event_type}-${index}`} className="rounded-xl border border-slate-800 bg-slate-950/45 p-2.5">
+                    {(catalyst?.structured_events ?? []).slice(0,3).map((event, index) => <div key={`${event.event_type}-${index}`} className="rounded-xl border border-slate-800 bg-slate-950/45 p-2.5">
                       <div className="flex items-center justify-between gap-2"><span className="text-[9px] font-black text-amber-200">{String(event.event_type ?? "EVENTO").replaceAll("_"," ")}</span><span className="text-[8px] text-slate-600">{event.estimated_magnitude ?? ""}</span></div>
                       <div className="mt-1 line-clamp-2 text-[10px] leading-4 text-slate-400">{event.title ?? "—"}</div>
                     </div>)}
-                    {!(analysis.catalyst_context?.structured_events ?? []).length && <div className="text-[10px] text-slate-600">Sin catalizador estructurado detectado en titulares recientes.</div>}
+                    {!(catalyst?.structured_events ?? []).length && <div className="text-[10px] text-slate-600">Sin catalizador estructurado detectado en titulares recientes.</div>}
                   </div>
-                  {analysis.catalyst_context?.catalyst_summary?.requires_primary_source_verification && <p className="mt-3 text-[10px] text-amber-200">Requiere verificar fuente primaria/oficial antes de considerarlo catalizador confirmado.</p>}
+                  {catalyst?.catalyst_summary?.requires_primary_source_verification && <p className="mt-3 text-[10px] text-amber-200">Requiere verificar fuente primaria/oficial antes de considerarlo catalizador confirmado.</p>}
                 </div>
               </section>
             </div>
