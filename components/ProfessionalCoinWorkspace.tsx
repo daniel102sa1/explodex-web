@@ -489,6 +489,32 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
                   {!!pumpState?.evidence?.length && <div className="mt-2 flex flex-wrap gap-1.5">{(pumpState?.evidence ?? []).slice(0,5).map((item) => <span key={item} className="rounded-full border border-violet-500/20 px-2 py-1 text-[9px] text-violet-200">{String(item).replaceAll("_"," ")}</span>)}</div>}
                 </div>
 
+                <div className="rounded-2xl border border-blue-500/15 bg-blue-500/[.025] p-4 lg:col-span-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2"><Network size={16} className="text-blue-300"/><h2 className="font-black text-white">Historical Market Brain · análogos</h2></div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full border border-blue-500/20 px-2 py-0.5 text-[9px] font-black text-blue-200">{historical?.status ?? "CALIBRANDO"}</span>
+                      <span className="rounded-full border border-slate-700 px-2 py-0.5 text-[9px] font-black text-slate-400">SHADOW</span>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <Small label="Casos comparables" value={String(historical?.sample ?? 0)} />
+                    <Small label="Mejor similitud" value={historical?.top_similarity == null ? "—" : Number(historical.top_similarity).toFixed(1) + "/100"} />
+                    <Small label="Mediana similitud" value={historical?.median_similarity == null ? "—" : Number(historical.median_similarity).toFixed(1) + "/100"} />
+                    <Small label="Validación OOS" value={String(historical?.out_of_sample?.status ?? "LEARNING").replaceAll("_"," ")} />
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                    <HistoricalHorizonCard label="15m" row={historical?.horizons?.["15m"]} />
+                    <HistoricalHorizonCard label="1h" row={historical?.horizons?.["1h"]} />
+                    <HistoricalHorizonCard label="4h" row={historical?.horizons?.["4h"]} />
+                    <HistoricalHorizonCard label="24h" row={historical?.horizons?.["24h"]} />
+                  </div>
+                  {!!historical?.top_analogs?.length && <div className="mt-3 flex flex-wrap gap-1.5">
+                    {(historical.top_analogs ?? []).slice(0,6).map((item, index) => <span key={String(item.symbol) + String(item.observed_at) + index} className="rounded-full border border-blue-500/15 bg-blue-500/[.035] px-2 py-1 text-[9px] text-blue-200">{String(item.symbol ?? "?") + " · " + (item.similarity == null ? "—" : Number(item.similarity).toFixed(0) + "%") + (item.pattern_name ? " · " + String(item.pattern_name).replaceAll("_"," ") : "")}</span>)}
+                  </div>}
+                  <p className="mt-3 text-[10px] leading-4 text-slate-500">Replay point-in-time: las features usan solo información disponible en ese momento. “1.5ATR antes 1ATR” es una barrera histórica genérica, no la probabilidad del TP/SL actual. Esta capa no puede abrir operaciones ni aumentar leverage.</p>
+                </div>
+
                 <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/[.02] p-4">
                   <div className="flex items-center gap-2"><Waves size={16} className="text-cyan-300"/><h2 className="font-black text-white">Microestructura multicapas</h2></div>
                   <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
