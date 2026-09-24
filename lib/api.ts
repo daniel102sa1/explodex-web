@@ -277,6 +277,86 @@ export type PreMovePrediction = {
   message?: string;
 };
 
+export type FundamentalIntelligence = {
+  version?: string;
+  available?: boolean;
+  source?: string;
+  paper_only?: boolean;
+  shadow_only?: boolean;
+  asset?: {
+    id?: string;
+    name?: string;
+    market_cap_rank?: number | null;
+  };
+  market?: {
+    market_cap_usd?: number;
+    fully_diluted_valuation_usd?: number;
+    volume_24h_usd?: number;
+    high_24h?: number;
+    low_24h?: number;
+    price_change_1h_pct?: number | null;
+    price_change_24h_pct?: number | null;
+    price_change_7d_pct?: number | null;
+  };
+  tokenomics?: {
+    circulating_supply?: number | null;
+    total_supply?: number | null;
+    max_supply?: number | null;
+    fdv_to_market_cap?: number | null;
+    circulating_to_total_supply?: number | null;
+    circulating_to_max_supply?: number | null;
+  };
+  liquidity_proxy?: {
+    volume_to_market_cap_24h?: number | null;
+    note?: string;
+  };
+  risk?: {
+    risk_score?: number | null;
+    state?: string;
+    risk_multiplier_cap?: number;
+    flags?: string[];
+  };
+  missing_layers?: string[];
+  error?: string;
+};
+
+export type CatalystContext = {
+  enabled?: boolean;
+  sentiment?: string;
+  raw_sentiment_score?: number;
+  structured_events?: Array<{
+    title?: string;
+    published?: string;
+    source?: string;
+    event_type?: string;
+    direction_hint?: string;
+    estimated_magnitude?: string;
+    official_source_verified?: boolean;
+    requires_primary_source_verification?: boolean;
+  }>;
+  catalyst_summary?: {
+    detected_events?: number;
+    high_magnitude_events?: number;
+    requires_primary_source_verification?: boolean;
+    can_create_entry?: boolean;
+  };
+  analysis_method?: string;
+};
+
+export type PumpStateMachine = {
+  version?: string;
+  state?: string;
+  state_score?: number;
+  dominant_direction?: string;
+  evidence?: string[];
+  all_scores?: Record<string, number>;
+  next_required_confirmation?: string;
+  paper_only?: boolean;
+  shadow_only?: boolean;
+  validated_out_of_sample?: boolean;
+  can_create_entry?: boolean;
+};
+
 export type LiveAnalysis = {
   symbol: string;
   source: string;
@@ -284,6 +364,9 @@ export type LiveAnalysis = {
   data_quality: "FULL" | "TRADE_GRADE" | "LIMITED";
   availability: Record<string, boolean>;
   coinglass?: CoinGlassEnrichment;
+  fundamental_intelligence?: FundamentalIntelligence;
+  catalyst_context?: CatalystContext;
+  pump_state_machine?: PumpStateMachine;
   prediction?: PreMovePrediction;
   current_open_interest: number;
   direction: "LONG" | "SHORT";
@@ -390,6 +473,10 @@ export async function getAlerts(): Promise<AlertItem[]> {
 
 export async function getNews(symbol: string): Promise<Record<string, any>> {
   return api<Record<string, any>>(`/api/v1/news/${encodeURIComponent(symbol)}`);
+}
+
+export async function getFundamentals(symbol: string): Promise<FundamentalIntelligence> {
+  return api<FundamentalIntelligence>(`/api/v1/fundamentals/${encodeURIComponent(symbol)}`);
 }
 
 export async function getPrice(symbol: string): Promise<{ symbol: string; price: string; source?: string }> {
