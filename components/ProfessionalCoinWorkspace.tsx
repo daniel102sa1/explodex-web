@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import LiveCandleChart from "@/components/LiveCandleChart";
 import PatternVision, { topPatternOverlay } from "@/components/PatternVision";
-import { getCanonicalPaperSummary, getLiveAnalysis, type CanonicalPaperPosition, type LiveAnalysis, type PreMovePrediction } from "@/lib/api";
+import { getCanonicalPaperSummary, getLiveAnalysis, type CanonicalPaperPosition, type HistoricalAnalogHorizon, type LiveAnalysis, type PreMovePrediction } from "@/lib/api";
 
 function fmt(value?: number | null) {
   if (value == null || !Number.isFinite(Number(value))) return "—";
@@ -607,6 +607,21 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
       {analysis?.provider_warning && <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[.05] p-3 text-xs text-amber-100"><AlertTriangle size={14} className="mr-2 inline"/>Proveedor principal limitado; el sistema usa fallback y marca las métricas faltantes en vez de inventarlas.</div>}
     </main>
   );
+}
+
+function HistoricalHorizonCard({ label, row }: { label: string; row?: HistoricalAnalogHorizon }) {
+  const signed = Number(row?.median_signed_return_pct ?? 0);
+  const mae = row?.median_adverse_excursion_pct == null ? "—" : "-" + Number(row.median_adverse_excursion_pct).toFixed(2) + "%";
+  return <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-3">
+    <div className="flex items-center justify-between gap-2"><span className="text-[10px] font-black uppercase tracking-[.1em] text-blue-200">{label}</span><span className="text-[9px] text-slate-600">n={row?.sample ?? 0}</span></div>
+    <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[10px]">
+      <span className="text-slate-500">Cierre a favor</span><span className="text-right font-black text-slate-200">{row?.positive_close_rate_pct == null ? "—" : Number(row.positive_close_rate_pct).toFixed(1) + "%"}</span>
+      <span className="text-slate-500">Ret. mediana</span><span className={"text-right font-black " + (signed >= 0 ? "text-emerald-300" : "text-rose-300")}>{row?.median_signed_return_pct == null ? "—" : pct(Number(row.median_signed_return_pct))}</span>
+      <span className="text-slate-500">MFE mediana</span><span className="text-right font-black text-emerald-300">{row?.median_favorable_excursion_pct == null ? "—" : pct(Number(row.median_favorable_excursion_pct))}</span>
+      <span className="text-slate-500">MAE mediana</span><span className="text-right font-black text-rose-300">{mae}</span>
+      <span className="text-slate-500">1.5ATR antes 1ATR</span><span className="text-right font-black text-cyan-300">{row?.generic_1p5atr_before_1atr_rate_pct == null ? "—" : Number(row.generic_1p5atr_before_1atr_rate_pct).toFixed(1) + "%"}</span>
+    </div>
+  </div>;
 }
 
 function Metric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) { return <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-3"><div className="text-[10px] font-bold uppercase tracking-[.13em] text-slate-500">{label}</div><div className={`mt-1 text-lg font-black ${accent ? "text-cyan-300" : "text-white"}`}>{value}</div></div>; }
