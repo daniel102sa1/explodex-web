@@ -248,6 +248,7 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
   const fundamental = analysis?.fundamental_intelligence;
   const catalyst = analysis?.catalyst_context;
   const pumpState = analysis?.pump_state_machine;
+  const historical = analysis?.historical_analog;
   const patternOverlay = useMemo(() => topPatternOverlay(prediction), [prediction]);
   const price = Number(livePrice ?? analysis?.current_price ?? 0);
   const positionEntry = openPosition ? Number(openPosition.entry_price) : 0;
