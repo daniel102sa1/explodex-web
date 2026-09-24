@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import LiveCandleChart from "@/components/LiveCandleChart";
 import PatternVision, { topPatternOverlay } from "@/components/PatternVision";
-import { getCanonicalPaperSummary, getLiveAnalysis, type CanonicalPaperPosition, type LiveAnalysis, type PreMovePrediction } from "@/lib/api";
+import { getCanonicalPaperSummary, getLiveAnalysis, type CanonicalPaperPosition, type HistoricalAnalogHorizon, type LiveAnalysis, type PreMovePrediction } from "@/lib/api";
 
 function fmt(value?: number | null) {
   if (value == null || !Number.isFinite(Number(value))) return "—";
@@ -248,6 +248,7 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
   const fundamental = analysis?.fundamental_intelligence;
   const catalyst = analysis?.catalyst_context;
   const pumpState = analysis?.pump_state_machine;
+  const historical = analysis?.historical_analog;
   const patternOverlay = useMemo(() => topPatternOverlay(prediction), [prediction]);
   const price = Number(livePrice ?? analysis?.current_price ?? 0);
   const positionEntry = openPosition ? Number(openPosition.entry_price) : 0;
@@ -488,6 +489,32 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
                   {!!pumpState?.evidence?.length && <div className="mt-2 flex flex-wrap gap-1.5">{(pumpState?.evidence ?? []).slice(0,5).map((item) => <span key={item} className="rounded-full border border-violet-500/20 px-2 py-1 text-[9px] text-violet-200">{String(item).replaceAll("_"," ")}</span>)}</div>}
                 </div>
 
+                <div className="rounded-2xl border border-blue-500/15 bg-blue-500/[.025] p-4 lg:col-span-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2"><Network size={16} className="text-blue-300"/><h2 className="font-black text-white">Historical Market Brain · análogos</h2></div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full border border-blue-500/20 px-2 py-0.5 text-[9px] font-black text-blue-200">{historical?.status ?? "CALIBRANDO"}</span>
+                      <span className="rounded-full border border-slate-700 px-2 py-0.5 text-[9px] font-black text-slate-400">SHADOW</span>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <Small label="Casos comparables" value={String(historical?.sample ?? 0)} />
+                    <Small label="Mejor similitud" value={historical?.top_similarity == null ? "—" : Number(historical.top_similarity).toFixed(1) + "/100"} />
+                    <Small label="Mediana similitud" value={historical?.median_similarity == null ? "—" : Number(historical.median_similarity).toFixed(1) + "/100"} />
+                    <Small label="Validación OOS" value={String(historical?.out_of_sample?.status ?? "LEARNING").replaceAll("_"," ")} />
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                    <HistoricalHorizonCard label="15m" row={historical?.horizons?.["15m"]} />
+                    <HistoricalHorizonCard label="1h" row={historical?.horizons?.["1h"]} />
+                    <HistoricalHorizonCard label="4h" row={historical?.horizons?.["4h"]} />
+                    <HistoricalHorizonCard label="24h" row={historical?.horizons?.["24h"]} />
+                  </div>
+                  {!!historical?.top_analogs?.length && <div className="mt-3 flex flex-wrap gap-1.5">
+                    {(historical.top_analogs ?? []).slice(0,6).map((item, index) => <span key={String(item.symbol) + String(item.observed_at) + index} className="rounded-full border border-blue-500/15 bg-blue-500/[.035] px-2 py-1 text-[9px] text-blue-200">{String(item.symbol ?? "?") + " · " + (item.similarity == null ? "—" : Number(item.similarity).toFixed(0) + "%") + (item.pattern_name ? " · " + String(item.pattern_name).replaceAll("_"," ") : "")}</span>)}
+                  </div>}
+                  <p className="mt-3 text-[10px] leading-4 text-slate-500">Replay point-in-time: las features usan solo información disponible en ese momento. “1.5ATR antes 1ATR” es una barrera histórica genérica, no la probabilidad del TP/SL actual. Esta capa no puede abrir operaciones ni aumentar leverage.</p>
+                </div>
+
                 <div className="rounded-2xl border border-cyan-500/15 bg-cyan-500/[.02] p-4">
                   <div className="flex items-center gap-2"><Waves size={16} className="text-cyan-300"/><h2 className="font-black text-white">Microestructura multicapas</h2></div>
                   <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -606,6 +633,21 @@ export default function ProfessionalCoinWorkspace({ symbol }: { symbol: string }
       {analysis?.provider_warning && <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[.05] p-3 text-xs text-amber-100"><AlertTriangle size={14} className="mr-2 inline"/>Proveedor principal limitado; el sistema usa fallback y marca las métricas faltantes en vez de inventarlas.</div>}
     </main>
   );
+}
+
+function HistoricalHorizonCard({ label, row }: { label: string; row?: HistoricalAnalogHorizon }) {
+  const signed = Number(row?.median_signed_return_pct ?? 0);
+  const mae = row?.median_adverse_excursion_pct == null ? "—" : "-" + Number(row.median_adverse_excursion_pct).toFixed(2) + "%";
+  return <div className="rounded-xl border border-slate-800 bg-slate-950/45 p-3">
+    <div className="flex items-center justify-between gap-2"><span className="text-[10px] font-black uppercase tracking-[.1em] text-blue-200">{label}</span><span className="text-[9px] text-slate-600">n={row?.sample ?? 0}</span></div>
+    <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[10px]">
+      <span className="text-slate-500">Cierre a favor</span><span className="text-right font-black text-slate-200">{row?.positive_close_rate_pct == null ? "—" : Number(row.positive_close_rate_pct).toFixed(1) + "%"}</span>
+      <span className="text-slate-500">Ret. mediana</span><span className={"text-right font-black " + (signed >= 0 ? "text-emerald-300" : "text-rose-300")}>{row?.median_signed_return_pct == null ? "—" : pct(Number(row.median_signed_return_pct))}</span>
+      <span className="text-slate-500">MFE mediana</span><span className="text-right font-black text-emerald-300">{row?.median_favorable_excursion_pct == null ? "—" : pct(Number(row.median_favorable_excursion_pct))}</span>
+      <span className="text-slate-500">MAE mediana</span><span className="text-right font-black text-rose-300">{mae}</span>
+      <span className="text-slate-500">1.5ATR antes 1ATR</span><span className="text-right font-black text-cyan-300">{row?.generic_1p5atr_before_1atr_rate_pct == null ? "—" : Number(row.generic_1p5atr_before_1atr_rate_pct).toFixed(1) + "%"}</span>
+    </div>
+  </div>;
 }
 
 function Metric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) { return <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-3"><div className="text-[10px] font-bold uppercase tracking-[.13em] text-slate-500">{label}</div><div className={`mt-1 text-lg font-black ${accent ? "text-cyan-300" : "text-white"}`}>{value}</div></div>; }

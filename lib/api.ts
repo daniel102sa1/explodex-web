@@ -357,6 +357,63 @@ export type PumpStateMachine = {
   can_create_entry?: boolean;
 };
 
+export type HistoricalAnalogHorizon = {
+  sample?: number;
+  median_similarity?: number | null;
+  positive_close_rate_pct?: number | null;
+  median_signed_return_pct?: number | null;
+  mean_signed_return_pct?: number | null;
+  median_favorable_excursion_pct?: number | null;
+  median_adverse_excursion_pct?: number | null;
+  generic_1p5atr_before_1atr_rate_pct?: number | null;
+  generic_barrier_decided_sample?: number;
+  generic_barrier_ambiguous_sample?: number;
+};
+
+export type HistoricalAnalogContext = {
+  version?: string;
+  available?: boolean;
+  symbol?: string;
+  direction?: "LONG" | "SHORT" | string;
+  sample?: number;
+  minimum_sample?: number;
+  status?: string;
+  top_similarity?: number | null;
+  median_similarity?: number | null;
+  same_symbol_matches?: number;
+  cross_symbol_matches?: number;
+  horizons?: Record<string, HistoricalAnalogHorizon>;
+  out_of_sample?: {
+    status?: string;
+    split?: string;
+    sample?: number;
+    minimum?: number;
+    train?: HistoricalAnalogHorizon;
+    test?: HistoricalAnalogHorizon;
+    can_create_entry?: boolean;
+  };
+  top_analogs?: Array<{
+    symbol?: string;
+    observed_at?: string;
+    similarity?: number;
+    pattern_name?: string | null;
+    market_cycle?: string | null;
+    btc_regime?: string | null;
+  }>;
+  policy?: {
+    paper_only?: boolean;
+    shadow_only?: boolean;
+    point_in_time_features_only?: boolean;
+    can_create_entry?: boolean;
+    can_change_direction?: boolean;
+    can_raise_leverage?: boolean;
+    derivatives_history_included?: boolean | string;
+    score_is_probability?: boolean;
+  };
+  note?: string;
+  error?: string;
+};
+
 export type LiveAnalysis = {
   symbol: string;
   source: string;
@@ -367,6 +424,7 @@ export type LiveAnalysis = {
   fundamental_intelligence?: FundamentalIntelligence;
   catalyst_context?: CatalystContext;
   pump_state_machine?: PumpStateMachine;
+  historical_analog?: HistoricalAnalogContext;
   prediction?: PreMovePrediction;
   current_open_interest: number;
   direction: "LONG" | "SHORT";
