@@ -85,6 +85,49 @@ export type PaperTrade = {
   close_reason?: string | null;
 };
 
+
+export type CanonicalPaperPosition = {
+  id: number | string;
+  symbol: string;
+  side: "LONG" | "SHORT";
+  leverage: number;
+  entry_price: number;
+  mark_price: number;
+  mark_price_stale?: boolean;
+  stop_loss: number;
+  hard_stop?: number;
+  take_profit: number;
+  tp1?: number;
+  tp2?: number | null;
+  tp3?: number | null;
+  margin_used: number;
+  notional?: number;
+  quantity?: number;
+  risk_usdt?: number;
+  actual_stop_risk_usdt?: number;
+  unrealized_pnl: number;
+  opened_at: string;
+  strategy_mode?: string;
+  trade_profile?: string;
+  planned_horizon?: string;
+  max_hold_minutes?: number;
+  planned_max_leverage?: number;
+  stop_policy?: string;
+  leverage_policy?: Record<string, any>;
+};
+
+export type CanonicalPaperSummary = {
+  version?: string;
+  execution_version?: string;
+  display_scope?: string;
+  cash_balance: number;
+  equity: number;
+  unrealized_pnl: number;
+  realized_pnl?: number;
+  open_positions: CanonicalPaperPosition[];
+  unified_paper_diagnostics?: Record<string, any>;
+};
+
 export type CalibrationBucket = {
   score_bucket: string;
   closed_trades: number;
@@ -319,6 +362,11 @@ export async function getCoinGlass(symbol: string): Promise<CoinGlassEnrichment>
 
 export async function getPaperOpen(): Promise<PaperTrade[]> {
   return api<PaperTrade[]>("/api/v1/paper/open?limit=100");
+}
+
+
+export async function getCanonicalPaperSummary(scope: "arsenal" | "all" = "arsenal"): Promise<CanonicalPaperSummary> {
+  return api<CanonicalPaperSummary>(`/api/v1/paper-trading/summary?scope=${scope}`);
 }
 
 export async function getPaperHistory(): Promise<PaperTrade[]> {
