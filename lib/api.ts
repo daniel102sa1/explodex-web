@@ -477,7 +477,7 @@ type LiveAnalysisCacheEntry = {
   promise?: Promise<LiveAnalysis>;
 };
 
-const LIVE_ANALYSIS_CACHE_MS = 8_000;
+const LIVE_ANALYSIS_CACHE_MS = 12_000;
 const liveAnalysisCache = new Map<string, LiveAnalysisCacheEntry>();
 
 export async function getHealth(): Promise<HealthStatus> {
