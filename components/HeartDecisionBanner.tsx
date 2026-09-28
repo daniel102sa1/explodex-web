@@ -37,7 +37,7 @@ export default function HeartDecisionBanner({ symbol }: { symbol: string }) {
     async function load() {
       try {
         const [value, radar] = await Promise.all([
-          getLiveAnalysis(safeSymbol, true),
+          getLiveAnalysis(safeSymbol),
           BASE_URL
             ? fetch(`${BASE_URL}/api/v1/predictions/live?limit=100`, { cache: "no-store" }).then(r => r.ok ? r.json() : null).catch(() => null)
             : Promise.resolve(null),
@@ -53,7 +53,7 @@ export default function HeartDecisionBanner({ symbol }: { symbol: string }) {
       }
     }
     load();
-    const timer = setInterval(load, 8_000);
+    const timer = setInterval(load, 15_000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [safeSymbol]);
 
