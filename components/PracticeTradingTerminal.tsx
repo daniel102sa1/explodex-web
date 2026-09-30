@@ -42,8 +42,17 @@ type PracticePosition = {
   tp3?: number | null;
   margin_used: number;
   quantity: number;
+  initial_quantity?: number;
   notional: number;
   risk_usdt: number;
+  initial_risk_usdt?: number;
+  liquidation_price?: number | null;
+  liquidation_distance_pct?: number | null;
+  partial_realized_pnl?: number;
+  tp1_hit?: boolean;
+  tp2_hit?: boolean;
+  tp3_hit?: boolean;
+  moved_to_be?: boolean;
   unrealized_pnl: number;
   roi_on_margin_pct: number;
   timeframe?: string | null;
@@ -51,24 +60,52 @@ type PracticePosition = {
   opened_at?: string | null;
 };
 
+type PracticeOrder = {
+  id: number;
+  symbol: string;
+  side: Side;
+  order_type: "LIMIT";
+  status: "PENDING";
+  limit_price: number;
+  stop_loss: number;
+  take_profit: number;
+  tp2?: number | null;
+  tp3?: number | null;
+  leverage: number;
+  margin_used: number;
+  timeframe?: string | null;
+  pattern?: string | null;
+  created_at?: string | null;
+};
+
 type PracticeSummary = {
   starting_balance: number;
   cash_balance: number;
   reserved_margin: number;
+  pending_margin?: number;
   available_margin: number;
   unrealized_pnl: number;
   equity: number;
   realized_pnl: number;
   total_costs: number;
   open_positions: PracticePosition[];
+  pending_orders?: PracticeOrder[];
   closed_trades: number;
   winners: number;
   losers: number;
   win_rate_pct?: number | null;
+  performance?: {
+    expectancy_usdt?: number;
+    profit_factor?: number | null;
+    average_r?: number | null;
+    max_drawdown_pct?: number;
+  };
 };
 
 type OrderForm = {
   side: Side;
+  orderType: "MARKET" | "LIMIT";
+  limitPrice: string;
   margin: string;
   leverage: string;
   stop: string;
@@ -80,7 +117,7 @@ type OrderForm = {
 };
 
 const INTERVALS: Interval[] = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
-const INDICATORS = ["EMA20/50", "VWAP", "RSI", "MACD", "VOL", "BOLL", "SAR", "OBV"] as const;
+const INDICATORS = ["EMA20/50/200", "VWAP", "RSI", "MACD", "ATR", "VOL", "BOLL", "SAR", "OBV"] as const;
 type IndicatorName = typeof INDICATORS[number];
 
 const PATTERNS = [
@@ -163,7 +200,7 @@ export default function PracticeTradingTerminal() {
   const [interval, setIntervalValue] = useState<Interval>("5m");
   const [livePrice, setLivePrice] = useState(0);
   const [indicatorSet, setIndicatorSet] = useState<Set<IndicatorName>>(
-    new Set(["EMA20/50", "VWAP", "RSI", "VOL"])
+    new Set(["EMA20/50/200", "VWAP", "RSI", "ATR", "VOL"])
   );
   const [summary, setSummary] = useState<PracticeSummary | null>(null);
   const [history, setHistory] = useState<any[]>([]);
@@ -174,6 +211,8 @@ export default function PracticeTradingTerminal() {
   const [showOrder, setShowOrder] = useState(true);
   const [form, setForm] = useState<OrderForm>({
     side: "LONG",
+    orderType: "MARKET",
+    limitPrice: "",
     margin: "25",
     leverage: "3",
     stop: "",
@@ -198,11 +237,24 @@ export default function PracticeTradingTerminal() {
     } catch {}
   }, [sid]);
 
+  const syncPractice = useCallback(async () => {
+    if (!BASE_URL || !sid) return;
+    try {
+      await fetch(`${BASE_URL}/api/v1/practice/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid }),
+        cache: "no-store",
+      });
+    } catch {}
+    await loadPractice();
+  }, [sid, loadPractice]);
+
   useEffect(() => {
-    loadPractice();
-    const timer = window.setInterval(loadPractice, 5000);
+    syncPractice();
+    const timer = window.setInterval(syncPractice, 3500);
     return () => window.clearInterval(timer);
-  }, [loadPractice]);
+  }, [syncPractice]);
 
   useEffect(() => {
     let disposed = false;
@@ -233,6 +285,117 @@ export default function PracticeTradingTerminal() {
               };
             }
             return output;
+          },
+        } as any);
+      } catch {}
+
+      try {
+        kc.registerIndicator({
+          name: "EXPLODEX_ATR",
+          shortName: "ATR14",
+          series: "normal",
+          calcParams: [14],
+          figures: [{ key: "atr", title: "ATR: ", type: "line" }],
+          calc: (rows: any[], indicator: any) => {
+            const period = Number(indicator?.calcParams?.[0] || 14);
+            const output: Record<number, { atr: number }> = {};
+            let previousClose = 0;
+            let atr = 0;
+            rows.forEach((row: any, index: number) => {
+              const high = Number(row.high || 0);
+              const low = Number(row.low || 0);
+              const close = Number(row.close || 0);
+              const tr = index === 0
+                ? high - low
+                : Math.max(high - low, Math.abs(high - previousClose), Math.abs(low - previousClose));
+              atr = index === 0 ? tr : index < period ? (atr * index + tr) / (index + 1) : (atr * (period - 1) + tr) / period;
+              output[Number(row.timestamp)] = { atr };
+              previousClose = close;
+            });
+            return output;
+          },
+        } as any);
+      } catch {}
+
+      const registerPositionOverlay = (name: string, label: string) => {
+        try {
+          kc.registerOverlay({
+            name,
+            totalStep: 4,
+            needDefaultPointFigure: true,
+            needDefaultXAxisFigure: true,
+            needDefaultYAxisFigure: true,
+            mode: "weak_magnet",
+            modeSensitivity: 8,
+            createPointFigures: ({ coordinates, overlay }: any) => {
+              if (!Array.isArray(coordinates) || coordinates.length < 3) return [];
+              const points = overlay?.points || [];
+              const entry = Number(points?.[0]?.value || 0);
+              const stop = Number(points?.[1]?.value || 0);
+              const target = Number(points?.[2]?.value || 0);
+              const risk = Math.abs(entry - stop);
+              const reward = Math.abs(target - entry);
+              const rr = risk > 0 ? reward / risk : 0;
+              const x1 = Math.min(coordinates[0].x, coordinates[2].x);
+              const x2 = Math.max(coordinates[0].x, coordinates[2].x);
+              return [
+                { type: "line", attrs: { coordinates: [{ x: x1, y: coordinates[0].y }, { x: x2, y: coordinates[0].y }] }, styles: { color: "#22d3ee", size: 1.5 } },
+                { type: "line", attrs: { coordinates: [{ x: x1, y: coordinates[1].y }, { x: x2, y: coordinates[1].y }] }, styles: { color: "#fb7185", size: 1.5 } },
+                { type: "line", attrs: { coordinates: [{ x: x1, y: coordinates[2].y }, { x: x2, y: coordinates[2].y }] }, styles: { color: "#34d399", size: 1.5 } },
+                { type: "text", attrs: { x: x1 + 6, y: coordinates[0].y - 7, text: `${label} · R:R 1:${rr.toFixed(2)}` }, styles: { color: "#e2e8f0", size: 11 } },
+              ];
+            },
+          } as any);
+        } catch {}
+      };
+      registerPositionOverlay("EXPLODEX_LONG_POSITION", "LONG");
+      registerPositionOverlay("EXPLODEX_SHORT_POSITION", "SHORT");
+
+      const registerPolylinePattern = (name: string, label: string, totalStep: number) => {
+        try {
+          kc.registerOverlay({
+            name,
+            totalStep,
+            needDefaultPointFigure: true,
+            needDefaultXAxisFigure: true,
+            needDefaultYAxisFigure: true,
+            mode: "weak_magnet",
+            modeSensitivity: 8,
+            createPointFigures: ({ coordinates }: any) => {
+              if (!Array.isArray(coordinates) || coordinates.length < 2) return [];
+              return [
+                { type: "line", attrs: { coordinates }, styles: { color: "#c084fc", size: 1.8 } },
+                { type: "text", attrs: { x: coordinates[0].x + 6, y: coordinates[0].y - 8, text: label }, styles: { color: "#e9d5ff", size: 11 } },
+              ];
+            },
+          } as any);
+        } catch {}
+      };
+      registerPolylinePattern("EXPLODEX_ABCD", "ABCD", 5);
+      registerPolylinePattern("EXPLODEX_XABCD", "XABCD / armónico", 6);
+      registerPolylinePattern("EXPLODEX_HCH", "HCH / neckline", 7);
+      registerPolylinePattern("EXPLODEX_ELLIOTT", "Elliott 1-2-3-4-5", 6);
+
+      try {
+        kc.registerOverlay({
+          name: "EXPLODEX_MEASURE",
+          totalStep: 3,
+          needDefaultPointFigure: true,
+          needDefaultXAxisFigure: true,
+          needDefaultYAxisFigure: true,
+          mode: "weak_magnet",
+          modeSensitivity: 8,
+          createPointFigures: ({ coordinates, overlay }: any) => {
+            if (!Array.isArray(coordinates) || coordinates.length < 2) return [];
+            const points = overlay?.points || [];
+            const a = Number(points?.[0]?.value || 0);
+            const b = Number(points?.[1]?.value || 0);
+            const pct = a ? ((b - a) / a) * 100 : 0;
+            const delta = b - a;
+            return [
+              { type: "line", attrs: { coordinates }, styles: { color: "#fbbf24", size: 1.5, style: "dashed" } },
+              { type: "text", attrs: { x: coordinates[1].x + 6, y: coordinates[1].y - 7, text: `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% · Δ ${fmt(delta)}` }, styles: { color: "#fde68a", size: 11 } },
+            ];
           },
         } as any);
       } catch {}
@@ -385,11 +548,11 @@ export default function PracticeTradingTerminal() {
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-    for (const name of ["EMA", "EXPLODEX_VWAP", "RSI", "MACD", "VOL", "BOLL", "SAR", "OBV"]) {
+    for (const name of ["EMA", "EXPLODEX_VWAP", "EXPLODEX_ATR", "RSI", "MACD", "VOL", "BOLL", "SAR", "OBV"]) {
       try { chart.removeIndicator({ name }); } catch {}
     }
-    if (indicatorSet.has("EMA20/50")) {
-      try { chart.createIndicator({ name: "EMA", paneId: "candle_pane", calcParams: [20, 50] }, true); } catch {}
+    if (indicatorSet.has("EMA20/50/200")) {
+      try { chart.createIndicator({ name: "EMA", paneId: "candle_pane", calcParams: [20, 50, 200] }, true); } catch {}
     }
     if (indicatorSet.has("VWAP")) {
       try { chart.createIndicator({ name: "EXPLODEX_VWAP", paneId: "candle_pane" }, true); } catch {}
@@ -408,6 +571,9 @@ export default function PracticeTradingTerminal() {
     }
     if (indicatorSet.has("MACD")) {
       try { chart.createIndicator({ name: "MACD", paneId: "macd_pane", calcParams: [12, 26, 9] }); } catch {}
+    }
+    if (indicatorSet.has("ATR")) {
+      try { chart.createIndicator({ name: "EXPLODEX_ATR", paneId: "atr_pane", calcParams: [14] }); } catch {}
     }
     if (indicatorSet.has("OBV")) {
       try { chart.createIndicator({ name: "OBV", paneId: "obv_pane" }); } catch {}
@@ -506,18 +672,29 @@ export default function PracticeTradingTerminal() {
     const margin = Number(form.margin || 0);
     const leverage = Number(form.leverage || 0);
     const stop = Number(form.stop || 0);
-    if (!(livePrice > 0 && margin > 0 && leverage > 0 && stop > 0)) return null;
+    const target = Number(form.tp1 || 0);
+    const entry = form.orderType === "LIMIT" ? Number(form.limitPrice || 0) : livePrice;
+    if (!(entry > 0 && margin > 0 && leverage > 0 && stop > 0)) return null;
     const notional = margin * leverage;
-    const qty = notional / livePrice;
-    const risk = Math.abs(livePrice - stop) * qty;
+    const qty = notional / entry;
+    const risk = Math.abs(entry - stop) * qty;
+    const reward = target > 0 ? Math.abs(target - entry) * qty : 0;
     const equity = Number(summary?.equity || 1000);
+    const maintenance = 0.005;
+    const liquidation = form.side === "LONG"
+      ? Math.max(0, entry * (1 - 1 / leverage + maintenance))
+      : entry * (1 + 1 / leverage - maintenance);
     return {
+      entry,
       notional,
       qty,
       risk,
+      reward,
+      rr: risk > 0 ? reward / risk : 0,
       riskPct: equity > 0 ? risk / equity * 100 : 0,
+      liquidation,
     };
-  }, [form.margin, form.leverage, form.stop, livePrice, summary?.equity]);
+  }, [form.margin, form.leverage, form.stop, form.tp1, form.orderType, form.limitPrice, form.side, livePrice, summary?.equity]);
 
   async function openTrade() {
     if (!BASE_URL || !sid) return;
@@ -531,6 +708,8 @@ export default function PracticeTradingTerminal() {
           session_id: sid,
           symbol,
           side: form.side,
+          order_type: form.orderType,
+          limit_price: form.orderType === "LIMIT" ? Number(form.limitPrice) : null,
           margin: Number(form.margin),
           leverage: Number(form.leverage),
           stop_loss: Number(form.stop),
@@ -544,13 +723,121 @@ export default function PracticeTradingTerminal() {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.detail || "No se pudo abrir");
-      const warning = Array.isArray(payload.warnings) && payload.warnings.length
-        ? " · Ojo: riesgo/apalancamiento alto para práctica."
-        : "";
-      setMessage(`Demo ${payload.side} abierta a ${fmt(payload.entry_price)}${warning}`);
-      await loadPractice();
+      if (payload.order_id) {
+        setMessage(`LIMIT ${payload.side} colocada a ${fmt(payload.limit_price)} · margen ficticio reservado.`);
+      } else {
+        const warning = Array.isArray(payload.warnings) && payload.warnings.length
+          ? " · Ojo: revisa riesgo, apalancamiento o liquidación."
+          : "";
+        setMessage(`Demo ${payload.side} abierta a ${fmt(payload.entry_price)}${warning}`);
+      }
+      await syncPractice();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo abrir la operación demo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function setExamplePlan() {
+    if (!(livePrice > 0)) return;
+    const entry = form.orderType === "LIMIT" && Number(form.limitPrice) > 0 ? Number(form.limitPrice) : livePrice;
+    const stopPct = 0.01;
+    const stop = form.side === "LONG" ? entry * (1 - stopPct) : entry * (1 + stopPct);
+    const risk = Math.abs(entry - stop);
+    const tp1 = form.side === "LONG" ? entry + risk * 1.5 : entry - risk * 1.5;
+    const tp2 = form.side === "LONG" ? entry + risk * 2.0 : entry - risk * 2.0;
+    const tp3 = form.side === "LONG" ? entry + risk * 3.0 : entry - risk * 3.0;
+    setForm((x) => ({
+      ...x,
+      stop: String(Number(stop.toPrecision(10))),
+      tp1: String(Number(tp1.toPrecision(10))),
+      tp2: String(Number(tp2.toPrecision(10))),
+      tp3: String(Number(tp3.toPrecision(10))),
+    }));
+  }
+
+  async function moveToBreakEven(id: number) {
+    if (!BASE_URL || !sid) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`${BASE_URL}/api/v1/practice/${id}/break-even`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.detail || "No se pudo mover a BE");
+      setMessage(`Stop movido a break-even: ${fmt(payload.stop_loss)}.`);
+      await syncPractice();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo mover a BE.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function partialClose(id: number, fraction: number) {
+    if (!BASE_URL || !sid) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`${BASE_URL}/api/v1/practice/${id}/partial-close`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid, fraction }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.detail || "No se pudo cerrar parcial");
+      setMessage(`Cierre parcial ${Math.round(fraction * 100)}% · PnL neto ${money(payload.net_pnl)}.`);
+      await syncPractice();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo cerrar parcial.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyFormLevels(id: number) {
+    if (!BASE_URL || !sid) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`${BASE_URL}/api/v1/practice/${id}/modify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sid,
+          stop_loss: form.stop ? Number(form.stop) : null,
+          take_profit: form.tp1 ? Number(form.tp1) : null,
+          tp2: form.tp2 ? Number(form.tp2) : null,
+          tp3: form.tp3 ? Number(form.tp3) : null,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.detail || "No se pudieron actualizar niveles");
+      setMessage("SL/TP de la posición actualizados desde el formulario.");
+      await syncPractice();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudieron actualizar niveles.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelOrder(id: number) {
+    if (!BASE_URL || !sid) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`${BASE_URL}/api/v1/practice/orders/${id}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.detail || "No se pudo cancelar");
+      setMessage("Orden LIMIT demo cancelada.");
+      await syncPractice();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo cancelar la orden.");
     } finally {
       setBusy(false);
     }
@@ -641,11 +928,21 @@ export default function PracticeTradingTerminal() {
 
         <div className="grid border-b border-slate-800 lg:grid-cols-[auto_1fr]">
           <div className="flex flex-wrap gap-1 border-b border-slate-800 p-2 lg:max-w-[220px] lg:flex-col lg:border-b-0 lg:border-r">
-            <Tool icon={<LineChart size={14}/>} label="Línea" onClick={() => draw("segment")}/>
+            <Tool icon={<LineChart size={14}/>} label="Línea / swing" onClick={() => draw("segment")}/>
+            <Tool icon={<LineChart size={14}/>} label="Rayo de tendencia" onClick={() => draw("rayLine")}/>
             <Tool icon={<Minus size={14}/>} label="Soporte / resistencia" onClick={() => draw("horizontalStraightLine")}/>
             <Tool icon={<Triangle size={14}/>} label="Triángulo (2 líneas)" onClick={drawTriangle}/>
-            <Tool icon={<Activity size={14}/>} label="Fibonacci" onClick={() => draw("fibonacciLine")}/>
+            <Tool icon={<Activity size={14}/>} label="Fibonacci retroceso" onClick={() => draw("fibonacciLine")}/>
             <Tool icon={<Layers3 size={14}/>} label="Canal paralelo" onClick={() => draw("parallelStraightLine")}/>
+            <Tool icon={<Layers3 size={14}/>} label="Canal de precio" onClick={() => draw("priceChannelLine")}/>
+            <Tool icon={<Target size={14}/>} label="Medir % / recorrido" onClick={() => draw("EXPLODEX_MEASURE")}/>
+            <Tool icon={<TrendingUp size={14}/>} label="Long Position visual" onClick={() => draw("EXPLODEX_LONG_POSITION")}/>
+            <Tool icon={<TrendingDown size={14}/>} label="Short Position visual" onClick={() => draw("EXPLODEX_SHORT_POSITION")}/>
+            <div className="my-1 border-t border-slate-800"/>
+            <Tool icon={<Activity size={14}/>} label="Patrón ABCD" onClick={() => draw("EXPLODEX_ABCD")}/>
+            <Tool icon={<Activity size={14}/>} label="XABCD / armónico" onClick={() => draw("EXPLODEX_XABCD")}/>
+            <Tool icon={<Activity size={14}/>} label="HCH / neckline" onClick={() => draw("EXPLODEX_HCH")}/>
+            <Tool icon={<Activity size={14}/>} label="Elliott 1-2-3-4-5" onClick={() => draw("EXPLODEX_ELLIOTT")}/>
             <Tool icon={<Brush size={14}/>} label="Dibujo libre" onClick={() => draw("brush")}/>
             <div className="my-1 border-t border-slate-800"/>
             <Tool icon={<Save size={14}/>} label="Guardar dibujos" onClick={saveDrawings}/>
@@ -673,9 +970,12 @@ export default function PracticeTradingTerminal() {
 
       <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_390px]">
         <div className="grid gap-3 md:grid-cols-3">
-          <Stat title="Cuenta ficticia" value={money(summary?.equity ?? 1000)} detail={`Cash ${money(summary?.cash_balance ?? 1000)}`} icon={<CircleDollarSign size={17}/>}/>
-          <Stat title="Margen disponible" value={money(summary?.available_margin ?? 1000)} detail={`Reservado ${money(summary?.reserved_margin ?? 0)}`} icon={<Gauge size={17}/>}/>
+          <Stat title="Cuenta ficticia" value={money(summary?.equity ?? 1000)} detail={`Cash ${money(summary?.cash_balance ?? 1000)} · PnL abierto ${money(summary?.unrealized_pnl ?? 0)}`} icon={<CircleDollarSign size={17}/>}/>
+          <Stat title="Margen disponible" value={money(summary?.available_margin ?? 1000)} detail={`Posiciones ${money(summary?.reserved_margin ?? 0)} · LIMIT ${money(summary?.pending_margin ?? 0)}`} icon={<Gauge size={17}/>}/>
           <Stat title="Resultado demo" value={money(summary?.realized_pnl ?? 0)} detail={`${summary?.closed_trades ?? 0} cerradas · WR ${summary?.win_rate_pct == null ? "—" : `${summary.win_rate_pct}%`}`} icon={<BarChart3 size={17}/>}/>
+          <Stat title="Expectativa" value={money(summary?.performance?.expectancy_usdt ?? 0)} detail="Promedio neto por trade cerrado" icon={<Activity size={17}/>}/>
+          <Stat title="Profit factor / R" value={summary?.performance?.profit_factor == null ? "—" : summary.performance.profit_factor.toFixed(2)} detail={`R medio ${summary?.performance?.average_r == null ? "—" : summary.performance.average_r.toFixed(2)}`} icon={<Target size={17}/>}/>
+          <Stat title="Drawdown máx." value={`${Number(summary?.performance?.max_drawdown_pct ?? 0).toFixed(2)}%`} detail="Desde el máximo de equity de práctica" icon={<TrendingDown size={17}/>}/>
 
           <div className="terminal-panel p-4 md:col-span-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -721,10 +1021,25 @@ export default function PracticeTradingTerminal() {
                     <Mini label="Ahora" value={fmt(p.mark_price)}/>
                     <Mini label="SL" value={fmt(p.stop_loss)} bad/>
                     <Mini label="TP1" value={fmt(p.take_profit)} good/>
+                    <Mini label="TP2" value={fmt(p.tp2)} good={Boolean(p.tp2)}/>
+                    <Mini label="TP3" value={fmt(p.tp3)} good={Boolean(p.tp3)}/>
+                    <Mini label="Liquidación*" value={fmt(p.liquidation_price)} bad/>
+                    <Mini label="Dist. liq." value={p.liquidation_distance_pct == null ? "—" : `${p.liquidation_distance_pct.toFixed(2)}%`} bad={Boolean(p.liquidation_distance_pct != null && p.liquidation_distance_pct < 5)}/>
                   </div>
-                  <button onClick={() => closeTrade(p.id)} disabled={busy} className="mt-3 w-full rounded-xl border border-slate-700 py-2 text-xs font-black text-slate-200 hover:border-rose-500/30 hover:text-rose-200">
-                    Cerrar al mercado (demo)
-                  </button>
+                  <div className="mt-2 flex flex-wrap gap-1.5 text-[9px]">
+                    {p.moved_to_be && <span className="rounded-md border border-cyan-400/20 bg-cyan-400/[.05] px-2 py-1 text-cyan-200">BE activo</span>}
+                    {p.tp1_hit && <span className="rounded-md border border-emerald-400/20 px-2 py-1 text-emerald-300">TP1 tocado</span>}
+                    {p.tp2_hit && <span className="rounded-md border border-emerald-400/20 px-2 py-1 text-emerald-300">TP2 tocado</span>}
+                    {p.partial_realized_pnl ? <span className="rounded-md border border-violet-400/20 px-2 py-1 text-violet-300">Parcial {money(p.partial_realized_pnl)}</span> : null}
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-5">
+                    <button onClick={() => moveToBreakEven(p.id)} disabled={busy || p.moved_to_be} className="rounded-lg border border-cyan-500/20 py-2 text-[10px] font-black text-cyan-200 disabled:opacity-35">Mover BE</button>
+                    <button onClick={() => partialClose(p.id, .25)} disabled={busy} className="rounded-lg border border-slate-700 py-2 text-[10px] font-black text-slate-300">Cerrar 25%</button>
+                    <button onClick={() => partialClose(p.id, .50)} disabled={busy} className="rounded-lg border border-slate-700 py-2 text-[10px] font-black text-slate-300">Cerrar 50%</button>
+                    <button onClick={() => applyFormLevels(p.id)} disabled={busy || !form.stop || !form.tp1} className="rounded-lg border border-violet-500/20 py-2 text-[10px] font-black text-violet-200">Aplicar SL/TP</button>
+                    <button onClick={() => closeTrade(p.id)} disabled={busy} className="rounded-lg border border-rose-500/25 py-2 text-[10px] font-black text-rose-200">Cerrar todo</button>
+                  </div>
+                  <div className="mt-2 text-[8px] leading-4 text-slate-700">*Liquidación = estimación educativa de margen aislado, no cálculo exacto de un exchange.</div>
                 </div>
               ))}
               {!summary?.open_positions?.length && <div className="col-span-full py-8 text-center text-xs text-slate-600">Todavía no has abierto ninguna operación de práctica.</div>}
@@ -732,22 +1047,52 @@ export default function PracticeTradingTerminal() {
           </div>
 
           <div className="terminal-panel p-4 md:col-span-3">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-sm font-black text-white">Órdenes LIMIT pendientes</div>
+              <div className="text-[10px] text-slate-600">{summary?.pending_orders?.length ?? 0} esperando precio</div>
+            </div>
+            <div className="grid gap-2 lg:grid-cols-2">
+              {(summary?.pending_orders ?? []).map((o) => (
+                <div key={o.id} className="rounded-2xl border border-slate-800 bg-slate-950/45 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className={`font-black ${o.side === "LONG" ? "text-emerald-300" : "text-rose-300"}`}>{o.side} {o.symbol} · {o.leverage}x</div>
+                      <div className="mt-1 text-[10px] text-slate-600">{o.pattern || "MANUAL"} · {o.timeframe || "—"}</div>
+                    </div>
+                    <button onClick={() => cancelOrder(o.id)} disabled={busy} className="rounded-lg border border-rose-500/20 px-2 py-1 text-[10px] font-bold text-rose-300">Cancelar</button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-4 gap-1">
+                    <Mini label="LIMIT" value={fmt(o.limit_price)}/>
+                    <Mini label="SL" value={fmt(o.stop_loss)} bad/>
+                    <Mini label="TP1" value={fmt(o.take_profit)} good/>
+                    <Mini label="Margen" value={money(o.margin_used)}/>
+                  </div>
+                </div>
+              ))}
+              {!summary?.pending_orders?.length && <div className="col-span-full py-5 text-center text-xs text-slate-600">No hay órdenes LIMIT pendientes.</div>}
+            </div>
+          </div>
+
+          <div className="terminal-panel p-4 md:col-span-3">
             <div className="text-sm font-black text-white">Últimas operaciones cerradas</div>
             <div className="mt-3 overflow-x-auto">
-              <table className="w-full min-w-[720px] text-xs">
+              <table className="w-full min-w-[1100px] text-xs">
                 <thead className="text-[9px] uppercase tracking-[.1em] text-slate-600">
-                  <tr><th className="py-2 text-left">Par</th><th>Tipo</th><th>Entrada</th><th>Salida</th><th>SL</th><th>TP</th><th>PnL neto</th><th>Motivo</th></tr>
+                  <tr><th className="py-2 text-left">Par</th><th>Setup</th><th>Tipo</th><th>Entrada</th><th>Salida</th><th>SL</th><th>TP</th><th>PnL neto</th><th>R</th><th>Costos</th><th>Motivo</th></tr>
                 </thead>
                 <tbody>
                   {history.slice(0, 12).map((row) => (
                     <tr key={row.id} className="border-t border-slate-900 text-center">
                       <td className="py-2 text-left font-black text-white">{row.symbol}</td>
+                      <td className="text-[10px] text-slate-500">{(row.pattern || "MANUAL").replaceAll("_"," ")} · {row.timeframe || "—"}</td>
                       <td className={row.side === "LONG" ? "text-emerald-300" : "text-rose-300"}>{row.side}</td>
                       <td>{fmt(row.entry_price)}</td>
                       <td>{fmt(row.exit_price)}</td>
                       <td className="text-rose-300">{fmt(row.stop_loss)}</td>
                       <td className="text-emerald-300">{fmt(row.take_profit)}</td>
                       <td className={Number(row.net_pnl) >= 0 ? "text-emerald-300" : "text-rose-300"}>{money(row.net_pnl)}</td>
+                      <td>{row.r_multiple == null ? "—" : Number(row.r_multiple).toFixed(2)+"R"}</td>
+                      <td className="text-slate-500">{money(Number(row.fees||0)+Number(row.slippage||0)+Number(row.funding_estimate||0))}</td>
                       <td className="text-slate-500">{row.close_reason}</td>
                     </tr>
                   ))}
@@ -777,14 +1122,25 @@ export default function PracticeTradingTerminal() {
               </button>
             </div>
 
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              {(["MARKET","LIMIT"] as const).map((kind) => (
+                <button key={kind} onClick={() => setForm((x) => ({ ...x, orderType: kind, limitPrice: kind === "MARKET" ? "" : (x.limitPrice || String(Number(livePrice.toPrecision(10)))) }))} className={`rounded-xl border px-3 py-2 text-xs font-black ${form.orderType === kind ? "border-cyan-500/30 bg-cyan-500/[.08] text-cyan-200" : "border-slate-800 text-slate-500"}`}>{kind}</button>
+              ))}
+            </div>
+
             <div className="mt-3 grid grid-cols-2 gap-2">
+              {form.orderType === "LIMIT" && <Input label="Precio LIMIT" value={form.limitPrice} onChange={(v) => setForm((x) => ({ ...x, limitPrice: v }))}/>}
               <Input label="Margen USDT" value={form.margin} onChange={(v) => setForm((x) => ({ ...x, margin: v }))}/>
-              <Input label="Apalancamiento" value={form.leverage} onChange={(v) => setForm((x) => ({ ...x, leverage: v }))}/>
+              <Input label="Apalancamiento (1–20x)" value={form.leverage} onChange={(v) => setForm((x) => ({ ...x, leverage: v }))}/>
               <Input label="Stop loss" value={form.stop} onChange={(v) => setForm((x) => ({ ...x, stop: v }))}/>
               <Input label="TP1" value={form.tp1} onChange={(v) => setForm((x) => ({ ...x, tp1: v }))}/>
               <Input label="TP2 (opcional)" value={form.tp2} onChange={(v) => setForm((x) => ({ ...x, tp2: v }))}/>
               <Input label="TP3 (opcional)" value={form.tp3} onChange={(v) => setForm((x) => ({ ...x, tp3: v }))}/>
             </div>
+
+            <button onClick={setExamplePlan} className="mt-2 w-full rounded-xl border border-violet-500/20 bg-violet-500/[.04] px-3 py-2 text-[10px] font-black text-violet-200">
+              Plantilla educativa: SL 1% · TP1 1.5R · TP2 2R · TP3 3R
+            </button>
 
             <label className="mt-3 block rounded-xl border border-slate-800 bg-slate-950/45 p-3">
               <span className="text-[9px] font-black uppercase tracking-[.1em] text-slate-600">Patrón / setup practicado</span>
@@ -794,24 +1150,28 @@ export default function PracticeTradingTerminal() {
             </label>
 
             <label className="mt-3 block rounded-xl border border-slate-800 bg-slate-950/45 p-3">
-              <span className="text-[9px] font-black uppercase tracking-[.1em] text-slate-600">Nota del ejercicio</span>
-              <textarea value={form.note} onChange={(e) => setForm((x) => ({ ...x, note: e.target.value }))} rows={2} className="mt-2 w-full resize-none bg-transparent text-xs text-white outline-none" placeholder="Ej. ruptura + retest confirmado; no perseguí la vela..."/>
+              <span className="text-[9px] font-black uppercase tracking-[.1em] text-slate-600">Diario / razón de entrada</span>
+              <textarea value={form.note} onChange={(e) => setForm((x) => ({ ...x, note: e.target.value }))} rows={3} className="mt-2 w-full resize-none bg-transparent text-xs text-white outline-none" placeholder="Ej. triángulo confirmado + retest + volumen; SL bajo swing; no perseguí la vela..."/>
             </label>
 
             <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
               <div className="grid grid-cols-2 gap-2">
-                <Mini label="Entrada" value={fmt(livePrice)}/>
+                <Mini label={form.orderType === "LIMIT" ? "Entrada LIMIT" : "Entrada mercado"} value={riskPreview ? fmt(riskPreview.entry) : fmt(livePrice)}/>
                 <Mini label="Notional" value={riskPreview ? money(riskPreview.notional) : "—"}/>
                 <Mini label="Riesgo al SL" value={riskPreview ? money(riskPreview.risk) : "—"} bad/>
                 <Mini label="% de equity" value={riskPreview ? `${riskPreview.riskPct.toFixed(3)}%` : "—"} bad={Boolean(riskPreview && riskPreview.riskPct > 0.5)}/>
+                <Mini label="R:R a TP1" value={riskPreview && riskPreview.rr > 0 ? `1:${riskPreview.rr.toFixed(2)}` : "—"} good={Boolean(riskPreview && riskPreview.rr >= 1.5)}/>
+                <Mini label="Liquidación aprox.*" value={riskPreview ? fmt(riskPreview.liquidation) : "—"} bad/>
               </div>
-              {riskPreview && riskPreview.riskPct > 0.5 && <div className="mt-2 text-[10px] font-bold text-amber-300">Para práctica de principiante estás superando 0.5% de riesgo por trade.</div>}
+              {riskPreview && riskPreview.riskPct > 0.5 && <div className="mt-2 text-[10px] font-bold text-amber-300">Para la práctica educativa estás superando 0.5% de riesgo de equity en este trade.</div>}
+              {riskPreview && riskPreview.rr > 0 && riskPreview.rr < 1 && <div className="mt-2 text-[10px] font-bold text-amber-300">Tu TP1 ofrece menos recompensa que el riesgo al SL.</div>}
+              <div className="mt-2 text-[8px] leading-4 text-slate-700">*Estimación educativa de liquidación para margen aislado; un exchange real usa reglas y mantenimiento propios.</div>
             </div>
 
-            <button onClick={openTrade} disabled={busy || !form.stop || !form.tp1} className={`mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3 font-black text-slate-950 disabled:opacity-40 ${form.side === "LONG" ? "bg-emerald-400" : "bg-rose-400"}`}>
-              <Play size={16}/> Abrir {form.side} ficticio
+            <button onClick={openTrade} disabled={busy || !form.stop || !form.tp1 || (form.orderType === "LIMIT" && !form.limitPrice)} className={`mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3 font-black text-slate-950 disabled:opacity-40 ${form.side === "LONG" ? "bg-emerald-400" : "bg-rose-400"}`}>
+              <Play size={16}/> {form.orderType === "LIMIT" ? `Colocar LIMIT ${form.side}` : `Abrir MARKET ${form.side}`} ficticio
             </button>
-            <div className="mt-2 text-center text-[9px] text-slate-600">Solo práctica. No envía órdenes a Binance ni usa dinero real.</div>
+            <div className="mt-2 text-center text-[9px] text-slate-600">100% práctica. No envía órdenes a Binance, no usa tu cuenta real ni dinero real.</div>
           </>}
         </aside>
       </section>
