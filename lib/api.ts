@@ -464,10 +464,17 @@ export type LiveAnalysis = {
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
 
-async function api<T>(path: string): Promise<T> {
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (!BASE_URL) throw new Error("NEXT_PUBLIC_API_BASE_URL no está configurada");
-  const response = await fetch(`${BASE_URL}${path}`, { cache: "no-store" });
-  if (!response.ok) throw new Error(`Backend ${response.status}: ${response.statusText}`);
+  const response = await fetch(`${BASE_URL}${path}`, { cache: "no-store", ...init });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const payload = await response.json();
+      detail = String(payload?.detail || detail);
+    } catch {}
+    throw new Error(`Backend ${response.status}: ${detail}`);
+  }
   return response.json() as Promise<T>;
 }
 
@@ -581,4 +588,64 @@ export async function getCandles(symbol: string, interval = "15m", limit = 96): 
   const safeSymbol = symbol.toUpperCase().endsWith("USDT") ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
   const payload = await api<{ candles: Candle[] }>(`/api/v1/market/candles/${encodeURIComponent(safeSymbol)}?interval=${encodeURIComponent(safeInterval)}&limit=${Math.max(20, Math.min(limit, 300))}`);
   return payload.candles ?? [];
+}
+
+
+export type ManualPracticePosition = {
+  id: number;
+  symbol: string;
+  side: "LONG" | "SHORT";
+  leverage: number;
+  entry_price: number;
+  mark_price: number;
+  stop_loss: number;
+  take_profit: number;
+  quantity: number;
+  notional: number;
+  margin_used: number;
+  risk_usdt: number;
+  unrealized_pnl: number;
+  opened_at: string;
+  note?: string | null;
+};
+
+export type ManualPracticeAccount = {
+  paper_only: true;
+  strategy_mode: "MANUAL_PRACTICE";
+  starting_balance: number;
+  cash_balance: number;
+  used_margin: number;
+  available_margin: number;
+  unrealized_pnl: number;
+  equity: number;
+  realized_pnl: number;
+  positions: ManualPracticePosition[];
+};
+
+export type ManualPracticeOpenInput = {
+  symbol: string;
+  side: "LONG" | "SHORT";
+  margin_usdt: number;
+  leverage: number;
+  stop_loss: number;
+  take_profit: number;
+  practice_note?: string;
+};
+
+export async function getManualPracticeAccount(): Promise<ManualPracticeAccount> {
+  return api<ManualPracticeAccount>("/api/v1/paper-trading/manual/account");
+}
+
+export async function openManualPracticePosition(input: ManualPracticeOpenInput): Promise<Record<string, any>> {
+  return api<Record<string, any>>("/api/v1/paper-trading/manual/open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function closeManualPracticePosition(positionId: number): Promise<Record<string, any>> {
+  return api<Record<string, any>>(`/api/v1/paper-trading/manual/close/${positionId}`, {
+    method: "POST",
+  });
 }

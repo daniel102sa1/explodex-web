@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Eye, EyeOff, GraduationCap, RadioTower, SlidersHorizontal, Sparkles, Target, Zap } from "lucide-react";
-import PriceChart, { type ChartPatternOverlay, type ChartPlan } from "@/components/PriceChart";
+import { type ChartPatternOverlay, type ChartPlan } from "@/components/PriceChart";
+import PracticePriceChart from "@/components/PracticePriceChart";
 import { getCandles, type Candle } from "@/lib/api";
 import { LOCKED_PLANS_EVENT, readLockedPlan } from "@/lib/lockedPlans";
 
@@ -448,7 +449,7 @@ export default function LiveCandleChart({ symbol, plan, livePrice, patternOverla
       </div>
 
       <div className="grid gap-3 p-3 xl:grid-cols-[minmax(0,1fr)_330px]">
-        <div><PriceChart candles={candles} plan={chartPlan} livePrice={effectiveLivePrice ?? undefined} pattern={patternOverlay} /></div>
+        <div><PracticePriceChart candles={candles} plan={chartPlan} livePrice={effectiveLivePrice ?? undefined} pattern={patternOverlay} symbol={symbol} /></div>
         <aside className="space-y-3">
           <div className={`rounded-2xl border p-4 ${toneClasses(guide.tone)}`}>
             <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.12em]"><Sparkles size={13}/> Lectura {interval.toUpperCase()}</div><div className="font-mono text-xs font-black">{guide.score}/100</div></div>
