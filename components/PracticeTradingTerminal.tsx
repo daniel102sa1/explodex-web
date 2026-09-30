@@ -1491,13 +1491,16 @@ export default function PracticeTradingTerminal() {
       </div>
 
       {/* Main trading desk */}
-      <div className="grid min-h-[680px] xl:grid-cols-[54px_minmax(0,1fr)_360px]">
+      <div className="grid min-h-[680px] xl:grid-cols-[64px_minmax(0,1fr)_360px]">
         {/* Compact drawing toolbar */}
-        <aside className="flex flex-row gap-1 overflow-x-auto border-b border-slate-800 bg-[#060d17] p-1.5 xl:flex-col xl:overflow-visible xl:border-b-0 xl:border-r">
-          <DeskTool icon={<LineChart size={16}/>} label="Línea / swing" onClick={() => draw("segment")}/>
-          <DeskTool icon={<TrendingUp size={16}/>} label="Rayo de tendencia" onClick={() => draw("rayLine")}/>
-          <DeskTool icon={<Minus size={16}/>} label="Soporte / resistencia" onClick={() => draw("horizontalStraightLine")}/>
-          <DeskTool icon={<Triangle size={16}/>} label="Triángulo" onClick={drawTriangle}/>
+        <aside className="flex flex-row gap-1 overflow-x-auto border-b border-slate-800 bg-[#060d17] p-2 xl:flex-col xl:items-center xl:overflow-visible xl:border-b-0 xl:border-r">
+          <DeskTool icon={<MousePointer2 size={17}/>} label="Cursor / mover gráfico" onClick={() => { setActiveTool(null); setMessage("Cursor activo: arrastra el gráfico, usa la rueda para zoom y selecciona una herramienta cuando quieras dibujar."); }} active={!activeTool}/>
+          <DeskTool icon={<Magnet size={17}/>} label={strongMagnet ? "Imán fuerte ON" : "Imán suave"} onClick={() => { setStrongMagnet(v => !v); setMessage(strongMagnet ? "Imán cambiado a suave." : "Imán fuerte activado: las herramientas buscarán máximos/mínimos de las velas."); }} active={strongMagnet}/>
+          <DeskSeparator/>
+          <DeskTool icon={<LineChart size={17}/>} label="Línea de tendencia" onClick={() => draw("segment")} active={activeTool === "Línea de tendencia"}/>
+          <DeskTool icon={<TrendingUp size={17}/>} label="Rayo de tendencia" onClick={() => draw("rayLine")} active={activeTool === "Rayo de tendencia"}/>
+          <DeskTool icon={<Minus size={17}/>} label="Soporte / resistencia" onClick={() => draw("horizontalStraightLine")} active={activeTool === "Soporte / resistencia"}/>
+          <DeskTool icon={<Triangle size={17}/>} label="Triángulo" onClick={drawTriangle} active={activeTool === "Triángulo · 2 directrices"}/>
           <DeskSeparator/>
           <DeskTool icon={<Activity size={16}/>} label="Fibonacci retroceso" onClick={() => draw("fibonacciLine")}/>
           <DeskTool icon={<Layers3 size={16}/>} label="Fibonacci extensión" onClick={() => draw("EXPLODEX_FIB_EXTENSION")}/>
@@ -1524,6 +1527,7 @@ export default function PracticeTradingTerminal() {
               <button
                 key={name}
                 onClick={() => toggleIndicator(name)}
+                title={name === "EMA20/50/200" ? INDICATOR_HELP.EMA : name === "RSI" ? INDICATOR_HELP.RSI : name === "MACD" ? INDICATOR_HELP.MACD : name === "VOL" ? INDICATOR_HELP.VOLUME : name === "ATR" ? INDICATOR_HELP.ATR : name === "BOLL" ? INDICATOR_HELP.BOLL : name}
                 className={`shrink-0 rounded-md border px-2 py-1 text-[9px] font-black transition ${
                   indicatorSet.has(name)
                     ? "border-violet-400/30 bg-violet-400/10 text-violet-200"
@@ -1533,13 +1537,17 @@ export default function PracticeTradingTerminal() {
                 {name}
               </button>
             ))}
-            <div className="ml-auto hidden items-center gap-1 text-[9px] text-slate-600 lg:flex">
-              <span className="rounded-md border border-slate-800 px-2 py-1">Rueda = zoom</span>
-              <span className="rounded-md border border-slate-800 px-2 py-1">Arrastra = mover</span>
+            <div className="ml-auto flex items-center gap-1 text-[9px]">
+              <button onClick={() => setShowExplain(v => !v)} className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 font-black ${showExplain ? "border-cyan-400/25 bg-cyan-400/[.06] text-cyan-200" : "border-slate-800 text-slate-600"}`}><HelpCircle size={11}/> Explicar</button>
+              <span className="hidden rounded-md border border-slate-800 px-2 py-1 text-slate-600 lg:inline">Rueda = zoom · arrastra = mover</span>
             </div>
           </div>
 
-          <MarketRadar insight={marketInsight} interval={interval} deepScan={deepScan} analyzing={analyzingAll} onAnalyze={analyzeEverything} onDraw={() => drawRadarPatterns(marketInsight)}/>
+          {activeTool && <div className="flex items-center justify-between gap-2 border-b border-cyan-400/15 bg-cyan-400/[.04] px-3 py-2 text-[10px] text-cyan-100"><span><b>{activeTool}</b> activa · {strongMagnet ? "imán fuerte" : "imán suave"} · marca los puntos directamente sobre las velas</span><button onClick={() => setActiveTool(null)} className="rounded-md border border-cyan-400/20 px-2 py-1 text-[9px] font-black">Cursor</button></div>}
+
+          <MarketRadar insight={marketInsight} interval={interval} deepScan={deepScan} analyzing={analyzingAll} onAnalyze={analyzeEverything} onDraw={() => precisionScan?.current ? drawPrecisionPattern(precisionScan.current) : drawRadarPatterns(marketInsight)}/>
+
+          <PrecisionAssistant scan={precisionScan} showExplain={showExplain} onDraw={() => drawPrecisionPattern(precisionScan?.current ?? null)} />
 
           <div className="relative">
             {!chartReady && (
@@ -1803,14 +1811,14 @@ function MarketRadar({ insight, interval, deepScan, analyzing, onAnalyze, onDraw
   );
 }
 
-function DeskTool({ icon, label, onClick, danger=false }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
+function DeskTool({ icon, label, onClick, danger=false, active=false }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean; active?: boolean }) {
   return (
     <button
       title={label}
       aria-label={label}
       onClick={onClick}
-      className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg border transition ${
-        danger
+      className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border transition ${active ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-200 shadow-sm shadow-cyan-500/10" :
+danger
           ? "border-rose-500/15 text-rose-400 hover:bg-rose-500/10"
           : "border-transparent text-slate-500 hover:border-cyan-400/20 hover:bg-cyan-400/[.06] hover:text-cyan-200"
       }`}
