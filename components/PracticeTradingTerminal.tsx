@@ -194,6 +194,11 @@ function periodFromInterval(interval: Interval) {
 
 
 type RadarBias = "ALCISTA" | "BAJISTA" | "ESPERAR";
+type AutoOverlay = {
+  label: string;
+  points: Array<{ timestamp: number; value: number }>;
+};
+
 type MarketInsight = {
   bias: RadarBias;
   score: number;
@@ -211,6 +216,16 @@ type MarketInsight = {
   ema200: number;
   triggerUp: number;
   triggerDown: number;
+  autoOverlays: AutoOverlay[];
+};
+
+type DeepScan = {
+  direction: "LONG" | "SHORT" | "ESPERAR";
+  weightedScore: number;
+  agreement: number;
+  total: number;
+  rows: Array<{ interval: Interval; insight: MarketInsight }>;
+  note: string;
 };
 
 function emaValues(values: number[], period: number) {
@@ -255,12 +270,12 @@ function slope(values: number[]) {
 }
 
 function swingPeaks(rows: any[]) {
-  const peaks: Array<{i:number;p:number}> = [];
-  const troughs: Array<{i:number;p:number}> = [];
+  const peaks: Array<{i:number;p:number;t:number}> = [];
+  const troughs: Array<{i:number;p:number;t:number}> = [];
   for (let i=2;i<rows.length-2;i++) {
     const h=Number(rows[i].high), l=Number(rows[i].low);
-    if (h>Number(rows[i-1].high)&&h>Number(rows[i-2].high)&&h>=Number(rows[i+1].high)&&h>=Number(rows[i+2].high)) peaks.push({i,p:h});
-    if (l<Number(rows[i-1].low)&&l<Number(rows[i-2].low)&&l<=Number(rows[i+1].low)&&l<=Number(rows[i+2].low)) troughs.push({i,p:l});
+    if (h>Number(rows[i-1].high)&&h>Number(rows[i-2].high)&&h>=Number(rows[i+1].high)&&h>=Number(rows[i+2].high)) peaks.push({i,p:h,t:Number(rows[i].timestamp ?? rows[i].time)});
+    if (l<Number(rows[i-1].low)&&l<Number(rows[i-2].low)&&l<=Number(rows[i+1].low)&&l<=Number(rows[i+2].low)) troughs.push({i,p:l,t:Number(rows[i].timestamp ?? rows[i].time)});
   }
   return {peaks,troughs};
 }
@@ -290,29 +305,60 @@ function analyzeMarket(rows: any[], interval: Interval): MarketInsight | null {
   const lowerEnd=Math.min(...recent.slice(half).map(r=>Number(r.low)));
   const tolerance=Math.max(price*0.003,1e-9);
   const patterns:string[]=[];
-  const {peaks,troughs}=swingPeaks(data.slice(-60));
+  const autoOverlays: AutoOverlay[]=[];
+  const swingRows=data.slice(-60);
+  const {peaks,troughs}=swingPeaks(swingRows);
 
   const upperFlat=Math.abs(upperEnd-upperStart)<=tolerance;
   const lowerFlat=Math.abs(lowerEnd-lowerStart)<=tolerance;
-  if(upperEnd<upperStart-tolerance*.35 && lowerEnd>lowerStart+tolerance*.35) patterns.push("Triángulo simétrico / compresión");
-  else if(upperFlat && lowerEnd>lowerStart+tolerance*.35) patterns.push("Triángulo ascendente posible");
-  else if(lowerFlat && upperEnd<upperStart-tolerance*.35) patterns.push("Triángulo descendente posible");
+  const recentA=recent.slice(0,half), recentB=recent.slice(half);
+  const topA=recentA.reduce((a,b)=>Number(a.high)>=Number(b.high)?a:b);
+  const topB=recentB.reduce((a,b)=>Number(a.high)>=Number(b.high)?a:b);
+  const lowA=recentA.reduce((a,b)=>Number(a.low)<=Number(b.low)?a:b);
+  const lowB=recentB.reduce((a,b)=>Number(a.low)<=Number(b.low)?a:b);
+  const triangleLines = () => {
+    autoOverlays.push(
+      {label:"Directriz superior",points:[
+        {timestamp:Number(topA.timestamp??topA.time),value:Number(topA.high)},
+        {timestamp:Number(topB.timestamp??topB.time),value:Number(topB.high)}
+      ]},
+      {label:"Directriz inferior",points:[
+        {timestamp:Number(lowA.timestamp??lowA.time),value:Number(lowA.low)},
+        {timestamp:Number(lowB.timestamp??lowB.time),value:Number(lowB.low)}
+      ]}
+    );
+  };
+  if(upperEnd<upperStart-tolerance*.35 && lowerEnd>lowerStart+tolerance*.35) { patterns.push("Triángulo simétrico / compresión"); triangleLines(); }
+  else if(upperFlat && lowerEnd>lowerStart+tolerance*.35) { patterns.push("Triángulo ascendente posible"); triangleLines(); }
+  else if(lowerFlat && upperEnd<upperStart-tolerance*.35) { patterns.push("Triángulo descendente posible"); triangleLines(); }
 
   if(peaks.length>=2){
     const a=peaks[peaks.length-2],b=peaks[peaks.length-1];
-    if(b.i-a.i>=4 && Math.abs(a.p-b.p)/price<.005) patterns.push("Doble techo posible");
+    if(b.i-a.i>=4 && Math.abs(a.p-b.p)/price<.005) {
+      patterns.push("Doble techo posible");
+      autoOverlays.push({label:"Doble techo",points:[{timestamp:a.t,value:a.p},{timestamp:b.t,value:b.p}]});
+    }
   }
   if(troughs.length>=2){
     const a=troughs[troughs.length-2],b=troughs[troughs.length-1];
-    if(b.i-a.i>=4 && Math.abs(a.p-b.p)/price<.005) patterns.push("Doble suelo posible");
+    if(b.i-a.i>=4 && Math.abs(a.p-b.p)/price<.005) {
+      patterns.push("Doble suelo posible");
+      autoOverlays.push({label:"Doble suelo",points:[{timestamp:a.t,value:a.p},{timestamp:b.t,value:b.p}]});
+    }
   }
   if(peaks.length>=3){
     const p=peaks.slice(-3);
-    if(p[1].p>p[0].p*1.004 && p[1].p>p[2].p*1.004 && Math.abs(p[0].p-p[2].p)/price<.008) patterns.push("HCH posible");
+    if(p[1].p>p[0].p*1.004 && p[1].p>p[2].p*1.004 && Math.abs(p[0].p-p[2].p)/price<.008) {
+      patterns.push("HCH posible");
+      autoOverlays.push({label:"HCH",points:p.map(x=>({timestamp:x.t,value:x.p}))});
+    }
   }
   if(troughs.length>=3){
     const p=troughs.slice(-3);
-    if(p[1].p<p[0].p*.996 && p[1].p<p[2].p*.996 && Math.abs(p[0].p-p[2].p)/price<.008) patterns.push("HCH invertido posible");
+    if(p[1].p<p[0].p*.996 && p[1].p<p[2].p*.996 && Math.abs(p[0].p-p[2].p)/price<.008) {
+      patterns.push("HCH invertido posible");
+      autoOverlays.push({label:"HCH invertido",points:p.map(x=>({timestamp:x.t,value:x.p}))});
+    }
   }
 
   const breakoutUp=price>resistance;
@@ -344,7 +390,36 @@ function analyzeMarket(rows: any[], interval: Interval): MarketInsight | null {
       ? `Sesgo bajista en ${interval}. Vigila cierre/aceptación bajo ${fmt(support)}; resistencia clave ${fmt(resistance)}. ${patternText}.`
       : `Sin ventaja clara en ${interval}. Precio entre ${fmt(support)} y ${fmt(resistance)}; espera ruptura/retest. ${patternText}.`;
 
-  return {bias,score,confluence,maxConfluence,patterns:patterns.slice(0,3),summary,support,resistance,rsi,macdHist,volumeRatio,ema20:e20,ema50:e50,ema200:e200,triggerUp:resistance,triggerDown:support};
+  return {bias,score,confluence,maxConfluence,patterns:patterns.slice(0,3),summary,support,resistance,rsi,macdHist,volumeRatio,ema20:e20,ema50:e50,ema200:e200,triggerUp:resistance,triggerDown:support,autoOverlays:autoOverlays.slice(0,4)};
+}
+
+async function fetchAnalysisBars(symbol: string, interval: Interval) {
+  const normalize = (rows:any[]) => rows.map((row:any)=>({
+    timestamp:Number(row.time??row.timestamp),
+    open:Number(row.open),high:Number(row.high),low:Number(row.low),close:Number(row.close),volume:Number(row.volume||0)
+  })).filter((r:any)=>r.timestamp>0&&r.open>0&&r.close>0).sort((a:any,b:any)=>a.timestamp-b.timestamp);
+
+  try {
+    if(BASE_URL){
+      const response=await fetch(`${BASE_URL}/api/v1/market/candles/${symbol}?interval=${interval}&limit=300`,{cache:"no-store"});
+      if(response.ok){
+        const payload=await response.json();
+        const rows=normalize(payload.candles??[]);
+        if(rows.length>=35)return rows;
+      }
+    }
+  } catch {}
+
+  try {
+    const response=await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=300`,{cache:"no-store"});
+    if(response.ok){
+      const rows=await response.json();
+      if(Array.isArray(rows)) return rows.map((r:any[])=>({
+        timestamp:Number(r[0]),open:Number(r[1]),high:Number(r[2]),low:Number(r[3]),close:Number(r[4]),volume:Number(r[7]??r[5]??0)
+      })).filter((r:any)=>r.timestamp>0&&r.open>0&&r.close>0);
+    }
+  } catch {}
+  return [];
 }
 
 export default function PracticeTradingTerminal() {
@@ -358,6 +433,8 @@ export default function PracticeTradingTerminal() {
   const [interval, setIntervalValue] = useState<Interval>("5m");
   const [livePrice, setLivePrice] = useState(0);
   const [marketInsight, setMarketInsight] = useState<MarketInsight | null>(null);
+  const [deepScan, setDeepScan] = useState<DeepScan | null>(null);
+  const [analyzingAll, setAnalyzingAll] = useState(false);
   const [indicatorSet, setIndicatorSet] = useState<Set<IndicatorName>>(
     new Set(["EMA20/50/200", "VOL"])
   );
@@ -868,6 +945,83 @@ export default function PracticeTradingTerminal() {
     } catch {}
   }
 
+
+  function drawRadarPatterns(insight: MarketInsight | null) {
+    const chart=chartRef.current;
+    if(!chart||!insight)return;
+    try{chart.removeOverlay({groupId:"radar-auto"});}catch{}
+    for(const overlay of insight.autoOverlays){
+      if(overlay.points.length<2)continue;
+      if(overlay.points.length===2){
+        try{chart.createOverlay({name:"segment",groupId:"radar-auto",lock:true,points:overlay.points});}catch{}
+      } else {
+        for(let i=0;i<overlay.points.length-1;i++){
+          try{chart.createOverlay({name:"segment",groupId:"radar-auto",lock:true,points:[overlay.points[i],overlay.points[i+1]]});}catch{}
+        }
+      }
+    }
+    if(insight.autoOverlays.length){
+      setMessage(`Radar dibujó ${insight.autoOverlays.length} estructura(s) posibles. Son guías automáticas: valida los swings antes de operar.`);
+    }
+  }
+
+  async function analyzeEverything() {
+    setAnalyzingAll(true);
+    setMessage("");
+    try{
+      const frames:Array<{interval:Interval;weight:number}>=[
+        {interval:"5m",weight:1},{interval:"15m",weight:2},{interval:"1h",weight:3},{interval:"4h",weight:4}
+      ];
+      const results=await Promise.all(frames.map(async item=>{
+        const rows=item.interval===interval&&barsRef.current.length>=35?barsRef.current:await fetchAnalysisBars(symbol,item.interval);
+        return {item,insight:analyzeMarket(rows,item.interval)};
+      }));
+      const valid=results.filter((x):x is {item:{interval:Interval;weight:number};insight:MarketInsight}=>Boolean(x.insight));
+      let weightedScore=0,totalWeight=0;
+      for(const row of valid){weightedScore+=row.insight.score*row.item.weight;totalWeight+=row.item.weight;}
+      const normalized=totalWeight?weightedScore/totalWeight:0;
+      const direction:DeepScan["direction"]=normalized>=2.5?"LONG":normalized<=-2.5?"SHORT":"ESPERAR";
+      const agreement=valid.filter(x=>direction==="LONG"?x.insight.bias==="ALCISTA":direction==="SHORT"?x.insight.bias==="BAJISTA":x.insight.bias==="ESPERAR").length;
+      const note=direction==="LONG"
+        ? "Contexto mayor inclina al alza. Busca confirmación de ruptura/retest antes de una práctica LONG."
+        : direction==="SHORT"
+          ? "Contexto mayor inclina a la baja. Busca pérdida/retest del soporte antes de una práctica SHORT."
+          : "Las temporalidades no están suficientemente alineadas. Mejor esperar una estructura más limpia.";
+      const scan:DeepScan={direction,weightedScore:normalized,agreement,total:valid.length,rows:valid.map(x=>({interval:x.item.interval,insight:x.insight})),note};
+      setDeepScan(scan);
+
+      const current=analyzeMarket(barsRef.current,interval);
+      if(current){
+        setMarketInsight(current);
+        drawRadarPatterns(current);
+        if(direction!=="ESPERAR"){
+          const side=direction==="LONG"?"LONG":"SHORT";
+          const entry=livePrice>0?livePrice:Number(barsRef.current.at(-1)?.close||0);
+          const stopBase=side==="LONG"?current.support:current.resistance;
+          const stop=side==="LONG"?Math.min(stopBase,entry*.99):Math.max(stopBase,entry*1.01);
+          const risk=Math.abs(entry-stop);
+          if(entry>0&&risk>0){
+            setForm(x=>({
+              ...x,
+              side,
+              stop:String(Number(stop.toPrecision(10))),
+              tp1:String(Number((side==="LONG"?entry+risk*1.5:entry-risk*1.5).toPrecision(10))),
+              tp2:String(Number((side==="LONG"?entry+risk*2:entry-risk*2).toPrecision(10))),
+              tp3:String(Number((side==="LONG"?entry+risk*3:entry-risk*3).toPrecision(10))),
+              pattern:current.patterns[0]?.toUpperCase().replaceAll(" ","_").replaceAll("/","_").slice(0,40)||"OTRO",
+              note:`ANALIZAR TODO: ${direction}. ${current.summary}`
+            }));
+          }
+        }
+      }
+      setMessage(`Análisis completo: ${direction} · ${agreement}/${valid.length} temporalidades alineadas. Revisa las confirmaciones antes de ejecutar.`);
+    }catch(error){
+      setMessage(error instanceof Error?error.message:"No se pudo completar el análisis.");
+    }finally{
+      setAnalyzingAll(false);
+    }
+  }
+
   function drawTriangle() {
     const chart = chartRef.current;
     if (!chart) return;
@@ -1279,7 +1433,7 @@ export default function PracticeTradingTerminal() {
             </div>
           </div>
 
-          <MarketRadar insight={marketInsight} interval={interval}/>
+          <MarketRadar insight={marketInsight} interval={interval} deepScan={deepScan} analyzing={analyzingAll} onAnalyze={analyzeEverything} onDraw={() => drawRadarPatterns(marketInsight)}/>
 
           <div className="relative">
             {!chartReady && (
@@ -1500,9 +1654,9 @@ export default function PracticeTradingTerminal() {
   );
 }
 
-function MarketRadar({ insight, interval }: { insight: MarketInsight | null; interval: Interval }) {
+function MarketRadar({ insight, interval, deepScan, analyzing, onAnalyze, onDraw }: { insight: MarketInsight | null; interval: Interval; deepScan: DeepScan | null; analyzing: boolean; onAnalyze: () => void; onDraw: () => void }) {
   if (!insight) {
-    return <div className="border-b border-slate-800/80 bg-[#07101a] px-3 py-2 text-[9px] text-slate-600">Radar ExplodeX: cargando suficientes velas para leer estructura…</div>;
+    return <div className="flex items-center justify-between gap-2 border-b border-slate-800/80 bg-[#07101a] px-3 py-2 text-[9px] text-slate-600"><span>Radar ExplodeX: cargando suficientes velas para leer estructura…</span><button onClick={onAnalyze} disabled={analyzing} className="rounded-lg border border-cyan-400/20 bg-cyan-400/[.06] px-3 py-1.5 font-black text-cyan-200">{analyzing?"ANALIZANDO…":"ANALIZAR TODO"}</button></div>;
   }
   const tone = insight.bias === "ALCISTA"
     ? "border-emerald-400/20 bg-emerald-400/[.05] text-emerald-200"
@@ -1511,6 +1665,14 @@ function MarketRadar({ insight, interval }: { insight: MarketInsight | null; int
       : "border-amber-400/20 bg-amber-400/[.04] text-amber-200";
   return (
     <div className="border-b border-slate-800/80 bg-[#060e18] px-2 py-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <button onClick={onAnalyze} disabled={analyzing} className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-[10px] font-black text-cyan-100 disabled:opacity-50">{analyzing?"ANALIZANDO 5m · 15m · 1h · 4h…":"⚡ ANALIZAR TODO"}</button>
+          <button onClick={onDraw} disabled={!insight.autoOverlays.length} className="rounded-lg border border-violet-400/20 bg-violet-400/[.05] px-3 py-2 text-[9px] font-black text-violet-200 disabled:opacity-30">DIBUJAR FIGURA</button>
+        </div>
+        {deepScan&&<div className={`rounded-lg border px-3 py-2 text-[10px] font-black ${deepScan.direction==="LONG"?"border-emerald-400/25 bg-emerald-400/[.06] text-emerald-200":deepScan.direction==="SHORT"?"border-rose-400/25 bg-rose-400/[.06] text-rose-200":"border-amber-400/25 bg-amber-400/[.05] text-amber-200"}`}>MULTI-TF: {deepScan.direction} · {deepScan.agreement}/{deepScan.total} alineadas</div>}
+      </div>
+      {deepScan&&<div className="mb-2 grid gap-1 md:grid-cols-4">{deepScan.rows.map(row=><div key={row.interval} className="rounded-lg border border-slate-800 bg-slate-950/35 px-2 py-1.5 text-[9px]"><b className="text-white">{row.interval.toUpperCase()}</b><span className={`ml-2 font-black ${row.insight.bias==="ALCISTA"?"text-emerald-300":row.insight.bias==="BAJISTA"?"text-rose-300":"text-amber-300"}`}>{row.insight.bias}</span><div className="mt-0.5 truncate text-slate-600">{row.insight.patterns[0]||"sin patrón claro"}</div></div>)}</div>}
       <div className="grid gap-2 2xl:grid-cols-[170px_minmax(0,1fr)_360px]">
         <div className={`rounded-lg border px-3 py-2 ${tone}`}>
           <div className="text-[8px] font-black uppercase tracking-[.14em] opacity-70">Radar ExplodeX · {interval.toUpperCase()}</div>
