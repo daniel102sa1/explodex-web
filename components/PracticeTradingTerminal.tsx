@@ -1102,9 +1102,10 @@ export default function PracticeTradingTerminal() {
         drawPrecisionPattern(current);
         const p = current.pattern;
         if (p.direction !== "WAIT" && p.entry && p.stop && p.tp1 && p.tp2 && p.tp3) {
+          const confirmedSide: Side = p.direction === "LONG" ? "LONG" : "SHORT";
           setForm(x => ({
             ...x,
-            side: p.direction,
+            side: confirmedSide,
             stop: String(Number(p.stop!.toPrecision(10))),
             tp1: String(Number(p.tp1!.toPrecision(10))),
             tp2: String(Number(p.tp2!.toPrecision(10))),
