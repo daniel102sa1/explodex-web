@@ -1089,14 +1089,25 @@ export default function PracticeTradingTerminal() {
               </button>
             </div>
 
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              {(["MARKET","LIMIT"] as const).map((kind) => (
+                <button key={kind} onClick={() => setForm((x) => ({ ...x, orderType: kind, limitPrice: kind === "MARKET" ? "" : (x.limitPrice || String(Number(livePrice.toPrecision(10)))) }))} className={`rounded-xl border px-3 py-2 text-xs font-black ${form.orderType === kind ? "border-cyan-500/30 bg-cyan-500/[.08] text-cyan-200" : "border-slate-800 text-slate-500"}`}>{kind}</button>
+              ))}
+            </div>
+
             <div className="mt-3 grid grid-cols-2 gap-2">
+              {form.orderType === "LIMIT" && <Input label="Precio LIMIT" value={form.limitPrice} onChange={(v) => setForm((x) => ({ ...x, limitPrice: v }))}/>}
               <Input label="Margen USDT" value={form.margin} onChange={(v) => setForm((x) => ({ ...x, margin: v }))}/>
-              <Input label="Apalancamiento" value={form.leverage} onChange={(v) => setForm((x) => ({ ...x, leverage: v }))}/>
+              <Input label="Apalancamiento (1–20x)" value={form.leverage} onChange={(v) => setForm((x) => ({ ...x, leverage: v }))}/>
               <Input label="Stop loss" value={form.stop} onChange={(v) => setForm((x) => ({ ...x, stop: v }))}/>
               <Input label="TP1" value={form.tp1} onChange={(v) => setForm((x) => ({ ...x, tp1: v }))}/>
               <Input label="TP2 (opcional)" value={form.tp2} onChange={(v) => setForm((x) => ({ ...x, tp2: v }))}/>
               <Input label="TP3 (opcional)" value={form.tp3} onChange={(v) => setForm((x) => ({ ...x, tp3: v }))}/>
             </div>
+
+            <button onClick={setExamplePlan} className="mt-2 w-full rounded-xl border border-violet-500/20 bg-violet-500/[.04] px-3 py-2 text-[10px] font-black text-violet-200">
+              Plantilla educativa: SL 1% · TP1 1.5R · TP2 2R · TP3 3R
+            </button>
 
             <label className="mt-3 block rounded-xl border border-slate-800 bg-slate-950/45 p-3">
               <span className="text-[9px] font-black uppercase tracking-[.1em] text-slate-600">Patrón / setup practicado</span>
@@ -1106,24 +1117,28 @@ export default function PracticeTradingTerminal() {
             </label>
 
             <label className="mt-3 block rounded-xl border border-slate-800 bg-slate-950/45 p-3">
-              <span className="text-[9px] font-black uppercase tracking-[.1em] text-slate-600">Nota del ejercicio</span>
-              <textarea value={form.note} onChange={(e) => setForm((x) => ({ ...x, note: e.target.value }))} rows={2} className="mt-2 w-full resize-none bg-transparent text-xs text-white outline-none" placeholder="Ej. ruptura + retest confirmado; no perseguí la vela..."/>
+              <span className="text-[9px] font-black uppercase tracking-[.1em] text-slate-600">Diario / razón de entrada</span>
+              <textarea value={form.note} onChange={(e) => setForm((x) => ({ ...x, note: e.target.value }))} rows={3} className="mt-2 w-full resize-none bg-transparent text-xs text-white outline-none" placeholder="Ej. triángulo confirmado + retest + volumen; SL bajo swing; no perseguí la vela..."/>
             </label>
 
             <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
               <div className="grid grid-cols-2 gap-2">
-                <Mini label="Entrada" value={fmt(livePrice)}/>
+                <Mini label={form.orderType === "LIMIT" ? "Entrada LIMIT" : "Entrada mercado"} value={riskPreview ? fmt(riskPreview.entry) : fmt(livePrice)}/>
                 <Mini label="Notional" value={riskPreview ? money(riskPreview.notional) : "—"}/>
                 <Mini label="Riesgo al SL" value={riskPreview ? money(riskPreview.risk) : "—"} bad/>
                 <Mini label="% de equity" value={riskPreview ? `${riskPreview.riskPct.toFixed(3)}%` : "—"} bad={Boolean(riskPreview && riskPreview.riskPct > 0.5)}/>
+                <Mini label="R:R a TP1" value={riskPreview && riskPreview.rr > 0 ? `1:${riskPreview.rr.toFixed(2)}` : "—"} good={Boolean(riskPreview && riskPreview.rr >= 1.5)}/>
+                <Mini label="Liquidación aprox.*" value={riskPreview ? fmt(riskPreview.liquidation) : "—"} bad/>
               </div>
-              {riskPreview && riskPreview.riskPct > 0.5 && <div className="mt-2 text-[10px] font-bold text-amber-300">Para práctica de principiante estás superando 0.5% de riesgo por trade.</div>}
+              {riskPreview && riskPreview.riskPct > 0.5 && <div className="mt-2 text-[10px] font-bold text-amber-300">Para la práctica educativa estás superando 0.5% de riesgo de equity en este trade.</div>}
+              {riskPreview && riskPreview.rr > 0 && riskPreview.rr < 1 && <div className="mt-2 text-[10px] font-bold text-amber-300">Tu TP1 ofrece menos recompensa que el riesgo al SL.</div>}
+              <div className="mt-2 text-[8px] leading-4 text-slate-700">*Estimación educativa de liquidación para margen aislado; un exchange real usa reglas y mantenimiento propios.</div>
             </div>
 
-            <button onClick={openTrade} disabled={busy || !form.stop || !form.tp1} className={`mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3 font-black text-slate-950 disabled:opacity-40 ${form.side === "LONG" ? "bg-emerald-400" : "bg-rose-400"}`}>
-              <Play size={16}/> Abrir {form.side} ficticio
+            <button onClick={openTrade} disabled={busy || !form.stop || !form.tp1 || (form.orderType === "LIMIT" && !form.limitPrice)} className={`mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3 font-black text-slate-950 disabled:opacity-40 ${form.side === "LONG" ? "bg-emerald-400" : "bg-rose-400"}`}>
+              <Play size={16}/> {form.orderType === "LIMIT" ? `Colocar LIMIT ${form.side}` : `Abrir MARKET ${form.side}`} ficticio
             </button>
-            <div className="mt-2 text-center text-[9px] text-slate-600">Solo práctica. No envía órdenes a Binance ni usa dinero real.</div>
+            <div className="mt-2 text-center text-[9px] text-slate-600">100% práctica. No envía órdenes a Binance, no usa tu cuenta real ni dinero real.</div>
           </>}
         </aside>
       </section>
