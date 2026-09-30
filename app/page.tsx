@@ -1,7 +1,5 @@
-import HomeCommandCenter from "@/components/HomeCommandCenter";
-
-export const dynamic = "force-dynamic";
+import { redirect } from "next/navigation";
 
 export default function HomePage() {
-  return <HomeCommandCenter />;
+  redirect("/practice");
 }
