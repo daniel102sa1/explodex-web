@@ -237,11 +237,24 @@ export default function PracticeTradingTerminal() {
     } catch {}
   }, [sid]);
 
+  const syncPractice = useCallback(async () => {
+    if (!BASE_URL || !sid) return;
+    try {
+      await fetch(`${BASE_URL}/api/v1/practice/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid }),
+        cache: "no-store",
+      });
+    } catch {}
+    await loadPractice();
+  }, [sid, loadPractice]);
+
   useEffect(() => {
-    loadPractice();
-    const timer = window.setInterval(loadPractice, 5000);
+    syncPractice();
+    const timer = window.setInterval(syncPractice, 3500);
     return () => window.clearInterval(timer);
-  }, [loadPractice]);
+  }, [syncPractice]);
 
   useEffect(() => {
     let disposed = false;
@@ -272,6 +285,92 @@ export default function PracticeTradingTerminal() {
               };
             }
             return output;
+          },
+        } as any);
+      } catch {}
+
+      try {
+        kc.registerIndicator({
+          name: "EXPLODEX_ATR",
+          shortName: "ATR14",
+          series: "normal",
+          calcParams: [14],
+          figures: [{ key: "atr", title: "ATR: ", type: "line" }],
+          calc: (rows: any[], indicator: any) => {
+            const period = Number(indicator?.calcParams?.[0] || 14);
+            const output: Record<number, { atr: number }> = {};
+            let previousClose = 0;
+            let atr = 0;
+            rows.forEach((row: any, index: number) => {
+              const high = Number(row.high || 0);
+              const low = Number(row.low || 0);
+              const close = Number(row.close || 0);
+              const tr = index === 0
+                ? high - low
+                : Math.max(high - low, Math.abs(high - previousClose), Math.abs(low - previousClose));
+              atr = index === 0 ? tr : index < period ? (atr * index + tr) / (index + 1) : (atr * (period - 1) + tr) / period;
+              output[Number(row.timestamp)] = { atr };
+              previousClose = close;
+            });
+            return output;
+          },
+        } as any);
+      } catch {}
+
+      const registerPositionOverlay = (name: string, label: string) => {
+        try {
+          kc.registerOverlay({
+            name,
+            totalStep: 4,
+            needDefaultPointFigure: true,
+            needDefaultXAxisFigure: true,
+            needDefaultYAxisFigure: true,
+            mode: "weak_magnet",
+            modeSensitivity: 8,
+            createPointFigures: ({ coordinates, overlay }: any) => {
+              if (!Array.isArray(coordinates) || coordinates.length < 3) return [];
+              const points = overlay?.points || [];
+              const entry = Number(points?.[0]?.value || 0);
+              const stop = Number(points?.[1]?.value || 0);
+              const target = Number(points?.[2]?.value || 0);
+              const risk = Math.abs(entry - stop);
+              const reward = Math.abs(target - entry);
+              const rr = risk > 0 ? reward / risk : 0;
+              const x1 = Math.min(coordinates[0].x, coordinates[2].x);
+              const x2 = Math.max(coordinates[0].x, coordinates[2].x);
+              return [
+                { type: "line", attrs: { coordinates: [{ x: x1, y: coordinates[0].y }, { x: x2, y: coordinates[0].y }] }, styles: { color: "#22d3ee", size: 1.5 } },
+                { type: "line", attrs: { coordinates: [{ x: x1, y: coordinates[1].y }, { x: x2, y: coordinates[1].y }] }, styles: { color: "#fb7185", size: 1.5 } },
+                { type: "line", attrs: { coordinates: [{ x: x1, y: coordinates[2].y }, { x: x2, y: coordinates[2].y }] }, styles: { color: "#34d399", size: 1.5 } },
+                { type: "text", attrs: { x: x1 + 6, y: coordinates[0].y - 7, text: `${label} · R:R 1:${rr.toFixed(2)}` }, styles: { color: "#e2e8f0", size: 11 } },
+              ];
+            },
+          } as any);
+        } catch {}
+      };
+      registerPositionOverlay("EXPLODEX_LONG_POSITION", "LONG");
+      registerPositionOverlay("EXPLODEX_SHORT_POSITION", "SHORT");
+
+      try {
+        kc.registerOverlay({
+          name: "EXPLODEX_MEASURE",
+          totalStep: 3,
+          needDefaultPointFigure: true,
+          needDefaultXAxisFigure: true,
+          needDefaultYAxisFigure: true,
+          mode: "weak_magnet",
+          modeSensitivity: 8,
+          createPointFigures: ({ coordinates, overlay }: any) => {
+            if (!Array.isArray(coordinates) || coordinates.length < 2) return [];
+            const points = overlay?.points || [];
+            const a = Number(points?.[0]?.value || 0);
+            const b = Number(points?.[1]?.value || 0);
+            const pct = a ? ((b - a) / a) * 100 : 0;
+            const delta = b - a;
+            return [
+              { type: "line", attrs: { coordinates }, styles: { color: "#fbbf24", size: 1.5, style: "dashed" } },
+              { type: "text", attrs: { x: coordinates[1].x + 6, y: coordinates[1].y - 7, text: `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% · Δ ${fmt(delta)}` }, styles: { color: "#fde68a", size: 11 } },
+            ];
           },
         } as any);
       } catch {}
