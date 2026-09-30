@@ -375,6 +375,41 @@ export default function PracticeTradingTerminal() {
       registerPolylinePattern("EXPLODEX_XABCD", "XABCD / armónico", 6);
       registerPolylinePattern("EXPLODEX_HCH", "HCH / neckline", 7);
       registerPolylinePattern("EXPLODEX_ELLIOTT", "Elliott 1-2-3-4-5", 6);
+      registerPolylinePattern("EXPLODEX_THREE_DRIVES", "Three Drives", 7);
+
+      try {
+        kc.registerOverlay({
+          name: "EXPLODEX_FIB_EXTENSION",
+          totalStep: 4,
+          needDefaultPointFigure: true,
+          needDefaultXAxisFigure: true,
+          needDefaultYAxisFigure: true,
+          mode: "weak_magnet",
+          modeSensitivity: 8,
+          createPointFigures: ({ coordinates, overlay }: any) => {
+            if (!Array.isArray(coordinates) || coordinates.length < 3) return [];
+            const points = overlay?.points || [];
+            const a = Number(points?.[0]?.value || 0);
+            const b = Number(points?.[1]?.value || 0);
+            const cPrice = Number(points?.[2]?.value || 0);
+            const delta = b - a;
+            const ratios = [1, 1.272, 1.618];
+            const x1 = coordinates[2].x;
+            const x2 = x1 + Math.max(140, Math.abs(coordinates[1].x - coordinates[0].x));
+            const pixelDelta = coordinates[1].y - coordinates[0].y;
+            const figures: any[] = [
+              { type: "line", attrs: { coordinates: [coordinates[0], coordinates[1], coordinates[2]] }, styles: { color: "#a78bfa", size: 1.4, style: "dashed" } },
+            ];
+            for (const ratio of ratios) {
+              const projected = cPrice + delta * ratio;
+              const yy = coordinates[2].y + pixelDelta * ratio;
+              figures.push({ type: "line", attrs: { coordinates: [{ x: x1, y: yy }, { x: x2, y: yy }] }, styles: { color: "#c084fc", size: 1, style: "dashed" } });
+              figures.push({ type: "text", attrs: { x: x2 + 5, y: yy - 3, text: `${ratio} · ${fmt(projected)}` }, styles: { color: "#e9d5ff", size: 10 } });
+            }
+            return figures;
+          },
+        } as any);
+      } catch {}
 
       try {
         kc.registerOverlay({
@@ -933,6 +968,7 @@ export default function PracticeTradingTerminal() {
             <Tool icon={<Minus size={14}/>} label="Soporte / resistencia" onClick={() => draw("horizontalStraightLine")}/>
             <Tool icon={<Triangle size={14}/>} label="Triángulo (2 líneas)" onClick={drawTriangle}/>
             <Tool icon={<Activity size={14}/>} label="Fibonacci retroceso" onClick={() => draw("fibonacciLine")}/>
+            <Tool icon={<Activity size={14}/>} label="Fibonacci extensión" onClick={() => draw("EXPLODEX_FIB_EXTENSION")}/>
             <Tool icon={<Layers3 size={14}/>} label="Canal paralelo" onClick={() => draw("parallelStraightLine")}/>
             <Tool icon={<Layers3 size={14}/>} label="Canal de precio" onClick={() => draw("priceChannelLine")}/>
             <Tool icon={<Target size={14}/>} label="Medir % / recorrido" onClick={() => draw("EXPLODEX_MEASURE")}/>
@@ -943,6 +979,7 @@ export default function PracticeTradingTerminal() {
             <Tool icon={<Activity size={14}/>} label="XABCD / armónico" onClick={() => draw("EXPLODEX_XABCD")}/>
             <Tool icon={<Activity size={14}/>} label="HCH / neckline" onClick={() => draw("EXPLODEX_HCH")}/>
             <Tool icon={<Activity size={14}/>} label="Elliott 1-2-3-4-5" onClick={() => draw("EXPLODEX_ELLIOTT")}/>
+            <Tool icon={<Activity size={14}/>} label="Three Drives" onClick={() => draw("EXPLODEX_THREE_DRIVES")}/>
             <Tool icon={<Brush size={14}/>} label="Dibujo libre" onClick={() => draw("brush")}/>
             <div className="my-1 border-t border-slate-800"/>
             <Tool icon={<Save size={14}/>} label="Guardar dibujos" onClick={saveDrawings}/>
