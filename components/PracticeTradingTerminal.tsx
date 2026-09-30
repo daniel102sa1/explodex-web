@@ -241,6 +241,27 @@ type PrecisionScan = {
   current: TechnicalRead | null;
 };
 
+type AiDirectionResult = {
+  available: boolean;
+  mode: "OPENAI_ON_DEMAND" | "TECHNICAL_ENGINE";
+  model?: string | null;
+  direction: "LONG" | "SHORT" | "WAIT";
+  evidence_strength: "LOW" | "MEDIUM" | "HIGH";
+  summary: string;
+  entry: number;
+  stop_loss: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  invalidation: number;
+  breakout_level: number;
+  projection_from: number;
+  projection_to: number;
+  reasons: string[];
+  risks: string[];
+  what_to_wait_for: string[];
+};
+
 function emaValues(values: number[], period: number) {
   if (!values.length) return [];
   const alpha = 2 / (period + 1);
@@ -448,7 +469,9 @@ export default function PracticeTradingTerminal() {
   const [marketInsight, setMarketInsight] = useState<MarketInsight | null>(null);
   const [deepScan, setDeepScan] = useState<DeepScan | null>(null);
   const [precisionScan, setPrecisionScan] = useState<PrecisionScan | null>(null);
+  const [aiDirection, setAiDirection] = useState<AiDirectionResult | null>(null);
   const [analyzingAll, setAnalyzingAll] = useState(false);
+  const [askingAi, setAskingAi] = useState(false);
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [strongMagnet, setStrongMagnet] = useState(true);
   const [showExplain, setShowExplain] = useState(false);
@@ -1031,6 +1054,136 @@ export default function PracticeTradingTerminal() {
   }
 
 
+  function intervalMilliseconds(value: Interval) {
+    if (value.endsWith("d")) return Number(value.slice(0, -1)) * 86_400_000;
+    if (value.endsWith("h")) return Number(value.slice(0, -1)) * 3_600_000;
+    return Number(value.slice(0, -1)) * 60_000;
+  }
+
+  function drawAiProjection(result: AiDirectionResult) {
+    const chart = chartRef.current;
+    const bars = barsRef.current;
+    if (!chart || !bars.length) return;
+    try { chart.removeOverlay({ groupId: "ai-direction" }); } catch {}
+
+    const lastTs = Number(bars.at(-1)?.timestamp || Date.now());
+    const futureTs = lastTs + intervalMilliseconds(interval) * 18;
+    const from = Number(result.projection_from || livePrice || bars.at(-1)?.close || 0);
+    const to = Number(result.projection_to || 0);
+    const isLong = result.direction === "LONG";
+    const isShort = result.direction === "SHORT";
+    const projectionColor = isLong ? "#34d399" : isShort ? "#fb7185" : "#fbbf24";
+
+    if (from > 0 && to > 0 && from !== to) {
+      try {
+        chart.createOverlay({
+          name: "segment",
+          groupId: "ai-direction",
+          lock: true,
+          points: [{ timestamp: lastTs, value: from }, { timestamp: futureTs, value: to }],
+          styles: { line: { color: projectionColor, size: 3, style: "dashed" } },
+        });
+      } catch {}
+    }
+
+    const levels = [
+      ["ENTRY", result.entry, "#f8fafc"],
+      ["SL", result.stop_loss, "#fb7185"],
+      ["TP1", result.tp1, "#6ee7b7"],
+      ["TP2", result.tp2, "#34d399"],
+      ["TP3", result.tp3, "#22d3ee"],
+    ] as Array<[string, number, string]>;
+
+    for (const [label, value, color] of levels) {
+      if (!(Number(value) > 0)) continue;
+      try {
+        chart.createOverlay({
+          name: "segment",
+          groupId: "ai-direction",
+          lock: true,
+          points: [{ timestamp: lastTs, value }, { timestamp: futureTs, value }],
+          styles: { line: { color, size: label === "ENTRY" ? 1.5 : 1.2, style: "dashed" } },
+        });
+      } catch {}
+    }
+
+    setMessage(
+      result.direction === "WAIT"
+        ? "La lectura no tiene dirección suficiente: marqué el escenario como ESPERAR."
+        : `${result.available ? "IA" : "Motor técnico"} dibujó una proyección ${result.direction} con SL/TP. Es un escenario de práctica, no una certeza.`
+    );
+  }
+
+  async function askAiDirection() {
+    if (!BASE_URL) {
+      setMessage("El backend de ExplodeX no está configurado.");
+      return;
+    }
+    setAskingAi(true);
+    setMessage("");
+    try {
+      const current = precisionScan?.current ?? analyzeTechnical(barsRef.current, interval);
+      const fallbackScan: PrecisionScan | null = current ? {
+        direction: current.trendScore >= 2 ? "LONG" : current.trendScore <= -2 ? "SHORT" : "ESPERAR",
+        agreement: 1,
+        total: 1,
+        rows: [{ interval, read: current }],
+        current,
+      } : null;
+      const scan = precisionScan ?? fallbackScan;
+      const payload = {
+        symbol,
+        interval,
+        engine_direction: scan?.direction ?? "ESPERAR",
+        current,
+        multi_timeframe: (scan?.rows ?? []).map(row => ({
+          interval: row.interval,
+          trend_score: row.read.trendScore,
+          price: row.read.price,
+          ema20: row.read.ema20,
+          ema50: row.read.ema50,
+          ema200: row.read.ema200,
+          rsi: row.read.rsi,
+          macd_hist: row.read.macdHist,
+          volume_ratio: row.read.volumeRatio,
+          atr14: row.read.atr14,
+          support: row.read.support,
+          resistance: row.read.resistance,
+          pattern: row.read.pattern,
+        })),
+        recent_candles: barsRef.current.slice(-120),
+      };
+      const response = await fetch(`${BASE_URL}/api/v1/practice/ai-direction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(`Backend ${response.status}`);
+      const result = await response.json() as AiDirectionResult;
+      setAiDirection(result);
+      drawAiProjection(result);
+
+      if (result.direction !== "WAIT" && result.stop_loss > 0 && result.tp1 > 0) {
+        const side: Side = result.direction === "LONG" ? "LONG" : "SHORT";
+        setForm(x => ({
+          ...x,
+          side,
+          stop: String(Number(result.stop_loss.toPrecision(10))),
+          tp1: String(Number(result.tp1.toPrecision(10))),
+          tp2: String(Number(result.tp2.toPrecision(10))),
+          tp3: String(Number(result.tp3.toPrecision(10))),
+          note: `${result.available ? "IA OpenAI" : "Motor técnico"}: ${result.summary}`,
+        }));
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo obtener la lectura.");
+    } finally {
+      setAskingAi(false);
+    }
+  }
+
+
   function drawRadarPatterns(insight: MarketInsight | null) {
     const chart=chartRef.current;
     if(!chart||!insight)return;
@@ -1558,11 +1711,16 @@ export default function PracticeTradingTerminal() {
 
           <PrecisionAssistant
             scan={precisionScan}
+            aiDirection={aiDirection}
             analyzing={analyzingAll}
+            askingAi={askingAi}
             showExplain={showExplain}
             onAnalyze={analyzeEverything}
+            onAskAi={askAiDirection}
             onToggleExplain={() => setShowExplain(v => !v)}
             onDraw={() => drawPrecisionPattern(precisionScan?.current ?? null)}
+            onDrawLong={() => draw("EXPLODEX_LONG_POSITION")}
+            onDrawShort={() => draw("EXPLODEX_SHORT_POSITION")}
           />
 
           <div className="relative">
@@ -1786,18 +1944,28 @@ export default function PracticeTradingTerminal() {
 
 function PrecisionAssistant({
   scan,
+  aiDirection,
   analyzing,
+  askingAi,
   showExplain,
   onAnalyze,
+  onAskAi,
   onToggleExplain,
   onDraw,
+  onDrawLong,
+  onDrawShort,
 }: {
   scan: PrecisionScan | null;
+  aiDirection: AiDirectionResult | null;
   analyzing: boolean;
+  askingAi: boolean;
   showExplain: boolean;
   onAnalyze: () => void;
+  onAskAi: () => void;
   onToggleExplain: () => void;
   onDraw: () => void;
+  onDrawLong: () => void;
+  onDrawShort: () => void;
 }) {
   const current = scan?.current ?? null;
   const pattern = current?.pattern ?? null;
@@ -1810,9 +1978,16 @@ function PrecisionAssistant({
             <div className="flex items-center gap-2 text-xs font-black text-white"><Sparkles size={14} className="text-cyan-300"/> Asistente técnico ExplodeX</div>
             <div className="mt-1 text-[9px] text-slate-500">Detecta figuras con pivotes 5/5, compara 5m · 15m · 1h · 4h y solo arma SL/TP cuando existe confirmación.</div>
           </div>
-          <button onClick={onAnalyze} disabled={analyzing} className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2.5 text-[10px] font-black text-cyan-100 shadow-sm shadow-cyan-500/10 disabled:opacity-50">
-            {analyzing ? "ANALIZANDO…" : "⚡ ANALIZAR TODO"}
-          </button>
+          <div className="flex flex-wrap gap-1.5">
+            <button onClick={onDrawLong} className="rounded-xl border border-emerald-400/25 bg-emerald-400/[.06] px-3 py-2.5 text-[9px] font-black text-emerald-200">↗ POSICIÓN LONG</button>
+            <button onClick={onDrawShort} className="rounded-xl border border-rose-400/25 bg-rose-400/[.06] px-3 py-2.5 text-[9px] font-black text-rose-200">↘ POSICIÓN SHORT</button>
+            <button onClick={onAnalyze} disabled={analyzing} className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2.5 text-[10px] font-black text-cyan-100 shadow-sm shadow-cyan-500/10 disabled:opacity-50">
+              {analyzing ? "ANALIZANDO…" : "⚡ ANALIZAR TODO"}
+            </button>
+            <button onClick={onAskAi} disabled={askingAi} className="rounded-xl border border-violet-400/30 bg-violet-400/10 px-4 py-2.5 text-[10px] font-black text-violet-100 disabled:opacity-50">
+              {askingAi ? "PENSANDO…" : "🤖 DIME PARA DÓNDE VA"}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1834,6 +2009,14 @@ function PrecisionAssistant({
 
   return (
     <div className="border-b border-slate-800/80 bg-[#060e18] p-2">
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <button onClick={onDrawLong} className="rounded-lg border border-emerald-400/25 bg-emerald-400/[.05] px-3 py-2 text-[9px] font-black text-emerald-200">↗ POSICIÓN LONG</button>
+        <button onClick={onDrawShort} className="rounded-lg border border-rose-400/25 bg-rose-400/[.05] px-3 py-2 text-[9px] font-black text-rose-200">↘ POSICIÓN SHORT</button>
+        <button onClick={onAnalyze} disabled={analyzing} className="rounded-lg border border-cyan-400/25 bg-cyan-400/[.06] px-3 py-2 text-[9px] font-black text-cyan-100 disabled:opacity-40">{analyzing ? "ANALIZANDO…" : "⚡ ANALIZAR TODO"}</button>
+        <button onClick={onAskAi} disabled={askingAi} className="rounded-lg border border-violet-400/30 bg-violet-400/10 px-3 py-2 text-[9px] font-black text-violet-100 disabled:opacity-40">{askingAi ? "PENSANDO…" : "🤖 DIME PARA DÓNDE VA"}</button>
+        {aiDirection && <span className={`rounded-lg border px-3 py-2 text-[9px] font-black ${aiDirection.direction === "LONG" ? "border-emerald-400/20 text-emerald-300" : aiDirection.direction === "SHORT" ? "border-rose-400/20 text-rose-300" : "border-amber-400/20 text-amber-300"}`}>{aiDirection.available ? "IA" : "MOTOR"}: {aiDirection.direction}</span>}
+      </div>
+      {aiDirection && <div className="mb-2 rounded-xl border border-violet-400/15 bg-violet-400/[.03] px-3 py-2"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1"><div className="text-[8px] font-black uppercase tracking-[.12em] text-violet-300">{aiDirection.available ? "OpenAI bajo demanda" : "Fallback técnico · IA no configurada"}</div><div className="mt-1 text-[10px] leading-4 text-slate-300">{aiDirection.summary}</div></div><div className="grid grid-cols-4 gap-1"><Tiny label="Entrada" value={fmt(aiDirection.entry)}/><Tiny label="SL" value={fmt(aiDirection.stop_loss)} tone="bad"/><Tiny label="TP2" value={fmt(aiDirection.tp2)} tone="good"/><Tiny label="Fuerza" value={aiDirection.evidence_strength}/></div></div></div>}
       <div className="grid gap-2 xl:grid-cols-[210px_minmax(0,1fr)_330px]">
         <div className={`rounded-xl border p-3 ${directionTone}`}>
           <div className="text-[8px] font-black uppercase tracking-[.13em] opacity-65">Contexto multi-temporal</div>
