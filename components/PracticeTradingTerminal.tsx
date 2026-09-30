@@ -42,8 +42,17 @@ type PracticePosition = {
   tp3?: number | null;
   margin_used: number;
   quantity: number;
+  initial_quantity?: number;
   notional: number;
   risk_usdt: number;
+  initial_risk_usdt?: number;
+  liquidation_price?: number | null;
+  liquidation_distance_pct?: number | null;
+  partial_realized_pnl?: number;
+  tp1_hit?: boolean;
+  tp2_hit?: boolean;
+  tp3_hit?: boolean;
+  moved_to_be?: boolean;
   unrealized_pnl: number;
   roi_on_margin_pct: number;
   timeframe?: string | null;
@@ -51,24 +60,52 @@ type PracticePosition = {
   opened_at?: string | null;
 };
 
+type PracticeOrder = {
+  id: number;
+  symbol: string;
+  side: Side;
+  order_type: "LIMIT";
+  status: "PENDING";
+  limit_price: number;
+  stop_loss: number;
+  take_profit: number;
+  tp2?: number | null;
+  tp3?: number | null;
+  leverage: number;
+  margin_used: number;
+  timeframe?: string | null;
+  pattern?: string | null;
+  created_at?: string | null;
+};
+
 type PracticeSummary = {
   starting_balance: number;
   cash_balance: number;
   reserved_margin: number;
+  pending_margin?: number;
   available_margin: number;
   unrealized_pnl: number;
   equity: number;
   realized_pnl: number;
   total_costs: number;
   open_positions: PracticePosition[];
+  pending_orders?: PracticeOrder[];
   closed_trades: number;
   winners: number;
   losers: number;
   win_rate_pct?: number | null;
+  performance?: {
+    expectancy_usdt?: number;
+    profit_factor?: number | null;
+    average_r?: number | null;
+    max_drawdown_pct?: number;
+  };
 };
 
 type OrderForm = {
   side: Side;
+  orderType: "MARKET" | "LIMIT";
+  limitPrice: string;
   margin: string;
   leverage: string;
   stop: string;
@@ -80,7 +117,7 @@ type OrderForm = {
 };
 
 const INTERVALS: Interval[] = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
-const INDICATORS = ["EMA20/50", "VWAP", "RSI", "MACD", "VOL", "BOLL", "SAR", "OBV"] as const;
+const INDICATORS = ["EMA20/50/200", "VWAP", "RSI", "MACD", "ATR", "VOL", "BOLL", "SAR", "OBV"] as const;
 type IndicatorName = typeof INDICATORS[number];
 
 const PATTERNS = [
@@ -163,7 +200,7 @@ export default function PracticeTradingTerminal() {
   const [interval, setIntervalValue] = useState<Interval>("5m");
   const [livePrice, setLivePrice] = useState(0);
   const [indicatorSet, setIndicatorSet] = useState<Set<IndicatorName>>(
-    new Set(["EMA20/50", "VWAP", "RSI", "VOL"])
+    new Set(["EMA20/50/200", "VWAP", "RSI", "ATR", "VOL"])
   );
   const [summary, setSummary] = useState<PracticeSummary | null>(null);
   const [history, setHistory] = useState<any[]>([]);
@@ -174,6 +211,8 @@ export default function PracticeTradingTerminal() {
   const [showOrder, setShowOrder] = useState(true);
   const [form, setForm] = useState<OrderForm>({
     side: "LONG",
+    orderType: "MARKET",
+    limitPrice: "",
     margin: "25",
     leverage: "3",
     stop: "",
