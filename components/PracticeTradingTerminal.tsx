@@ -485,6 +485,8 @@ export default function PracticeTradingTerminal() {
   const [message, setMessage] = useState("");
   const [chartReady, setChartReady] = useState(false);
   const [showOrder, setShowOrder] = useState(true);
+  const [marginPct, setMarginPct] = useState(0);
+  const [showTpSl, setShowTpSl] = useState(false);
   const [bottomTab, setBottomTab] = useState<"positions" | "orders" | "history">("positions");
   const [form, setForm] = useState<OrderForm>({
     side: "LONG",
@@ -1391,8 +1393,58 @@ export default function PracticeTradingTerminal() {
     };
   }, [form.margin, form.leverage, form.stop, form.tp1, form.orderType, form.limitPrice, form.side, livePrice, summary?.equity]);
 
-  async function openTrade() {
+  function buildPlanForSide(side: Side) {
+    const entry = form.orderType === "LIMIT" && Number(form.limitPrice) > 0 ? Number(form.limitPrice) : livePrice;
+    if (!(entry > 0)) return null;
+
+    const rawStop = Number(form.stop || 0);
+    const rawTp1 = Number(form.tp1 || 0);
+    const rawTp2 = Number(form.tp2 || 0);
+    const rawTp3 = Number(form.tp3 || 0);
+    const valid = side === "LONG"
+      ? rawStop > 0 && rawStop < entry && rawTp1 > entry
+      : rawStop > entry && rawTp1 > 0 && rawTp1 < entry;
+
+    if (valid) {
+      return {
+        entry,
+        stop: rawStop,
+        tp1: rawTp1,
+        tp2: rawTp2 > 0 ? rawTp2 : rawTp1,
+        tp3: rawTp3 > 0 ? rawTp3 : (rawTp2 > 0 ? rawTp2 : rawTp1),
+        auto: false,
+      };
+    }
+
+    const stop = side === "LONG" ? entry * .99 : entry * 1.01;
+    const risk = Math.abs(entry - stop);
+    return {
+      entry,
+      stop,
+      tp1: side === "LONG" ? entry + risk * 1.5 : entry - risk * 1.5,
+      tp2: side === "LONG" ? entry + risk * 2 : entry - risk * 2,
+      tp3: side === "LONG" ? entry + risk * 3 : entry - risk * 3,
+      auto: true,
+    };
+  }
+
+  async function openTrade(sideOverride?: Side) {
     if (!BASE_URL || !sid) return;
+    const side = sideOverride ?? form.side;
+    const plan = buildPlanForSide(side);
+    if (!plan) {
+      setMessage("Todavía no hay precio de mercado para abrir la práctica.");
+      return;
+    }
+
+    setForm(x => ({
+      ...x,
+      side,
+      stop: String(Number(plan.stop.toPrecision(10))),
+      tp1: String(Number(plan.tp1.toPrecision(10))),
+      tp2: String(Number(plan.tp2.toPrecision(10))),
+      tp3: String(Number(plan.tp3.toPrecision(10))),
+    }));
     setBusy(true);
     setMessage("");
     try {
@@ -1402,15 +1454,15 @@ export default function PracticeTradingTerminal() {
         body: JSON.stringify({
           session_id: sid,
           symbol,
-          side: form.side,
+          side,
           order_type: form.orderType,
           limit_price: form.orderType === "LIMIT" ? Number(form.limitPrice) : null,
           margin: Number(form.margin),
           leverage: Number(form.leverage),
-          stop_loss: Number(form.stop),
-          take_profit: Number(form.tp1),
-          tp2: form.tp2 ? Number(form.tp2) : null,
-          tp3: form.tp3 ? Number(form.tp3) : null,
+          stop_loss: plan.stop,
+          take_profit: plan.tp1,
+          tp2: plan.tp2,
+          tp3: plan.tp3,
           timeframe: interval,
           pattern: form.pattern,
           note: form.note || null,
@@ -1424,7 +1476,7 @@ export default function PracticeTradingTerminal() {
         const warning = Array.isArray(payload.warnings) && payload.warnings.length
           ? " · Ojo: revisa riesgo, apalancamiento o liquidación."
           : "";
-        setMessage(`Demo ${payload.side} abierta a ${fmt(payload.entry_price)}${warning}`);
+        setMessage(`Demo ${payload.side} abierta a ${fmt(payload.entry_price)}${plan.auto ? " · SL/TP automático aplicado." : ""}${warning}`);
       }
       await syncPractice();
     } catch (error) {
@@ -1434,22 +1486,29 @@ export default function PracticeTradingTerminal() {
     }
   }
 
-  function setExamplePlan() {
+  function setExamplePlan(side: Side = form.side) {
     if (!(livePrice > 0)) return;
     const entry = form.orderType === "LIMIT" && Number(form.limitPrice) > 0 ? Number(form.limitPrice) : livePrice;
-    const stopPct = 0.01;
-    const stop = form.side === "LONG" ? entry * (1 - stopPct) : entry * (1 + stopPct);
+    const stop = side === "LONG" ? entry * .99 : entry * 1.01;
     const risk = Math.abs(entry - stop);
-    const tp1 = form.side === "LONG" ? entry + risk * 1.5 : entry - risk * 1.5;
-    const tp2 = form.side === "LONG" ? entry + risk * 2.0 : entry - risk * 2.0;
-    const tp3 = form.side === "LONG" ? entry + risk * 3.0 : entry - risk * 3.0;
-    setForm((x) => ({
+    const tp1 = side === "LONG" ? entry + risk * 1.5 : entry - risk * 1.5;
+    const tp2 = side === "LONG" ? entry + risk * 2 : entry - risk * 2;
+    const tp3 = side === "LONG" ? entry + risk * 3 : entry - risk * 3;
+    setForm(x => ({
       ...x,
+      side,
       stop: String(Number(stop.toPrecision(10))),
       tp1: String(Number(tp1.toPrecision(10))),
       tp2: String(Number(tp2.toPrecision(10))),
       tp3: String(Number(tp3.toPrecision(10))),
     }));
+  }
+
+  function setMarginFromPct(pct: number) {
+    const available = Math.max(0, Number(summary?.available_margin || 0));
+    const margin = available * pct / 100;
+    setMarginPct(pct);
+    setForm(x => ({ ...x, margin: margin > 0 ? String(Number(margin.toFixed(2))) : "0" }));
   }
 
   async function moveToBreakEven(id: number) {
@@ -1745,93 +1804,174 @@ export default function PracticeTradingTerminal() {
           </div>
         </section>
 
-        {/* Order ticket */}
-        <aside className="border-t border-slate-800 bg-[#070f1a] xl:border-l xl:border-t-0">
-          <div className="border-b border-slate-800/80 px-3 py-3">
-            <div className="grid grid-cols-3 gap-1.5">
-              <CompactMetric label="Equity" value={money(summary?.equity ?? 1000)}/>
-              <CompactMetric label="PnL abierto" value={money(summary?.unrealized_pnl ?? 0)} tone={(summary?.unrealized_pnl ?? 0) >= 0 ? "good" : "bad"}/>
-              <CompactMetric label="PnL real." value={money(summary?.realized_pnl ?? 0)} tone={(summary?.realized_pnl ?? 0) >= 0 ? "good" : "bad"}/>
-            </div>
-          </div>
-
-          <div className="max-h-[700px] overflow-y-auto px-3 py-3">
-            <div className="mb-3 flex items-center justify-between">
+        {/* Futures-style order ticket */}
+        <aside className="border-t border-slate-800 bg-[#090d12] xl:border-l xl:border-t-0">
+          <div className="border-b border-slate-800/80 px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-[9px] font-black uppercase tracking-[.14em] text-cyan-300">Orden demo</div>
-                <div className="mt-0.5 text-sm font-black text-white">{symbol} · {interval.toUpperCase()}</div>
+                <div className="text-[9px] font-black uppercase tracking-[.14em] text-slate-500">Futuros demo · PAPER</div>
+                <div className="mt-1 flex items-center gap-2 text-sm font-black text-white">
+                  {symbol}
+                  <span className="rounded-md border border-slate-700 bg-slate-950/70 px-1.5 py-0.5 text-[8px] text-slate-400">{interval.toUpperCase()}</span>
+                </div>
               </div>
               <button onClick={() => setShowOrder(v => !v)} className="rounded-lg border border-slate-800 p-2 text-slate-500 hover:text-white">
                 <ChevronDown size={14} className={showOrder ? "rotate-180" : ""}/>
               </button>
             </div>
+          </div>
 
-            {showOrder && <>
-              <div className="grid grid-cols-2 gap-1.5">
-                <button onClick={() => setForm(x => ({...x, side:"LONG"}))} className={`rounded-lg border py-2.5 text-xs font-black ${
-                  form.side === "LONG" ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300" : "border-slate-800 text-slate-500"
-                }`}><TrendingUp size={14} className="mr-1 inline"/>LONG</button>
-                <button onClick={() => setForm(x => ({...x, side:"SHORT"}))} className={`rounded-lg border py-2.5 text-xs font-black ${
-                  form.side === "SHORT" ? "border-rose-400/40 bg-rose-400/10 text-rose-300" : "border-slate-800 text-slate-500"
-                }`}><TrendingDown size={14} className="mr-1 inline"/>SHORT</button>
+          {showOrder && <div className="max-h-[740px] overflow-y-auto">
+            <div className="border-b border-slate-800/80 p-3">
+              <div className="flex items-center gap-2">
+                <div className="flex flex-1 items-center justify-between rounded-xl bg-[#171b20] px-3 py-2.5">
+                  <span className="text-[10px] font-black text-slate-200">Aislado</span>
+                  <span className="text-[9px] text-slate-600">PAPER</span>
+                </div>
+                <label className="flex min-w-[105px] items-center gap-1 rounded-xl bg-[#171b20] px-3 py-2.5">
+                  <input
+                    value={form.leverage}
+                    onChange={(e) => setForm(x => ({...x, leverage:String(Math.max(1,Math.min(20,Number(e.target.value)||1)))}))}
+                    inputMode="numeric"
+                    className="w-10 bg-transparent text-right font-mono text-xs font-black text-cyan-300 outline-none"
+                  />
+                  <span className="text-xs font-black text-cyan-300">x</span>
+                  <span className="ml-auto text-[8px] text-slate-600">1–20x</span>
+                </label>
               </div>
+            </div>
 
-              <div className="mt-2 grid grid-cols-2 gap-1.5">
+            <div className="border-b border-slate-800/80 px-3 pt-3">
+              <div className="grid grid-cols-2">
                 {(["MARKET","LIMIT"] as const).map(kind => (
                   <button
                     key={kind}
                     onClick={() => setForm(x => ({...x, orderType:kind, limitPrice:kind === "MARKET" ? "" : (x.limitPrice || String(Number(livePrice.toPrecision(10))))}))}
-                    className={`rounded-lg border py-2 text-[10px] font-black ${
-                      form.orderType === kind ? "border-cyan-400/30 bg-cyan-400/[.07] text-cyan-200" : "border-slate-800 text-slate-600"
+                    className={`border-b-2 px-2 pb-2.5 text-[11px] font-black transition ${
+                      form.orderType === kind ? "border-cyan-300 text-white" : "border-transparent text-slate-600"
                     }`}
-                  >{kind}</button>
+                  >{kind === "MARKET" ? "Mercado" : "Límite"}</button>
                 ))}
               </div>
+            </div>
 
-              <div className="mt-3 grid grid-cols-2 gap-1.5">
-                {form.orderType === "LIMIT" && <TradeInput label="Precio LIMIT" value={form.limitPrice} onChange={(v) => setForm(x => ({...x, limitPrice:v}))}/>}
-                <TradeInput label="Margen USDT" value={form.margin} onChange={(v) => setForm(x => ({...x, margin:v}))}/>
-                <TradeInput label="Apalancamiento" value={form.leverage} onChange={(v) => setForm(x => ({...x, leverage:v}))} suffix="x"/>
-                <TradeInput label="Stop loss" value={form.stop} onChange={(v) => setForm(x => ({...x, stop:v}))}/>
-                <TradeInput label="TP1" value={form.tp1} onChange={(v) => setForm(x => ({...x, tp1:v}))}/>
-                <TradeInput label="TP2" value={form.tp2} onChange={(v) => setForm(x => ({...x, tp2:v}))}/>
-                <TradeInput label="TP3" value={form.tp3} onChange={(v) => setForm(x => ({...x, tp3:v}))}/>
+            <div className="space-y-3 p-4">
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-slate-600">Disponible</span>
+                <b className="font-mono text-slate-200">{money(summary?.available_margin ?? 0).replace("$","")} USDT</b>
               </div>
 
-              <button onClick={setExamplePlan} className="mt-2 w-full rounded-lg border border-violet-400/20 bg-violet-400/[.04] px-2 py-2 text-[9px] font-black text-violet-200">
-                Auto plan: SL 1% · 1.5R / 2R / 3R
-              </button>
+              {form.orderType === "LIMIT" && (
+                <label className="block">
+                  <span className="mb-1.5 block text-[9px] font-bold text-slate-500">Precio</span>
+                  <div className="flex items-center rounded-xl bg-[#171b20] px-3 py-3">
+                    <input value={form.limitPrice} onChange={(e)=>setForm(x=>({...x,limitPrice:e.target.value}))} inputMode="decimal" className="min-w-0 flex-1 bg-transparent font-mono text-sm font-black text-white outline-none"/>
+                    <span className="text-[10px] font-bold text-slate-500">USDT</span>
+                  </div>
+                </label>
+              )}
 
-              <label className="mt-2 block rounded-lg border border-slate-800 bg-[#040a12] px-2.5 py-2">
-                <span className="text-[8px] font-black uppercase tracking-[.12em] text-slate-600">Setup</span>
-                <select value={form.pattern} onChange={(e) => setForm(x => ({...x, pattern:e.target.value}))} className="mt-1 w-full bg-transparent text-[10px] font-bold text-white outline-none">
-                  {PATTERNS.map(name => <option key={name} value={name} className="bg-slate-950">{name.replaceAll("_"," ")}</option>)}
-                </select>
+              <label className="block">
+                <span className="mb-1.5 block text-[9px] font-bold text-slate-500">Cantidad / margen</span>
+                <div className="flex items-center rounded-xl bg-[#171b20] px-3 py-3">
+                  <input
+                    value={form.margin}
+                    onChange={(e)=>{setMarginPct(0);setForm(x=>({...x,margin:e.target.value}))}}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    className="min-w-0 flex-1 bg-transparent font-mono text-sm font-black text-white outline-none"
+                  />
+                  <span className="text-[10px] font-bold text-slate-500">USDT</span>
+                </div>
               </label>
 
-              <div className="mt-2 grid grid-cols-3 gap-1.5">
-                <CompactMetric label="Riesgo" value={riskPreview ? money(riskPreview.risk) : "—"} tone="bad"/>
-                <CompactMetric label="% equity" value={riskPreview ? `${riskPreview.riskPct.toFixed(2)}%` : "—"} tone={riskPreview && riskPreview.riskPct > .5 ? "warn" : undefined}/>
-                <CompactMetric label="R:R" value={riskPreview && riskPreview.rr > 0 ? `1:${riskPreview.rr.toFixed(2)}` : "—"} tone={riskPreview && riskPreview.rr >= 1.5 ? "good" : undefined}/>
+              <div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={marginPct}
+                  onChange={(e)=>setMarginFromPct(Number(e.target.value))}
+                  className="w-full accent-cyan-400"
+                />
+                <div className="mt-1 flex justify-between">
+                  {[0,25,50,75,100].map(pct => (
+                    <button key={pct} onClick={()=>setMarginFromPct(pct)} className={`text-[9px] font-bold ${marginPct===pct?"text-cyan-300":"text-slate-600 hover:text-slate-300"}`}>{pct}%</button>
+                  ))}
+                </div>
               </div>
 
-              <label className="mt-2 block rounded-lg border border-slate-800 bg-[#040a12] px-2.5 py-2">
-                <span className="text-[8px] font-black uppercase tracking-[.12em] text-slate-600">Nota / diario</span>
-                <textarea value={form.note} onChange={(e) => setForm(x => ({...x, note:e.target.value}))} rows={2} className="mt-1 w-full resize-none bg-transparent text-[10px] leading-4 text-slate-300 outline-none" placeholder="Ruptura + retest + volumen…"/>
-              </label>
+              <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-800 bg-[#0d1117] p-2.5">
+                <div>
+                  <div className="text-[8px] uppercase tracking-[.1em] text-slate-600">Valor posición</div>
+                  <div className="mt-1 font-mono text-[11px] font-black text-white">{money(Number(form.margin||0)*Number(form.leverage||1))}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[8px] uppercase tracking-[.1em] text-slate-600">Precio mercado</div>
+                  <div className="mt-1 font-mono text-[11px] font-black text-white">{fmt(livePrice)}</div>
+                </div>
+              </div>
 
               <button
-                onClick={openTrade}
-                disabled={busy || !form.stop || !form.tp1 || (form.orderType === "LIMIT" && !form.limitPrice)}
-                className={`mt-3 flex w-full items-center justify-center gap-2 rounded-lg py-3 text-xs font-black text-slate-950 shadow-lg disabled:opacity-40 ${
-                  form.side === "LONG" ? "bg-emerald-400 shadow-emerald-500/10" : "bg-rose-400 shadow-rose-500/10"
-                }`}
+                onClick={()=>setShowTpSl(v=>!v)}
+                className="flex w-full items-center justify-between rounded-xl border border-slate-800 bg-[#0d1117] px-3 py-2.5 text-left"
               >
-                <Play size={15}/>{form.orderType === "LIMIT" ? `COLOCAR LIMIT ${form.side}` : `ABRIR ${form.side}`} · FICTICIO
+                <span className="flex items-center gap-2 text-[10px] font-black text-slate-300">
+                  <span className={`grid h-4 w-4 place-items-center rounded border ${showTpSl?"border-cyan-400 bg-cyan-400 text-slate-950":"border-slate-600"}`}>{showTpSl?"✓":""}</span>
+                  TP / SL
+                </span>
+                <span className="text-[8px] text-slate-600">{showTpSl ? "Manual" : "Auto al abrir"}</span>
               </button>
-              <div className="mt-1.5 text-center text-[8px] text-slate-700">No conecta órdenes con Binance ni dinero real.</div>
-            </>}
-          </div>
+
+              {showTpSl && <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-800 bg-[#0d1117] p-2">
+                <TradeInput label="Stop Loss" value={form.stop} onChange={(v)=>setForm(x=>({...x,stop:v}))}/>
+                <TradeInput label="TP1" value={form.tp1} onChange={(v)=>setForm(x=>({...x,tp1:v}))}/>
+                <TradeInput label="TP2" value={form.tp2} onChange={(v)=>setForm(x=>({...x,tp2:v}))}/>
+                <TradeInput label="TP3" value={form.tp3} onChange={(v)=>setForm(x=>({...x,tp3:v}))}/>
+                <button onClick={()=>setExamplePlan("LONG")} className="rounded-lg border border-emerald-400/15 px-2 py-2 text-[8px] font-black text-emerald-300">Plan LONG auto</button>
+                <button onClick={()=>setExamplePlan("SHORT")} className="rounded-lg border border-rose-400/15 px-2 py-2 text-[8px] font-black text-rose-300">Plan SHORT auto</button>
+              </div>}
+
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <button
+                  onClick={()=>openTrade("LONG")}
+                  disabled={busy || !(Number(form.margin)>0)}
+                  className="rounded-2xl bg-emerald-400 px-3 py-4 text-sm font-black text-slate-950 shadow-lg shadow-emerald-500/10 transition hover:bg-emerald-300 disabled:opacity-35"
+                >
+                  Abrir Largo
+                </button>
+                <button
+                  onClick={()=>openTrade("SHORT")}
+                  disabled={busy || !(Number(form.margin)>0)}
+                  className="rounded-2xl bg-rose-500 px-3 py-4 text-sm font-black text-white shadow-lg shadow-rose-500/10 transition hover:bg-rose-400 disabled:opacity-35"
+                >
+                  Abrir Corto
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-[9px]">
+                <div className="rounded-lg border border-slate-800 px-2 py-2">
+                  <span className="text-slate-600">Coste</span>
+                  <b className="float-right font-mono text-slate-300">{money(Number(form.margin||0))}</b>
+                </div>
+                <div className="rounded-lg border border-slate-800 px-2 py-2">
+                  <span className="text-slate-600">Máximo</span>
+                  <b className="float-right font-mono text-slate-300">{money(summary?.available_margin ?? 0)}</b>
+                </div>
+              </div>
+
+              {riskPreview && <div className="grid grid-cols-3 gap-1">
+                <CompactMetric label="Riesgo SL" value={money(riskPreview.risk)} tone="bad"/>
+                <CompactMetric label="% equity" value={`${riskPreview.riskPct.toFixed(2)}%`} tone={riskPreview.riskPct>.5?"warn":undefined}/>
+                <CompactMetric label="R:R" value={riskPreview.rr>0?`1:${riskPreview.rr.toFixed(2)}`:"Auto"}/>
+              </div>}
+
+              <div className="text-center text-[8px] leading-4 text-slate-700">
+                Dinero ficticio · no envía órdenes a Binance · máximo 20x en práctica.
+              </div>
+            </div>
+          </div>}
         </aside>
       </div>
 
