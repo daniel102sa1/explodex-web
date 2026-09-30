@@ -414,7 +414,7 @@ async function fetchAnalysisBars(symbol: string, interval: Interval) {
 
   try {
     if(BASE_URL){
-      const response=await fetch(`${BASE_URL}/api/v1/market/candles/${symbol}?interval=${interval}&limit=300`,{cache:"no-store"});
+      const response=await fetch(`${BASE_URL}/api/v1/market/candles/${symbol}?interval=${interval}&limit=600`,{cache:"no-store"});
       if(response.ok){
         const payload=await response.json();
         const rows=normalize(payload.candles??[]);
@@ -424,7 +424,7 @@ async function fetchAnalysisBars(symbol: string, interval: Interval) {
   } catch {}
 
   try {
-    const response=await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=300`,{cache:"no-store"});
+    const response=await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=600`,{cache:"no-store"});
     if(response.ok){
       const rows=await response.json();
       if(Array.isArray(rows)) return rows.map((r:any[])=>({
@@ -723,7 +723,7 @@ export default function PracticeTradingTerminal() {
           // chart with only the live websocket candle.
           try {
             const response = await fetch(
-              `${BASE_URL}/api/v1/market/candles/${ticker}?interval=${requestedInterval}&limit=300`,
+              `${BASE_URL}/api/v1/market/candles/${ticker}?interval=${requestedInterval}&limit=600`,
               { cache: "no-store" }
             );
             if (response.ok) {
@@ -736,7 +736,7 @@ export default function PracticeTradingTerminal() {
           if (bars.length < 20) {
             try {
               const response = await fetch(
-                `https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(ticker)}&interval=${encodeURIComponent(requestedInterval)}&limit=300`,
+                `https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(ticker)}&interval=${encodeURIComponent(requestedInterval)}&limit=600`,
                 { cache: "no-store" }
               );
               if (response.ok) {
@@ -765,7 +765,7 @@ export default function PracticeTradingTerminal() {
                   ? requestedInterval.replace("h", "H")
                   : requestedInterval;
               const response = await fetch(
-                `https://www.okx.com/api/v5/market/history-candles?instId=${base}-USDT-SWAP&bar=${okxBar}&limit=300`,
+                `https://www.okx.com/api/v5/market/history-candles?instId=${base}-USDT-SWAP&bar=${okxBar}&limit=600`,
                 { cache: "no-store" }
               );
               if (response.ok) {
@@ -1139,7 +1139,17 @@ export default function PracticeTradingTerminal() {
         onDrawEnd: () => {
           window.setTimeout(() => {
             try {
-              chart.createOverlay({ name: "segment", groupId: "practice-user", mode: strongMagnet ? "strong_magnet" : "weak_magnet", modeSensitivity: strongMagnet ? 18 : 10 });
+              chart.createOverlay({
+                name: "segment",
+                groupId: "practice-user",
+                mode: strongMagnet ? "strong_magnet" : "weak_magnet",
+                modeSensitivity: strongMagnet ? 18 : 10,
+                onDrawEnd: () => {
+                  setActiveTool(null);
+                  setMessage("Triángulo manual listo. Puedes arrastrar los cuatro extremos para ajustar las directrices.");
+                  return false;
+                },
+              });
             } catch {}
           }, 120);
           return false;
@@ -1545,9 +1555,14 @@ export default function PracticeTradingTerminal() {
 
           {activeTool && <div className="flex items-center justify-between gap-2 border-b border-cyan-400/15 bg-cyan-400/[.04] px-3 py-2 text-[10px] text-cyan-100"><span><b>{activeTool}</b> activa · {strongMagnet ? "imán fuerte" : "imán suave"} · marca los puntos directamente sobre las velas</span><button onClick={() => setActiveTool(null)} className="rounded-md border border-cyan-400/20 px-2 py-1 text-[9px] font-black">Cursor</button></div>}
 
-          <MarketRadar insight={marketInsight} interval={interval} deepScan={deepScan} analyzing={analyzingAll} onAnalyze={analyzeEverything} onDraw={() => precisionScan?.current ? drawPrecisionPattern(precisionScan.current) : drawRadarPatterns(marketInsight)}/>
-
-          <PrecisionAssistant scan={precisionScan} showExplain={showExplain} onDraw={() => drawPrecisionPattern(precisionScan?.current ?? null)} />
+          <PrecisionAssistant
+            scan={precisionScan}
+            analyzing={analyzingAll}
+            showExplain={showExplain}
+            onAnalyze={analyzeEverything}
+            onToggleExplain={() => setShowExplain(v => !v)}
+            onDraw={() => drawPrecisionPattern(precisionScan?.current ?? null)}
+          />
 
           <div className="relative">
             {!chartReady && (
@@ -1764,6 +1779,142 @@ export default function PracticeTradingTerminal() {
           <Target size={14}/>{message}<button onClick={() => setMessage("")}><X size={14} className="text-slate-500"/></button>
         </div>
       )}
+    </div>
+  );
+}
+
+function PrecisionAssistant({
+  scan,
+  analyzing,
+  showExplain,
+  onAnalyze,
+  onToggleExplain,
+  onDraw,
+}: {
+  scan: PrecisionScan | null;
+  analyzing: boolean;
+  showExplain: boolean;
+  onAnalyze: () => void;
+  onToggleExplain: () => void;
+  onDraw: () => void;
+}) {
+  const current = scan?.current ?? null;
+  const pattern = current?.pattern ?? null;
+
+  if (!scan) {
+    return (
+      <div className="border-b border-slate-800/80 bg-[#060e18] px-3 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-black text-white"><Sparkles size={14} className="text-cyan-300"/> Asistente técnico ExplodeX</div>
+            <div className="mt-1 text-[9px] text-slate-500">Detecta figuras con pivotes 5/5, compara 5m · 15m · 1h · 4h y solo arma SL/TP cuando existe confirmación.</div>
+          </div>
+          <button onClick={onAnalyze} disabled={analyzing} className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2.5 text-[10px] font-black text-cyan-100 shadow-sm shadow-cyan-500/10 disabled:opacity-50">
+            {analyzing ? "ANALIZANDO…" : "⚡ ANALIZAR TODO"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const directionTone = scan.direction === "LONG"
+    ? "border-emerald-400/25 bg-emerald-400/[.06] text-emerald-200"
+    : scan.direction === "SHORT"
+      ? "border-rose-400/25 bg-rose-400/[.06] text-rose-200"
+      : "border-amber-400/25 bg-amber-400/[.05] text-amber-200";
+
+  const stateLabel = !pattern
+    ? "SIN FIGURA LIMPIA"
+    : pattern.status === "FORMING"
+      ? "EN FORMACIÓN · ESPERAR RUPTURA"
+      : pattern.status === "CONFIRMED_LONG"
+        ? "RUPTURA LONG CONFIRMADA"
+        : "RUPTURA SHORT CONFIRMADA";
+
+  return (
+    <div className="border-b border-slate-800/80 bg-[#060e18] p-2">
+      <div className="grid gap-2 xl:grid-cols-[210px_minmax(0,1fr)_330px]">
+        <div className={`rounded-xl border p-3 ${directionTone}`}>
+          <div className="text-[8px] font-black uppercase tracking-[.13em] opacity-65">Contexto multi-temporal</div>
+          <div className="mt-1 text-lg font-black">{scan.direction}</div>
+          <div className="mt-1 text-[9px] opacity-80">{scan.agreement}/{scan.total} temporalidades acompañan el contexto</div>
+          <div className="mt-2 grid grid-cols-4 gap-1">
+            {scan.rows.map(row => (
+              <div key={row.interval} className="rounded-md border border-white/10 bg-black/10 px-1 py-1 text-center">
+                <div className="text-[8px] font-black">{row.interval.toUpperCase()}</div>
+                <div className={`mt-0.5 text-[7px] ${row.read.trendScore > 1 ? "text-emerald-200" : row.read.trendScore < -1 ? "text-rose-200" : "text-amber-200"}`}>
+                  {row.read.trendScore > 1 ? "↑" : row.read.trendScore < -1 ? "↓" : "↔"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-[#040a12] p-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <div className="text-[8px] font-black uppercase tracking-[.13em] text-slate-600">Figura actual</div>
+              <div className="mt-1 text-sm font-black text-white">{pattern?.name ?? "No detectada"}</div>
+              <div className={`mt-1 inline-flex rounded-md border px-2 py-1 text-[8px] font-black ${
+                pattern?.status === "CONFIRMED_LONG" ? "border-emerald-400/20 text-emerald-300" :
+                pattern?.status === "CONFIRMED_SHORT" ? "border-rose-400/20 text-rose-300" :
+                "border-amber-400/20 text-amber-300"
+              }`}>{stateLabel}</div>
+            </div>
+            <div className="flex gap-1">
+              <button onClick={onDraw} disabled={!pattern} className="rounded-lg border border-violet-400/20 bg-violet-400/[.05] px-2.5 py-2 text-[8px] font-black text-violet-200 disabled:opacity-30">DIBUJAR EXACTO</button>
+              <button onClick={onAnalyze} disabled={analyzing} className="rounded-lg border border-cyan-400/20 px-2.5 py-2 text-[8px] font-black text-cyan-200 disabled:opacity-40">{analyzing ? "…" : "REANALIZAR"}</button>
+            </div>
+          </div>
+
+          {pattern ? (
+            <div className="mt-3">
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                <Tiny label="Calidad geom." value={pattern.confidence + "/100"}/>
+                <Tiny label="Ruptura ↑" value={fmt(pattern.breakoutLong)} tone="good"/>
+                <Tiny label="Ruptura ↓" value={fmt(pattern.breakoutShort)} tone="bad"/>
+                <Tiny label="Invalidación" value={fmt(pattern.invalidation)}/>
+              </div>
+              {pattern.status === "FORMING" ? (
+                <div className="mt-2 rounded-lg border border-amber-400/15 bg-amber-400/[.04] p-2 text-[9px] leading-4 text-amber-100/80">
+                  La figura todavía no decide dirección. Escenario LONG si confirma por arriba de <b>{fmt(pattern.breakoutLong)}</b>; escenario SHORT si confirma por debajo de <b>{fmt(pattern.breakoutShort)}</b>. No se precarga una entrada antes de la ruptura.
+                </div>
+              ) : (
+                <div className="mt-2 grid grid-cols-5 gap-1">
+                  <Tiny label="Entrada" value={fmt(pattern.entry)}/>
+                  <Tiny label="SL" value={fmt(pattern.stop)} tone="bad"/>
+                  <Tiny label="TP1" value={fmt(pattern.tp1)} tone="good"/>
+                  <Tiny label="TP2 medido" value={fmt(pattern.tp2)} tone="good"/>
+                  <Tiny label="TP3 ext." value={fmt(pattern.tp3)} tone="good"/>
+                </div>
+              )}
+              <div className="mt-2 flex flex-wrap gap-1">
+                {pattern.rationale.map((reason, i) => <span key={i} className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1 text-[8px] text-slate-400">{reason}</span>)}
+              </div>
+            </div>
+          ) : (
+            <div className="mt-3 text-[9px] leading-4 text-slate-500">No hay una figura con geometría suficientemente limpia ahora. El contexto multi-TF sirve como orientación, pero no es un gatillo de entrada.</div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-[#040a12] p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[8px] font-black uppercase tracking-[.13em] text-slate-600">Indicadores · qué están diciendo</div>
+            <button onClick={onToggleExplain} className="inline-flex items-center gap-1 rounded-md border border-slate-800 px-2 py-1 text-[8px] font-black text-slate-500 hover:text-cyan-200"><HelpCircle size={10}/>{showExplain ? "Ocultar" : "Explicar"}</button>
+          </div>
+          {current ? <div className="mt-2 grid grid-cols-4 gap-1">
+            <Tiny label="RSI" value={current.rsi.toFixed(1)}/>
+            <Tiny label="VOL" value={current.volumeRatio.toFixed(2)+"x"}/>
+            <Tiny label="ATR" value={fmt(current.atr14)}/>
+            <Tiny label="EMA20" value={fmt(current.ema20)}/>
+          </div> : null}
+          {showExplain && current && <div className="mt-2 space-y-1.5">
+            {current.indicatorNotes.map((note,i)=><div key={i} className="rounded-md border border-slate-800/70 bg-slate-950/50 px-2 py-1.5 text-[8px] leading-4 text-slate-400">{note}</div>)}
+            <details className="rounded-md border border-slate-800/70 px-2 py-1.5 text-[8px] text-slate-500"><summary className="cursor-pointer font-black text-slate-400">¿Qué hace cada indicador?</summary><div className="mt-2 space-y-1.5"><p><b>EMA:</b> {INDICATOR_HELP.EMA}</p><p><b>RSI:</b> {INDICATOR_HELP.RSI}</p><p><b>MACD:</b> {INDICATOR_HELP.MACD}</p><p><b>Volumen:</b> {INDICATOR_HELP.VOLUME}</p><p><b>ATR:</b> {INDICATOR_HELP.ATR}</p></div></details>
+          </div>}
+        </div>
+      </div>
+      <div className="mt-2 text-[8px] text-slate-700">“Calidad geom.” mide qué tan bien encajan los pivotes con la figura; no es probabilidad de ganar ni recomendación de inversión.</div>
     </div>
   );
 }
