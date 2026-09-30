@@ -351,6 +351,31 @@ export default function PracticeTradingTerminal() {
       registerPositionOverlay("EXPLODEX_LONG_POSITION", "LONG");
       registerPositionOverlay("EXPLODEX_SHORT_POSITION", "SHORT");
 
+      const registerPolylinePattern = (name: string, label: string, totalStep: number) => {
+        try {
+          kc.registerOverlay({
+            name,
+            totalStep,
+            needDefaultPointFigure: true,
+            needDefaultXAxisFigure: true,
+            needDefaultYAxisFigure: true,
+            mode: "weak_magnet",
+            modeSensitivity: 8,
+            createPointFigures: ({ coordinates }: any) => {
+              if (!Array.isArray(coordinates) || coordinates.length < 2) return [];
+              return [
+                { type: "line", attrs: { coordinates }, styles: { color: "#c084fc", size: 1.8 } },
+                { type: "text", attrs: { x: coordinates[0].x + 6, y: coordinates[0].y - 8, text: label }, styles: { color: "#e9d5ff", size: 11 } },
+              ];
+            },
+          } as any);
+        } catch {}
+      };
+      registerPolylinePattern("EXPLODEX_ABCD", "ABCD", 5);
+      registerPolylinePattern("EXPLODEX_XABCD", "XABCD / armónico", 6);
+      registerPolylinePattern("EXPLODEX_HCH", "HCH / neckline", 7);
+      registerPolylinePattern("EXPLODEX_ELLIOTT", "Elliott 1-2-3-4-5", 6);
+
       try {
         kc.registerOverlay({
           name: "EXPLODEX_MEASURE",
