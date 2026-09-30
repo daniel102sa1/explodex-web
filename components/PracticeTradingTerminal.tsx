@@ -1076,20 +1076,23 @@ export default function PracticeTradingTerminal() {
           <div className="terminal-panel p-4 md:col-span-3">
             <div className="text-sm font-black text-white">Últimas operaciones cerradas</div>
             <div className="mt-3 overflow-x-auto">
-              <table className="w-full min-w-[720px] text-xs">
+              <table className="w-full min-w-[1100px] text-xs">
                 <thead className="text-[9px] uppercase tracking-[.1em] text-slate-600">
-                  <tr><th className="py-2 text-left">Par</th><th>Tipo</th><th>Entrada</th><th>Salida</th><th>SL</th><th>TP</th><th>PnL neto</th><th>Motivo</th></tr>
+                  <tr><th className="py-2 text-left">Par</th><th>Setup</th><th>Tipo</th><th>Entrada</th><th>Salida</th><th>SL</th><th>TP</th><th>PnL neto</th><th>R</th><th>Costos</th><th>Motivo</th></tr>
                 </thead>
                 <tbody>
                   {history.slice(0, 12).map((row) => (
                     <tr key={row.id} className="border-t border-slate-900 text-center">
                       <td className="py-2 text-left font-black text-white">{row.symbol}</td>
+                      <td className="text-[10px] text-slate-500">{(row.pattern || "MANUAL").replaceAll("_"," ")} · {row.timeframe || "—"}</td>
                       <td className={row.side === "LONG" ? "text-emerald-300" : "text-rose-300"}>{row.side}</td>
                       <td>{fmt(row.entry_price)}</td>
                       <td>{fmt(row.exit_price)}</td>
                       <td className="text-rose-300">{fmt(row.stop_loss)}</td>
                       <td className="text-emerald-300">{fmt(row.take_profit)}</td>
                       <td className={Number(row.net_pnl) >= 0 ? "text-emerald-300" : "text-rose-300"}>{money(row.net_pnl)}</td>
+                      <td>{row.r_multiple == null ? "—" : Number(row.r_multiple).toFixed(2)+"R"}</td>
+                      <td className="text-slate-500">{money(Number(row.fees||0)+Number(row.slippage||0)+Number(row.funding_estimate||0))}</td>
                       <td className="text-slate-500">{row.close_reason}</td>
                     </tr>
                   ))}
