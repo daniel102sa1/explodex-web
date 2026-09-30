@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { analyzeTechnical, INDICATOR_HELP, type TechnicalRead } from "@/lib/patternEngine";
 import {
   Activity,
   BarChart3,
@@ -9,6 +10,10 @@ import {
   CircleDollarSign,
   Eraser,
   Gauge,
+  HelpCircle,
+  Magnet,
+  MousePointer2,
+  Sparkles,
   Layers3,
   LineChart,
   Minus,
@@ -228,6 +233,14 @@ type DeepScan = {
   note: string;
 };
 
+type PrecisionScan = {
+  direction: "LONG" | "SHORT" | "ESPERAR";
+  agreement: number;
+  total: number;
+  rows: Array<{ interval: Interval; read: TechnicalRead }>;
+  current: TechnicalRead | null;
+};
+
 function emaValues(values: number[], period: number) {
   if (!values.length) return [];
   const alpha = 2 / (period + 1);
@@ -401,7 +414,7 @@ async function fetchAnalysisBars(symbol: string, interval: Interval) {
 
   try {
     if(BASE_URL){
-      const response=await fetch(`${BASE_URL}/api/v1/market/candles/${symbol}?interval=${interval}&limit=300`,{cache:"no-store"});
+      const response=await fetch(`${BASE_URL}/api/v1/market/candles/${symbol}?interval=${interval}&limit=600`,{cache:"no-store"});
       if(response.ok){
         const payload=await response.json();
         const rows=normalize(payload.candles??[]);
@@ -411,7 +424,7 @@ async function fetchAnalysisBars(symbol: string, interval: Interval) {
   } catch {}
 
   try {
-    const response=await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=300`,{cache:"no-store"});
+    const response=await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=600`,{cache:"no-store"});
     if(response.ok){
       const rows=await response.json();
       if(Array.isArray(rows)) return rows.map((r:any[])=>({
@@ -434,7 +447,11 @@ export default function PracticeTradingTerminal() {
   const [livePrice, setLivePrice] = useState(0);
   const [marketInsight, setMarketInsight] = useState<MarketInsight | null>(null);
   const [deepScan, setDeepScan] = useState<DeepScan | null>(null);
+  const [precisionScan, setPrecisionScan] = useState<PrecisionScan | null>(null);
   const [analyzingAll, setAnalyzingAll] = useState(false);
+  const [activeTool, setActiveTool] = useState<string | null>(null);
+  const [strongMagnet, setStrongMagnet] = useState(true);
+  const [showExplain, setShowExplain] = useState(false);
   const [indicatorSet, setIndicatorSet] = useState<Set<IndicatorName>>(
     new Set(["EMA20/50/200", "VOL"])
   );
@@ -706,7 +723,7 @@ export default function PracticeTradingTerminal() {
           // chart with only the live websocket candle.
           try {
             const response = await fetch(
-              `${BASE_URL}/api/v1/market/candles/${ticker}?interval=${requestedInterval}&limit=300`,
+              `${BASE_URL}/api/v1/market/candles/${ticker}?interval=${requestedInterval}&limit=600`,
               { cache: "no-store" }
             );
             if (response.ok) {
@@ -719,7 +736,7 @@ export default function PracticeTradingTerminal() {
           if (bars.length < 20) {
             try {
               const response = await fetch(
-                `https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(ticker)}&interval=${encodeURIComponent(requestedInterval)}&limit=300`,
+                `https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(ticker)}&interval=${encodeURIComponent(requestedInterval)}&limit=600`,
                 { cache: "no-store" }
               );
               if (response.ok) {
@@ -748,7 +765,7 @@ export default function PracticeTradingTerminal() {
                   ? requestedInterval.replace("h", "H")
                   : requestedInterval;
               const response = await fetch(
-                `https://www.okx.com/api/v5/market/history-candles?instId=${base}-USDT-SWAP&bar=${okxBar}&limit=300`,
+                `https://www.okx.com/api/v5/market/history-candles?instId=${base}-USDT-SWAP&bar=${okxBar}&limit=600`,
                 { cache: "no-store" }
               );
               if (response.ok) {
@@ -937,12 +954,80 @@ export default function PracticeTradingTerminal() {
     });
   }
 
+  const drawLabels: Record<string, { label: string; hint: string }> = {
+    segment: { label: "Línea de tendencia", hint: "Haz clic en dos swings. Con imán fuerte se ajusta a máximos/mínimos de las velas." },
+    rayLine: { label: "Rayo de tendencia", hint: "Marca dos puntos; la línea se proyecta hacia la derecha." },
+    horizontalStraightLine: { label: "Soporte / resistencia", hint: "Haz clic sobre el nivel que quieres conservar como referencia." },
+    fibonacciLine: { label: "Fibonacci", hint: "Marca inicio y fin del impulso; ajusta los puntos si hace falta." },
+    parallelStraightLine: { label: "Canal paralelo", hint: "Marca la directriz y luego el ancho del canal." },
+    EXPLODEX_FIB_EXTENSION: { label: "Extensión Fibonacci", hint: "Marca A → B → C para proyectar objetivos." },
+    EXPLODEX_MEASURE: { label: "Regla / recorrido", hint: "Marca inicio y final del movimiento para medirlo." },
+    EXPLODEX_LONG_POSITION: { label: "Long Position", hint: "Marca entrada, stop y objetivo para visualizar el R:R." },
+    EXPLODEX_SHORT_POSITION: { label: "Short Position", hint: "Marca entrada, stop y objetivo para visualizar el R:R." },
+    brush: { label: "Dibujo libre", hint: "Dibuja libremente sobre el gráfico." },
+  };
+
   function draw(name: string) {
     const chart = chartRef.current;
     if (!chart) return;
+    const meta = drawLabels[name] || { label: name, hint: "Marca los puntos de la herramienta sobre el gráfico." };
+    setActiveTool(meta.label);
+    setMessage(meta.hint);
     try {
-      chart.createOverlay({ name, groupId: "practice-user", mode: "weak_magnet", modeSensitivity: 8 });
-    } catch {}
+      chart.createOverlay({
+        name,
+        groupId: "practice-user",
+        mode: strongMagnet ? "strong_magnet" : "weak_magnet",
+        modeSensitivity: strongMagnet ? 18 : 10,
+        onDrawStart: () => {
+          setMessage(meta.hint);
+          return false;
+        },
+        onDrawEnd: () => {
+          setActiveTool(null);
+          setMessage(`${meta.label} lista. Puedes arrastrar sus puntos para afinarla.`);
+          return false;
+        },
+      });
+    } catch {
+      setActiveTool(null);
+      setMessage(`No se pudo activar ${meta.label}.`);
+    }
+  }
+
+  function drawPrecisionPattern(read: TechnicalRead | null) {
+    const chart = chartRef.current;
+    const pattern = read?.pattern;
+    if (!chart || !pattern) return;
+    try { chart.removeOverlay({ groupId: "pattern-engine" }); } catch {}
+    const bars = barsRef.current;
+    const startTs = Number(bars[Math.max(0, bars.length - 100)]?.timestamp || pattern.overlays[0]?.points[0]?.timestamp || Date.now());
+    const endTs = Number(bars.at(-1)?.timestamp || Date.now());
+    const colorFor = (label: string) => label.includes("SL") || label.includes("Invalid")
+      ? "#fb7185"
+      : label.includes("TP")
+        ? "#34d399"
+        : label.includes("Entrada")
+          ? "#f8fafc"
+          : "#22d3ee";
+    for (const guide of pattern.overlays) {
+      const points = guide.kind === "horizontal"
+        ? [{ timestamp: startTs, value: Number(guide.value) }, { timestamp: endTs, value: Number(guide.value) }]
+        : guide.points;
+      if (points.length < 2) continue;
+      for (let i = 0; i < points.length - 1; i++) {
+        try {
+          chart.createOverlay({
+            name: "segment",
+            groupId: "pattern-engine",
+            lock: true,
+            points: [points[i], points[i + 1]],
+            styles: { line: { color: colorFor(guide.label), size: 2, style: guide.kind === "horizontal" ? "dashed" : "solid" } },
+          });
+        } catch {}
+      }
+    }
+    setMessage(`${pattern.name} dibujado automáticamente con pivotes 5/5. Revisa que los swings coincidan visualmente antes de usar el plan.`);
   }
 
 
@@ -968,56 +1053,77 @@ export default function PracticeTradingTerminal() {
   async function analyzeEverything() {
     setAnalyzingAll(true);
     setMessage("");
-    try{
-      const frames:Array<{interval:Interval;weight:number}>=[
-        {interval:"5m",weight:1},{interval:"15m",weight:2},{interval:"1h",weight:3},{interval:"4h",weight:4}
+    try {
+      const frames: Array<{ interval: Interval; weight: number }> = [
+        { interval: "5m", weight: 1 },
+        { interval: "15m", weight: 2 },
+        { interval: "1h", weight: 3 },
+        { interval: "4h", weight: 4 },
       ];
-      const results=await Promise.all(frames.map(async item=>{
-        const rows=item.interval===interval&&barsRef.current.length>=35?barsRef.current:await fetchAnalysisBars(symbol,item.interval);
-        return {item,insight:analyzeMarket(rows,item.interval)};
+      const rows = await Promise.all(frames.map(async item => {
+        const bars = item.interval === interval && barsRef.current.length >= 60
+          ? barsRef.current
+          : await fetchAnalysisBars(symbol, item.interval);
+        return { item, read: analyzeTechnical(bars, item.interval) };
       }));
-      const valid=results.filter((x):x is {item:{interval:Interval;weight:number};insight:MarketInsight}=>Boolean(x.insight));
-      let weightedScore=0,totalWeight=0;
-      for(const row of valid){weightedScore+=row.insight.score*row.item.weight;totalWeight+=row.item.weight;}
-      const normalized=totalWeight?weightedScore/totalWeight:0;
-      const direction:DeepScan["direction"]=normalized>=2.5?"LONG":normalized<=-2.5?"SHORT":"ESPERAR";
-      const agreement=valid.filter(x=>direction==="LONG"?x.insight.bias==="ALCISTA":direction==="SHORT"?x.insight.bias==="BAJISTA":x.insight.bias==="ESPERAR").length;
-      const note=direction==="LONG"
-        ? "Contexto mayor inclina al alza. Busca confirmación de ruptura/retest antes de una práctica LONG."
-        : direction==="SHORT"
-          ? "Contexto mayor inclina a la baja. Busca pérdida/retest del soporte antes de una práctica SHORT."
-          : "Las temporalidades no están suficientemente alineadas. Mejor esperar una estructura más limpia.";
-      const scan:DeepScan={direction,weightedScore:normalized,agreement,total:valid.length,rows:valid.map(x=>({interval:x.item.interval,insight:x.insight})),note};
-      setDeepScan(scan);
+      const valid = rows.filter((x): x is { item: { interval: Interval; weight: number }; read: TechnicalRead } => Boolean(x.read));
 
-      const current=analyzeMarket(barsRef.current,interval);
-      if(current){
-        setMarketInsight(current);
-        drawRadarPatterns(current);
-        if(direction!=="ESPERAR"){
-          const side=direction==="LONG"?"LONG":"SHORT";
-          const entry=livePrice>0?livePrice:Number(barsRef.current.at(-1)?.close||0);
-          const stopBase=side==="LONG"?current.support:current.resistance;
-          const stop=side==="LONG"?Math.min(stopBase,entry*.99):Math.max(stopBase,entry*1.01);
-          const risk=Math.abs(entry-stop);
-          if(entry>0&&risk>0){
-            setForm(x=>({
-              ...x,
-              side,
-              stop:String(Number(stop.toPrecision(10))),
-              tp1:String(Number((side==="LONG"?entry+risk*1.5:entry-risk*1.5).toPrecision(10))),
-              tp2:String(Number((side==="LONG"?entry+risk*2:entry-risk*2).toPrecision(10))),
-              tp3:String(Number((side==="LONG"?entry+risk*3:entry-risk*3).toPrecision(10))),
-              pattern:current.patterns[0]?.toUpperCase().replaceAll(" ","_").replaceAll("/","_").slice(0,40)||"OTRO",
-              note:`ANALIZAR TODO: ${direction}. ${current.summary}`
-            }));
-          }
-        }
+      let weighted = 0;
+      let totalWeight = 0;
+      for (const row of valid) {
+        let score = row.read.trendScore;
+        if (row.read.pattern?.direction === "LONG") score += 4;
+        if (row.read.pattern?.direction === "SHORT") score -= 4;
+        weighted += score * row.item.weight;
+        totalWeight += row.item.weight;
       }
-      setMessage(`Análisis completo: ${direction} · ${agreement}/${valid.length} temporalidades alineadas. Revisa las confirmaciones antes de ejecutar.`);
-    }catch(error){
-      setMessage(error instanceof Error?error.message:"No se pudo completar el análisis.");
-    }finally{
+      const normalized = totalWeight ? weighted / totalWeight : 0;
+      let direction: PrecisionScan["direction"] = normalized >= 2 ? "LONG" : normalized <= -2 ? "SHORT" : "ESPERAR";
+
+      const current = analyzeTechnical(barsRef.current, interval);
+      if (current?.pattern?.direction === "LONG") direction = "LONG";
+      if (current?.pattern?.direction === "SHORT") direction = "SHORT";
+
+      const agreement = valid.filter(row =>
+        direction === "LONG" ? row.read.trendScore > 0 :
+        direction === "SHORT" ? row.read.trendScore < 0 :
+        Math.abs(row.read.trendScore) <= 2
+      ).length;
+      const next: PrecisionScan = {
+        direction,
+        agreement,
+        total: valid.length,
+        rows: valid.map(x => ({ interval: x.item.interval, read: x.read })),
+        current,
+      };
+      setPrecisionScan(next);
+
+      if (current?.pattern) {
+        drawPrecisionPattern(current);
+        const p = current.pattern;
+        if (p.direction !== "WAIT" && p.entry && p.stop && p.tp1 && p.tp2 && p.tp3) {
+          const confirmedSide: Side = p.direction === "LONG" ? "LONG" : "SHORT";
+          setForm(x => ({
+            ...x,
+            side: confirmedSide,
+            stop: String(Number(p.stop!.toPrecision(10))),
+            tp1: String(Number(p.tp1!.toPrecision(10))),
+            tp2: String(Number(p.tp2!.toPrecision(10))),
+            tp3: String(Number(p.tp3!.toPrecision(10))),
+            pattern: p.name.toUpperCase().replaceAll(" ", "_").replaceAll("-", "_").slice(0, 40),
+            note: `Patrón confirmado: ${p.name}. ${p.rationale.join(" ")}`,
+          }));
+          setMessage(`${p.name} CONFIRMADO ${p.direction}. Dibujé la figura y cargué SL/TP medidos en el ticket demo; revísalos antes de ejecutar.`);
+        } else {
+          setMessage(`${p.name} EN FORMACIÓN. Dibujé la estructura; aún no cargo una entrada porque falta confirmar la ruptura.`);
+        }
+      } else {
+        try { chartRef.current?.removeOverlay({ groupId: "pattern-engine" }); } catch {}
+        setMessage(`Análisis completo: ${direction}. No encontré una figura suficientemente limpia en ${interval.toUpperCase()}; usa soporte/resistencia y la alineación multi-TF.`);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo completar el análisis.");
+    } finally {
       setAnalyzingAll(false);
     }
   }
@@ -1029,18 +1135,29 @@ export default function PracticeTradingTerminal() {
       chart.createOverlay({
         name: "segment",
         groupId: "practice-user",
-        mode: "weak_magnet",
-        modeSensitivity: 8,
+        mode: strongMagnet ? "strong_magnet" : "weak_magnet",
+        modeSensitivity: strongMagnet ? 18 : 10,
         onDrawEnd: () => {
           window.setTimeout(() => {
             try {
-              chart.createOverlay({ name: "segment", groupId: "practice-user", mode: "weak_magnet", modeSensitivity: 8 });
+              chart.createOverlay({
+                name: "segment",
+                groupId: "practice-user",
+                mode: strongMagnet ? "strong_magnet" : "weak_magnet",
+                modeSensitivity: strongMagnet ? 18 : 10,
+                onDrawEnd: () => {
+                  setActiveTool(null);
+                  setMessage("Triángulo manual listo. Puedes arrastrar los cuatro extremos para ajustar las directrices.");
+                  return false;
+                },
+              });
             } catch {}
           }, 120);
           return false;
         },
       });
-      setMessage("Triángulo: dibuja la línea superior; al terminar se activa la segunda línea.");
+      setActiveTool("Triángulo · 2 directrices");
+      setMessage("Triángulo: marca primero dos pivotes de la directriz superior; luego dos pivotes de la inferior. El imán ayuda a enganchar los swings.");
     } catch {}
   }
 
@@ -1385,13 +1502,16 @@ export default function PracticeTradingTerminal() {
       </div>
 
       {/* Main trading desk */}
-      <div className="grid min-h-[680px] xl:grid-cols-[54px_minmax(0,1fr)_360px]">
+      <div className="grid min-h-[680px] xl:grid-cols-[64px_minmax(0,1fr)_360px]">
         {/* Compact drawing toolbar */}
-        <aside className="flex flex-row gap-1 overflow-x-auto border-b border-slate-800 bg-[#060d17] p-1.5 xl:flex-col xl:overflow-visible xl:border-b-0 xl:border-r">
-          <DeskTool icon={<LineChart size={16}/>} label="Línea / swing" onClick={() => draw("segment")}/>
-          <DeskTool icon={<TrendingUp size={16}/>} label="Rayo de tendencia" onClick={() => draw("rayLine")}/>
-          <DeskTool icon={<Minus size={16}/>} label="Soporte / resistencia" onClick={() => draw("horizontalStraightLine")}/>
-          <DeskTool icon={<Triangle size={16}/>} label="Triángulo" onClick={drawTriangle}/>
+        <aside className="flex flex-row gap-1 overflow-x-auto border-b border-slate-800 bg-[#060d17] p-2 xl:flex-col xl:items-center xl:overflow-visible xl:border-b-0 xl:border-r">
+          <DeskTool icon={<MousePointer2 size={17}/>} label="Cursor / mover gráfico" onClick={() => { setActiveTool(null); setMessage("Cursor activo: arrastra el gráfico, usa la rueda para zoom y selecciona una herramienta cuando quieras dibujar."); }} active={!activeTool}/>
+          <DeskTool icon={<Magnet size={17}/>} label={strongMagnet ? "Imán fuerte ON" : "Imán suave"} onClick={() => { setStrongMagnet(v => !v); setMessage(strongMagnet ? "Imán cambiado a suave." : "Imán fuerte activado: las herramientas buscarán máximos/mínimos de las velas."); }} active={strongMagnet}/>
+          <DeskSeparator/>
+          <DeskTool icon={<LineChart size={17}/>} label="Línea de tendencia" onClick={() => draw("segment")} active={activeTool === "Línea de tendencia"}/>
+          <DeskTool icon={<TrendingUp size={17}/>} label="Rayo de tendencia" onClick={() => draw("rayLine")} active={activeTool === "Rayo de tendencia"}/>
+          <DeskTool icon={<Minus size={17}/>} label="Soporte / resistencia" onClick={() => draw("horizontalStraightLine")} active={activeTool === "Soporte / resistencia"}/>
+          <DeskTool icon={<Triangle size={17}/>} label="Triángulo" onClick={drawTriangle} active={activeTool === "Triángulo · 2 directrices"}/>
           <DeskSeparator/>
           <DeskTool icon={<Activity size={16}/>} label="Fibonacci retroceso" onClick={() => draw("fibonacciLine")}/>
           <DeskTool icon={<Layers3 size={16}/>} label="Fibonacci extensión" onClick={() => draw("EXPLODEX_FIB_EXTENSION")}/>
@@ -1418,6 +1538,7 @@ export default function PracticeTradingTerminal() {
               <button
                 key={name}
                 onClick={() => toggleIndicator(name)}
+                title={name === "EMA20/50/200" ? INDICATOR_HELP.EMA : name === "RSI" ? INDICATOR_HELP.RSI : name === "MACD" ? INDICATOR_HELP.MACD : name === "VOL" ? INDICATOR_HELP.VOLUME : name === "ATR" ? INDICATOR_HELP.ATR : name === "BOLL" ? INDICATOR_HELP.BOLL : name}
                 className={`shrink-0 rounded-md border px-2 py-1 text-[9px] font-black transition ${
                   indicatorSet.has(name)
                     ? "border-violet-400/30 bg-violet-400/10 text-violet-200"
@@ -1427,13 +1548,22 @@ export default function PracticeTradingTerminal() {
                 {name}
               </button>
             ))}
-            <div className="ml-auto hidden items-center gap-1 text-[9px] text-slate-600 lg:flex">
-              <span className="rounded-md border border-slate-800 px-2 py-1">Rueda = zoom</span>
-              <span className="rounded-md border border-slate-800 px-2 py-1">Arrastra = mover</span>
+            <div className="ml-auto flex items-center gap-1 text-[9px]">
+              <button onClick={() => setShowExplain(v => !v)} className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 font-black ${showExplain ? "border-cyan-400/25 bg-cyan-400/[.06] text-cyan-200" : "border-slate-800 text-slate-600"}`}><HelpCircle size={11}/> Explicar</button>
+              <span className="hidden rounded-md border border-slate-800 px-2 py-1 text-slate-600 lg:inline">Rueda = zoom · arrastra = mover</span>
             </div>
           </div>
 
-          <MarketRadar insight={marketInsight} interval={interval} deepScan={deepScan} analyzing={analyzingAll} onAnalyze={analyzeEverything} onDraw={() => drawRadarPatterns(marketInsight)}/>
+          {activeTool && <div className="flex items-center justify-between gap-2 border-b border-cyan-400/15 bg-cyan-400/[.04] px-3 py-2 text-[10px] text-cyan-100"><span><b>{activeTool}</b> activa · {strongMagnet ? "imán fuerte" : "imán suave"} · marca los puntos directamente sobre las velas</span><button onClick={() => setActiveTool(null)} className="rounded-md border border-cyan-400/20 px-2 py-1 text-[9px] font-black">Cursor</button></div>}
+
+          <PrecisionAssistant
+            scan={precisionScan}
+            analyzing={analyzingAll}
+            showExplain={showExplain}
+            onAnalyze={analyzeEverything}
+            onToggleExplain={() => setShowExplain(v => !v)}
+            onDraw={() => drawPrecisionPattern(precisionScan?.current ?? null)}
+          />
 
           <div className="relative">
             {!chartReady && (
@@ -1654,6 +1784,142 @@ export default function PracticeTradingTerminal() {
   );
 }
 
+function PrecisionAssistant({
+  scan,
+  analyzing,
+  showExplain,
+  onAnalyze,
+  onToggleExplain,
+  onDraw,
+}: {
+  scan: PrecisionScan | null;
+  analyzing: boolean;
+  showExplain: boolean;
+  onAnalyze: () => void;
+  onToggleExplain: () => void;
+  onDraw: () => void;
+}) {
+  const current = scan?.current ?? null;
+  const pattern = current?.pattern ?? null;
+
+  if (!scan) {
+    return (
+      <div className="border-b border-slate-800/80 bg-[#060e18] px-3 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-black text-white"><Sparkles size={14} className="text-cyan-300"/> Asistente técnico ExplodeX</div>
+            <div className="mt-1 text-[9px] text-slate-500">Detecta figuras con pivotes 5/5, compara 5m · 15m · 1h · 4h y solo arma SL/TP cuando existe confirmación.</div>
+          </div>
+          <button onClick={onAnalyze} disabled={analyzing} className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2.5 text-[10px] font-black text-cyan-100 shadow-sm shadow-cyan-500/10 disabled:opacity-50">
+            {analyzing ? "ANALIZANDO…" : "⚡ ANALIZAR TODO"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const directionTone = scan.direction === "LONG"
+    ? "border-emerald-400/25 bg-emerald-400/[.06] text-emerald-200"
+    : scan.direction === "SHORT"
+      ? "border-rose-400/25 bg-rose-400/[.06] text-rose-200"
+      : "border-amber-400/25 bg-amber-400/[.05] text-amber-200";
+
+  const stateLabel = !pattern
+    ? "SIN FIGURA LIMPIA"
+    : pattern.status === "FORMING"
+      ? "EN FORMACIÓN · ESPERAR RUPTURA"
+      : pattern.status === "CONFIRMED_LONG"
+        ? "RUPTURA LONG CONFIRMADA"
+        : "RUPTURA SHORT CONFIRMADA";
+
+  return (
+    <div className="border-b border-slate-800/80 bg-[#060e18] p-2">
+      <div className="grid gap-2 xl:grid-cols-[210px_minmax(0,1fr)_330px]">
+        <div className={`rounded-xl border p-3 ${directionTone}`}>
+          <div className="text-[8px] font-black uppercase tracking-[.13em] opacity-65">Contexto multi-temporal</div>
+          <div className="mt-1 text-lg font-black">{scan.direction}</div>
+          <div className="mt-1 text-[9px] opacity-80">{scan.agreement}/{scan.total} temporalidades acompañan el contexto</div>
+          <div className="mt-2 grid grid-cols-4 gap-1">
+            {scan.rows.map(row => (
+              <div key={row.interval} className="rounded-md border border-white/10 bg-black/10 px-1 py-1 text-center">
+                <div className="text-[8px] font-black">{row.interval.toUpperCase()}</div>
+                <div className={`mt-0.5 text-[7px] ${row.read.trendScore > 1 ? "text-emerald-200" : row.read.trendScore < -1 ? "text-rose-200" : "text-amber-200"}`}>
+                  {row.read.trendScore > 1 ? "↑" : row.read.trendScore < -1 ? "↓" : "↔"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-[#040a12] p-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <div className="text-[8px] font-black uppercase tracking-[.13em] text-slate-600">Figura actual</div>
+              <div className="mt-1 text-sm font-black text-white">{pattern?.name ?? "No detectada"}</div>
+              <div className={`mt-1 inline-flex rounded-md border px-2 py-1 text-[8px] font-black ${
+                pattern?.status === "CONFIRMED_LONG" ? "border-emerald-400/20 text-emerald-300" :
+                pattern?.status === "CONFIRMED_SHORT" ? "border-rose-400/20 text-rose-300" :
+                "border-amber-400/20 text-amber-300"
+              }`}>{stateLabel}</div>
+            </div>
+            <div className="flex gap-1">
+              <button onClick={onDraw} disabled={!pattern} className="rounded-lg border border-violet-400/20 bg-violet-400/[.05] px-2.5 py-2 text-[8px] font-black text-violet-200 disabled:opacity-30">DIBUJAR EXACTO</button>
+              <button onClick={onAnalyze} disabled={analyzing} className="rounded-lg border border-cyan-400/20 px-2.5 py-2 text-[8px] font-black text-cyan-200 disabled:opacity-40">{analyzing ? "…" : "REANALIZAR"}</button>
+            </div>
+          </div>
+
+          {pattern ? (
+            <div className="mt-3">
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                <Tiny label="Calidad geom." value={pattern.confidence + "/100"}/>
+                <Tiny label="Ruptura ↑" value={fmt(pattern.breakoutLong)} tone="good"/>
+                <Tiny label="Ruptura ↓" value={fmt(pattern.breakoutShort)} tone="bad"/>
+                <Tiny label="Invalidación" value={fmt(pattern.invalidation)}/>
+              </div>
+              {pattern.status === "FORMING" ? (
+                <div className="mt-2 rounded-lg border border-amber-400/15 bg-amber-400/[.04] p-2 text-[9px] leading-4 text-amber-100/80">
+                  La figura todavía no decide dirección. Escenario LONG si confirma por arriba de <b>{fmt(pattern.breakoutLong)}</b>; escenario SHORT si confirma por debajo de <b>{fmt(pattern.breakoutShort)}</b>. No se precarga una entrada antes de la ruptura.
+                </div>
+              ) : (
+                <div className="mt-2 grid grid-cols-5 gap-1">
+                  <Tiny label="Entrada" value={fmt(pattern.entry)}/>
+                  <Tiny label="SL" value={fmt(pattern.stop)} tone="bad"/>
+                  <Tiny label="TP1" value={fmt(pattern.tp1)} tone="good"/>
+                  <Tiny label="TP2 medido" value={fmt(pattern.tp2)} tone="good"/>
+                  <Tiny label="TP3 ext." value={fmt(pattern.tp3)} tone="good"/>
+                </div>
+              )}
+              <div className="mt-2 flex flex-wrap gap-1">
+                {pattern.rationale.map((reason, i) => <span key={i} className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1 text-[8px] text-slate-400">{reason}</span>)}
+              </div>
+            </div>
+          ) : (
+            <div className="mt-3 text-[9px] leading-4 text-slate-500">No hay una figura con geometría suficientemente limpia ahora. El contexto multi-TF sirve como orientación, pero no es un gatillo de entrada.</div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-[#040a12] p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[8px] font-black uppercase tracking-[.13em] text-slate-600">Indicadores · qué están diciendo</div>
+            <button onClick={onToggleExplain} className="inline-flex items-center gap-1 rounded-md border border-slate-800 px-2 py-1 text-[8px] font-black text-slate-500 hover:text-cyan-200"><HelpCircle size={10}/>{showExplain ? "Ocultar" : "Explicar"}</button>
+          </div>
+          {current ? <div className="mt-2 grid grid-cols-4 gap-1">
+            <Tiny label="RSI" value={current.rsi.toFixed(1)}/>
+            <Tiny label="VOL" value={current.volumeRatio.toFixed(2)+"x"}/>
+            <Tiny label="ATR" value={fmt(current.atr14)}/>
+            <Tiny label="EMA20" value={fmt(current.ema20)}/>
+          </div> : null}
+          {showExplain && current && <div className="mt-2 space-y-1.5">
+            {current.indicatorNotes.map((note,i)=><div key={i} className="rounded-md border border-slate-800/70 bg-slate-950/50 px-2 py-1.5 text-[8px] leading-4 text-slate-400">{note}</div>)}
+            <details className="rounded-md border border-slate-800/70 px-2 py-1.5 text-[8px] text-slate-500"><summary className="cursor-pointer font-black text-slate-400">¿Qué hace cada indicador?</summary><div className="mt-2 space-y-1.5"><p><b>EMA:</b> {INDICATOR_HELP.EMA}</p><p><b>RSI:</b> {INDICATOR_HELP.RSI}</p><p><b>MACD:</b> {INDICATOR_HELP.MACD}</p><p><b>Volumen:</b> {INDICATOR_HELP.VOLUME}</p><p><b>ATR:</b> {INDICATOR_HELP.ATR}</p></div></details>
+          </div>}
+        </div>
+      </div>
+      <div className="mt-2 text-[8px] text-slate-700">“Calidad geom.” mide qué tan bien encajan los pivotes con la figura; no es probabilidad de ganar ni recomendación de inversión.</div>
+    </div>
+  );
+}
+
 function MarketRadar({ insight, interval, deepScan, analyzing, onAnalyze, onDraw }: { insight: MarketInsight | null; interval: Interval; deepScan: DeepScan | null; analyzing: boolean; onAnalyze: () => void; onDraw: () => void }) {
   if (!insight) {
     return <div className="flex items-center justify-between gap-2 border-b border-slate-800/80 bg-[#07101a] px-3 py-2 text-[9px] text-slate-600"><span>Radar ExplodeX: cargando suficientes velas para leer estructura…</span><button onClick={onAnalyze} disabled={analyzing} className="rounded-lg border border-cyan-400/20 bg-cyan-400/[.06] px-3 py-1.5 font-black text-cyan-200">{analyzing?"ANALIZANDO…":"ANALIZAR TODO"}</button></div>;
@@ -1697,14 +1963,14 @@ function MarketRadar({ insight, interval, deepScan, analyzing, onAnalyze, onDraw
   );
 }
 
-function DeskTool({ icon, label, onClick, danger=false }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
+function DeskTool({ icon, label, onClick, danger=false, active=false }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean; active?: boolean }) {
   return (
     <button
       title={label}
       aria-label={label}
       onClick={onClick}
-      className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg border transition ${
-        danger
+      className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border transition ${active ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-200 shadow-sm shadow-cyan-500/10" :
+danger
           ? "border-rose-500/15 text-rose-400 hover:bg-rose-500/10"
           : "border-transparent text-slate-500 hover:border-cyan-400/20 hover:bg-cyan-400/[.06] hover:text-cyan-200"
       }`}
