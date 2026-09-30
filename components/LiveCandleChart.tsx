@@ -449,7 +449,7 @@ export default function LiveCandleChart({ symbol, plan, livePrice, patternOverla
       </div>
 
       <div className="grid gap-3 p-3 xl:grid-cols-[minmax(0,1fr)_330px]">
-        <div><PracticePriceChart candles={candles} plan={chartPlan} livePrice={effectiveLivePrice ?? undefined} pattern={patternOverlay} symbol={symbol} /></div>
+        <div><PracticePriceChart candles={candles} plan={chartPlan} livePrice={effectiveLivePrice ?? undefined} pattern={patternOverlay} symbol={symbol} interval={interval} /></div>
         <aside className="space-y-3">
           <div className={`rounded-2xl border p-4 ${toneClasses(guide.tone)}`}>
             <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.12em]"><Sparkles size={13}/> Lectura {interval.toUpperCase()}</div><div className="font-mono text-xs font-black">{guide.score}/100</div></div>
