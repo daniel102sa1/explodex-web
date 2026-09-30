@@ -117,6 +117,7 @@ type OrderForm = {
 };
 
 const INTERVALS: Interval[] = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
+const QUICK_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DYDXUSDT", "LINKUSDT", "ADAUSDT"];
 const INDICATORS = ["EMA20/50/200", "VWAP", "RSI", "MACD", "ATR", "VOL", "BOLL", "SAR", "OBV"] as const;
 type IndicatorName = typeof INDICATORS[number];
 
@@ -191,14 +192,172 @@ function periodFromInterval(interval: Interval) {
   return { type: "minute" as const, span: Number(interval.slice(0, -1)) };
 }
 
+
+type RadarBias = "ALCISTA" | "BAJISTA" | "ESPERAR";
+type MarketInsight = {
+  bias: RadarBias;
+  score: number;
+  confluence: number;
+  maxConfluence: number;
+  patterns: string[];
+  summary: string;
+  support: number;
+  resistance: number;
+  rsi: number;
+  macdHist: number;
+  volumeRatio: number;
+  ema20: number;
+  ema50: number;
+  ema200: number;
+  triggerUp: number;
+  triggerDown: number;
+};
+
+function emaValues(values: number[], period: number) {
+  if (!values.length) return [];
+  const alpha = 2 / (period + 1);
+  const out: number[] = [];
+  let current = values[0];
+  out.push(current);
+  for (let i = 1; i < values.length; i++) {
+    current = values[i] * alpha + current * (1 - alpha);
+    out.push(current);
+  }
+  return out;
+}
+
+function rsiLast(values: number[], period = 14) {
+  if (values.length <= period) return 50;
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = values[i] - values[i - 1];
+    if (d >= 0) gains += d; else losses -= d;
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  let rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  for (let i = period + 1; i < values.length; i++) {
+    const d = values[i] - values[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(d, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-d, 0)) / period;
+    rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+  return rsi;
+}
+
+function slope(values: number[]) {
+  if (values.length < 2) return 0;
+  const n = values.length;
+  let sx=0, sy=0, sxy=0, sxx=0;
+  values.forEach((v,i)=>{sx+=i;sy+=v;sxy+=i*v;sxx+=i*i;});
+  const den = n*sxx-sx*sx;
+  return den === 0 ? 0 : (n*sxy-sx*sy)/den;
+}
+
+function swingPeaks(rows: any[]) {
+  const peaks: Array<{i:number;p:number}> = [];
+  const troughs: Array<{i:number;p:number}> = [];
+  for (let i=2;i<rows.length-2;i++) {
+    const h=Number(rows[i].high), l=Number(rows[i].low);
+    if (h>Number(rows[i-1].high)&&h>Number(rows[i-2].high)&&h>=Number(rows[i+1].high)&&h>=Number(rows[i+2].high)) peaks.push({i,p:h});
+    if (l<Number(rows[i-1].low)&&l<Number(rows[i-2].low)&&l<=Number(rows[i+1].low)&&l<=Number(rows[i+2].low)) troughs.push({i,p:l});
+  }
+  return {peaks,troughs};
+}
+
+function analyzeMarket(rows: any[], interval: Interval): MarketInsight | null {
+  const data = rows.slice(-300);
+  if (data.length < 35) return null;
+  const closes=data.map(r=>Number(r.close)), highs=data.map(r=>Number(r.high)), lows=data.map(r=>Number(r.low)), volumes=data.map(r=>Number(r.volume||0));
+  const last=data[data.length-1], price=Number(last.close);
+  const e20=emaValues(closes,20).at(-1) || price;
+  const e50=emaValues(closes,50).at(-1) || price;
+  const e200=emaValues(closes,200).at(-1) || price;
+  const rsi=rsiLast(closes,14);
+  const macdLine=emaValues(closes,12).map((v,i)=>v-(emaValues(closes,26)[i] ?? v));
+  const macdSignal=emaValues(macdLine,9);
+  const macdHist=(macdLine.at(-1)||0)-(macdSignal.at(-1)||0);
+  const avgVol=volumes.slice(-21,-1).reduce((a,b)=>a+b,0)/Math.max(1,Math.min(20,volumes.length-1));
+  const volumeRatio=avgVol>0?Number(last.volume||0)/avgVol:1;
+  const prior=data.slice(-31,-1);
+  const resistance=Math.max(...prior.map(r=>Number(r.high)));
+  const support=Math.min(...prior.map(r=>Number(r.low)));
+  const recent=data.slice(-24);
+  const half=Math.floor(recent.length/2);
+  const upperStart=Math.max(...recent.slice(0,half).map(r=>Number(r.high)));
+  const upperEnd=Math.max(...recent.slice(half).map(r=>Number(r.high)));
+  const lowerStart=Math.min(...recent.slice(0,half).map(r=>Number(r.low)));
+  const lowerEnd=Math.min(...recent.slice(half).map(r=>Number(r.low)));
+  const tolerance=Math.max(price*0.003,1e-9);
+  const patterns:string[]=[];
+  const {peaks,troughs}=swingPeaks(data.slice(-60));
+
+  const upperFlat=Math.abs(upperEnd-upperStart)<=tolerance;
+  const lowerFlat=Math.abs(lowerEnd-lowerStart)<=tolerance;
+  if(upperEnd<upperStart-tolerance*.35 && lowerEnd>lowerStart+tolerance*.35) patterns.push("Triángulo simétrico / compresión");
+  else if(upperFlat && lowerEnd>lowerStart+tolerance*.35) patterns.push("Triángulo ascendente posible");
+  else if(lowerFlat && upperEnd<upperStart-tolerance*.35) patterns.push("Triángulo descendente posible");
+
+  if(peaks.length>=2){
+    const a=peaks[peaks.length-2],b=peaks[peaks.length-1];
+    if(b.i-a.i>=4 && Math.abs(a.p-b.p)/price<.005) patterns.push("Doble techo posible");
+  }
+  if(troughs.length>=2){
+    const a=troughs[troughs.length-2],b=troughs[troughs.length-1];
+    if(b.i-a.i>=4 && Math.abs(a.p-b.p)/price<.005) patterns.push("Doble suelo posible");
+  }
+  if(peaks.length>=3){
+    const p=peaks.slice(-3);
+    if(p[1].p>p[0].p*1.004 && p[1].p>p[2].p*1.004 && Math.abs(p[0].p-p[2].p)/price<.008) patterns.push("HCH posible");
+  }
+  if(troughs.length>=3){
+    const p=troughs.slice(-3);
+    if(p[1].p<p[0].p*.996 && p[1].p<p[2].p*.996 && Math.abs(p[0].p-p[2].p)/price<.008) patterns.push("HCH invertido posible");
+  }
+
+  const breakoutUp=price>resistance;
+  const breakoutDown=price<support;
+  if(breakoutUp) patterns.unshift("Ruptura alcista de resistencia");
+  if(breakoutDown) patterns.unshift("Ruptura bajista de soporte");
+
+  let score=0;
+  if(price>e20) score++; else score--;
+  if(e20>e50) score++; else score--;
+  if(e50>e200) score++; else score--;
+  if(rsi>=55) score++; else if(rsi<=45) score--;
+  if(macdHist>0) score++; else if(macdHist<0) score--;
+  const recentSlope=slope(closes.slice(-16));
+  if(recentSlope>0) score++; else if(recentSlope<0) score--;
+  if(volumeRatio>=1.2) score += Number(last.close)>=Number(last.open)?1:-1;
+  if(breakoutUp) score+=2;
+  if(breakoutDown) score-=2;
+  if(patterns.includes("Doble suelo posible")||patterns.includes("HCH invertido posible")) score++;
+  if(patterns.includes("Doble techo posible")||patterns.includes("HCH posible")) score--;
+
+  const maxConfluence=9;
+  const confluence=Math.min(maxConfluence,Math.abs(score));
+  const bias:RadarBias=score>=3?"ALCISTA":score<=-3?"BAJISTA":"ESPERAR";
+  const patternText=patterns[0] || "Sin patrón claro";
+  const summary=bias==="ALCISTA"
+    ? `Sesgo alcista en ${interval}. Vigila cierre/aceptación sobre ${fmt(resistance)}; soporte clave ${fmt(support)}. ${patternText}.`
+    : bias==="BAJISTA"
+      ? `Sesgo bajista en ${interval}. Vigila cierre/aceptación bajo ${fmt(support)}; resistencia clave ${fmt(resistance)}. ${patternText}.`
+      : `Sin ventaja clara en ${interval}. Precio entre ${fmt(support)} y ${fmt(resistance)}; espera ruptura/retest. ${patternText}.`;
+
+  return {bias,score,confluence,maxConfluence,patterns:patterns.slice(0,3),summary,support,resistance,rsi,macdHist,volumeRatio,ema20:e20,ema50:e50,ema200:e200,triggerUp:resistance,triggerDown:support};
+}
+
 export default function PracticeTradingTerminal() {
   const chartElRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<any>(null);
   const wsCleanupRef = useRef<(() => void) | null>(null);
+  const barsRef = useRef<any[]>([]);
+  const lastInsightAtRef = useRef(0);
   const [symbolInput, setSymbolInput] = useState("BTCUSDT");
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [interval, setIntervalValue] = useState<Interval>("5m");
   const [livePrice, setLivePrice] = useState(0);
+  const [marketInsight, setMarketInsight] = useState<MarketInsight | null>(null);
   const [indicatorSet, setIndicatorSet] = useState<Set<IndicatorName>>(
     new Set(["EMA20/50/200", "VOL"])
   );
@@ -531,7 +690,11 @@ export default function PracticeTradingTerminal() {
             } catch {}
           }
 
-          if (bars.length) setLivePrice(Number(bars[bars.length - 1].close || 0));
+          if (bars.length) {
+            barsRef.current = bars.slice(-300);
+            setLivePrice(Number(bars[bars.length - 1].close || 0));
+            setMarketInsight(analyzeMarket(barsRef.current, requestedInterval));
+          }
           callback(bars, { forward: false, backward: false });
         },
         subscribeBar: ({ symbol: chartSymbol, period, callback }: any) => {
@@ -545,7 +708,17 @@ export default function PracticeTradingTerminal() {
 
           const push = (bar: any) => {
             if (disposedWs) return;
+            const next = barsRef.current.slice();
+            const lastRow = next[next.length - 1];
+            if (lastRow && Number(lastRow.timestamp) === Number(bar.timestamp)) next[next.length - 1] = bar;
+            else next.push(bar);
+            barsRef.current = next.slice(-300);
             setLivePrice(Number(bar.close || 0));
+            const now = Date.now();
+            if (now - lastInsightAtRef.current > 1200) {
+              lastInsightAtRef.current = now;
+              setMarketInsight(analyzeMarket(barsRef.current, requestedInterval));
+            }
             callback(bar);
           };
 
@@ -1007,6 +1180,22 @@ export default function PracticeTradingTerminal() {
           <button className="rounded-lg bg-cyan-400 px-3 py-2 text-[10px] font-black text-slate-950 hover:bg-cyan-300">IR</button>
         </form>
 
+        <div className="hidden items-center gap-1 overflow-x-auto xl:flex">
+          {QUICK_SYMBOLS.map((pair) => (
+            <button
+              key={pair}
+              onClick={() => { setSymbolInput(pair); setSymbol(pair); }}
+              className={`rounded-md border px-2 py-1.5 text-[9px] font-black transition ${
+                symbol === pair
+                  ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-200"
+                  : "border-slate-800 bg-slate-950/30 text-slate-600 hover:text-slate-300"
+              }`}
+            >
+              {pair.replace("USDT","")}
+            </button>
+          ))}
+        </div>
+
         <div className="order-3 flex w-full gap-1 overflow-x-auto lg:order-none lg:w-auto">
           {INTERVALS.map((value) => (
             <button
@@ -1089,6 +1278,8 @@ export default function PracticeTradingTerminal() {
               <span className="rounded-md border border-slate-800 px-2 py-1">Arrastra = mover</span>
             </div>
           </div>
+
+          <MarketRadar insight={marketInsight} interval={interval}/>
 
           <div className="relative">
             {!chartReady && (
@@ -1305,6 +1496,41 @@ export default function PracticeTradingTerminal() {
           <Target size={14}/>{message}<button onClick={() => setMessage("")}><X size={14} className="text-slate-500"/></button>
         </div>
       )}
+    </div>
+  );
+}
+
+function MarketRadar({ insight, interval }: { insight: MarketInsight | null; interval: Interval }) {
+  if (!insight) {
+    return <div className="border-b border-slate-800/80 bg-[#07101a] px-3 py-2 text-[9px] text-slate-600">Radar ExplodeX: cargando suficientes velas para leer estructura…</div>;
+  }
+  const tone = insight.bias === "ALCISTA"
+    ? "border-emerald-400/20 bg-emerald-400/[.05] text-emerald-200"
+    : insight.bias === "BAJISTA"
+      ? "border-rose-400/20 bg-rose-400/[.05] text-rose-200"
+      : "border-amber-400/20 bg-amber-400/[.04] text-amber-200";
+  return (
+    <div className="border-b border-slate-800/80 bg-[#060e18] px-2 py-2">
+      <div className="grid gap-2 2xl:grid-cols-[170px_minmax(0,1fr)_360px]">
+        <div className={`rounded-lg border px-3 py-2 ${tone}`}>
+          <div className="text-[8px] font-black uppercase tracking-[.14em] opacity-70">Radar ExplodeX · {interval.toUpperCase()}</div>
+          <div className="mt-1 text-sm font-black">{insight.bias}</div>
+          <div className="mt-1 text-[9px] opacity-75">Confluencia {insight.confluence}/{insight.maxConfluence} · no es probabilidad</div>
+        </div>
+        <div className="rounded-lg border border-slate-800 bg-slate-950/35 px-3 py-2">
+          <div className="text-[8px] font-black uppercase tracking-[.12em] text-slate-600">Lectura técnica</div>
+          <div className="mt-1 text-[10px] leading-4 text-slate-300">{insight.summary}</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {(insight.patterns.length ? insight.patterns : ["Sin patrón claro"]).map((p) => <span key={p} className="rounded-md border border-violet-400/15 bg-violet-400/[.04] px-1.5 py-0.5 text-[8px] font-bold text-violet-200">{p}</span>)}
+          </div>
+        </div>
+        <div className="grid grid-cols-4 gap-1">
+          <Tiny label="RSI" value={insight.rsi.toFixed(1)}/>
+          <Tiny label="VOL" value={insight.volumeRatio.toFixed(2)+"x"}/>
+          <Tiny label="R ↑" value={fmt(insight.triggerUp)} tone="good"/>
+          <Tiny label="S ↓" value={fmt(insight.triggerDown)} tone="bad"/>
+        </div>
+      </div>
     </div>
   );
 }
