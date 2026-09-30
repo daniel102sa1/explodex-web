@@ -523,11 +523,11 @@ export default function PracticeTradingTerminal() {
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-    for (const name of ["EMA", "EXPLODEX_VWAP", "RSI", "MACD", "VOL", "BOLL", "SAR", "OBV"]) {
+    for (const name of ["EMA", "EXPLODEX_VWAP", "EXPLODEX_ATR", "RSI", "MACD", "VOL", "BOLL", "SAR", "OBV"]) {
       try { chart.removeIndicator({ name }); } catch {}
     }
-    if (indicatorSet.has("EMA20/50")) {
-      try { chart.createIndicator({ name: "EMA", paneId: "candle_pane", calcParams: [20, 50] }, true); } catch {}
+    if (indicatorSet.has("EMA20/50/200")) {
+      try { chart.createIndicator({ name: "EMA", paneId: "candle_pane", calcParams: [20, 50, 200] }, true); } catch {}
     }
     if (indicatorSet.has("VWAP")) {
       try { chart.createIndicator({ name: "EXPLODEX_VWAP", paneId: "candle_pane" }, true); } catch {}
@@ -546,6 +546,9 @@ export default function PracticeTradingTerminal() {
     }
     if (indicatorSet.has("MACD")) {
       try { chart.createIndicator({ name: "MACD", paneId: "macd_pane", calcParams: [12, 26, 9] }); } catch {}
+    }
+    if (indicatorSet.has("ATR")) {
+      try { chart.createIndicator({ name: "EXPLODEX_ATR", paneId: "atr_pane", calcParams: [14] }); } catch {}
     }
     if (indicatorSet.has("OBV")) {
       try { chart.createIndicator({ name: "OBV", paneId: "obv_pane" }); } catch {}
