@@ -647,18 +647,29 @@ export default function PracticeTradingTerminal() {
     const margin = Number(form.margin || 0);
     const leverage = Number(form.leverage || 0);
     const stop = Number(form.stop || 0);
-    if (!(livePrice > 0 && margin > 0 && leverage > 0 && stop > 0)) return null;
+    const target = Number(form.tp1 || 0);
+    const entry = form.orderType === "LIMIT" ? Number(form.limitPrice || 0) : livePrice;
+    if (!(entry > 0 && margin > 0 && leverage > 0 && stop > 0)) return null;
     const notional = margin * leverage;
-    const qty = notional / livePrice;
-    const risk = Math.abs(livePrice - stop) * qty;
+    const qty = notional / entry;
+    const risk = Math.abs(entry - stop) * qty;
+    const reward = target > 0 ? Math.abs(target - entry) * qty : 0;
     const equity = Number(summary?.equity || 1000);
+    const maintenance = 0.005;
+    const liquidation = form.side === "LONG"
+      ? Math.max(0, entry * (1 - 1 / leverage + maintenance))
+      : entry * (1 + 1 / leverage - maintenance);
     return {
+      entry,
       notional,
       qty,
       risk,
+      reward,
+      rr: risk > 0 ? reward / risk : 0,
       riskPct: equity > 0 ? risk / equity * 100 : 0,
+      liquidation,
     };
-  }, [form.margin, form.leverage, form.stop, livePrice, summary?.equity]);
+  }, [form.margin, form.leverage, form.stop, form.tp1, form.orderType, form.limitPrice, form.side, livePrice, summary?.equity]);
 
   async function openTrade() {
     if (!BASE_URL || !sid) return;
@@ -672,6 +683,8 @@ export default function PracticeTradingTerminal() {
           session_id: sid,
           symbol,
           side: form.side,
+          order_type: form.orderType,
+          limit_price: form.orderType === "LIMIT" ? Number(form.limitPrice) : null,
           margin: Number(form.margin),
           leverage: Number(form.leverage),
           stop_loss: Number(form.stop),
@@ -685,13 +698,121 @@ export default function PracticeTradingTerminal() {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.detail || "No se pudo abrir");
-      const warning = Array.isArray(payload.warnings) && payload.warnings.length
-        ? " · Ojo: riesgo/apalancamiento alto para práctica."
-        : "";
-      setMessage(`Demo ${payload.side} abierta a ${fmt(payload.entry_price)}${warning}`);
-      await loadPractice();
+      if (payload.order_id) {
+        setMessage(`LIMIT ${payload.side} colocada a ${fmt(payload.limit_price)} · margen ficticio reservado.`);
+      } else {
+        const warning = Array.isArray(payload.warnings) && payload.warnings.length
+          ? " · Ojo: revisa riesgo, apalancamiento o liquidación."
+          : "";
+        setMessage(`Demo ${payload.side} abierta a ${fmt(payload.entry_price)}${warning}`);
+      }
+      await syncPractice();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo abrir la operación demo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function setExamplePlan() {
+    if (!(livePrice > 0)) return;
+    const entry = form.orderType === "LIMIT" && Number(form.limitPrice) > 0 ? Number(form.limitPrice) : livePrice;
+    const stopPct = 0.01;
+    const stop = form.side === "LONG" ? entry * (1 - stopPct) : entry * (1 + stopPct);
+    const risk = Math.abs(entry - stop);
+    const tp1 = form.side === "LONG" ? entry + risk * 1.5 : entry - risk * 1.5;
+    const tp2 = form.side === "LONG" ? entry + risk * 2.0 : entry - risk * 2.0;
+    const tp3 = form.side === "LONG" ? entry + risk * 3.0 : entry - risk * 3.0;
+    setForm((x) => ({
+      ...x,
+      stop: String(Number(stop.toPrecision(10))),
+      tp1: String(Number(tp1.toPrecision(10))),
+      tp2: String(Number(tp2.toPrecision(10))),
+      tp3: String(Number(tp3.toPrecision(10))),
+    }));
+  }
+
+  async function moveToBreakEven(id: number) {
+    if (!BASE_URL || !sid) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`${BASE_URL}/api/v1/practice/${id}/break-even`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.detail || "No se pudo mover a BE");
+      setMessage(`Stop movido a break-even: ${fmt(payload.stop_loss)}.`);
+      await syncPractice();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo mover a BE.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function partialClose(id: number, fraction: number) {
+    if (!BASE_URL || !sid) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`${BASE_URL}/api/v1/practice/${id}/partial-close`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid, fraction }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.detail || "No se pudo cerrar parcial");
+      setMessage(`Cierre parcial ${Math.round(fraction * 100)}% · PnL neto ${money(payload.net_pnl)}.`);
+      await syncPractice();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo cerrar parcial.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyFormLevels(id: number) {
+    if (!BASE_URL || !sid) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`${BASE_URL}/api/v1/practice/${id}/modify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sid,
+          stop_loss: form.stop ? Number(form.stop) : null,
+          take_profit: form.tp1 ? Number(form.tp1) : null,
+          tp2: form.tp2 ? Number(form.tp2) : null,
+          tp3: form.tp3 ? Number(form.tp3) : null,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.detail || "No se pudieron actualizar niveles");
+      setMessage("SL/TP de la posición actualizados desde el formulario.");
+      await syncPractice();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudieron actualizar niveles.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelOrder(id: number) {
+    if (!BASE_URL || !sid) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`${BASE_URL}/api/v1/practice/orders/${id}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.detail || "No se pudo cancelar");
+      setMessage("Orden LIMIT demo cancelada.");
+      await syncPractice();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo cancelar la orden.");
     } finally {
       setBusy(false);
     }
