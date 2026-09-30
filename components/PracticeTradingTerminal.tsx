@@ -938,6 +938,11 @@ export default function PracticeTradingTerminal() {
             <Tool icon={<Target size={14}/>} label="Medir % / recorrido" onClick={() => draw("EXPLODEX_MEASURE")}/>
             <Tool icon={<TrendingUp size={14}/>} label="Long Position visual" onClick={() => draw("EXPLODEX_LONG_POSITION")}/>
             <Tool icon={<TrendingDown size={14}/>} label="Short Position visual" onClick={() => draw("EXPLODEX_SHORT_POSITION")}/>
+            <div className="my-1 border-t border-slate-800"/>
+            <Tool icon={<Activity size={14}/>} label="Patrón ABCD" onClick={() => draw("EXPLODEX_ABCD")}/>
+            <Tool icon={<Activity size={14}/>} label="XABCD / armónico" onClick={() => draw("EXPLODEX_XABCD")}/>
+            <Tool icon={<Activity size={14}/>} label="HCH / neckline" onClick={() => draw("EXPLODEX_HCH")}/>
+            <Tool icon={<Activity size={14}/>} label="Elliott 1-2-3-4-5" onClick={() => draw("EXPLODEX_ELLIOTT")}/>
             <Tool icon={<Brush size={14}/>} label="Dibujo libre" onClick={() => draw("brush")}/>
             <div className="my-1 border-t border-slate-800"/>
             <Tool icon={<Save size={14}/>} label="Guardar dibujos" onClick={saveDrawings}/>
