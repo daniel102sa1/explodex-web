@@ -991,13 +991,55 @@ export default function PracticeTradingTerminal() {
                     <Mini label="Ahora" value={fmt(p.mark_price)}/>
                     <Mini label="SL" value={fmt(p.stop_loss)} bad/>
                     <Mini label="TP1" value={fmt(p.take_profit)} good/>
+                    <Mini label="TP2" value={fmt(p.tp2)} good={Boolean(p.tp2)}/>
+                    <Mini label="TP3" value={fmt(p.tp3)} good={Boolean(p.tp3)}/>
+                    <Mini label="Liquidación*" value={fmt(p.liquidation_price)} bad/>
+                    <Mini label="Dist. liq." value={p.liquidation_distance_pct == null ? "—" : `${p.liquidation_distance_pct.toFixed(2)}%`} bad={Boolean(p.liquidation_distance_pct != null && p.liquidation_distance_pct < 5)}/>
                   </div>
-                  <button onClick={() => closeTrade(p.id)} disabled={busy} className="mt-3 w-full rounded-xl border border-slate-700 py-2 text-xs font-black text-slate-200 hover:border-rose-500/30 hover:text-rose-200">
-                    Cerrar al mercado (demo)
-                  </button>
+                  <div className="mt-2 flex flex-wrap gap-1.5 text-[9px]">
+                    {p.moved_to_be && <span className="rounded-md border border-cyan-400/20 bg-cyan-400/[.05] px-2 py-1 text-cyan-200">BE activo</span>}
+                    {p.tp1_hit && <span className="rounded-md border border-emerald-400/20 px-2 py-1 text-emerald-300">TP1 tocado</span>}
+                    {p.tp2_hit && <span className="rounded-md border border-emerald-400/20 px-2 py-1 text-emerald-300">TP2 tocado</span>}
+                    {p.partial_realized_pnl ? <span className="rounded-md border border-violet-400/20 px-2 py-1 text-violet-300">Parcial {money(p.partial_realized_pnl)}</span> : null}
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-5">
+                    <button onClick={() => moveToBreakEven(p.id)} disabled={busy || p.moved_to_be} className="rounded-lg border border-cyan-500/20 py-2 text-[10px] font-black text-cyan-200 disabled:opacity-35">Mover BE</button>
+                    <button onClick={() => partialClose(p.id, .25)} disabled={busy} className="rounded-lg border border-slate-700 py-2 text-[10px] font-black text-slate-300">Cerrar 25%</button>
+                    <button onClick={() => partialClose(p.id, .50)} disabled={busy} className="rounded-lg border border-slate-700 py-2 text-[10px] font-black text-slate-300">Cerrar 50%</button>
+                    <button onClick={() => applyFormLevels(p.id)} disabled={busy || !form.stop || !form.tp1} className="rounded-lg border border-violet-500/20 py-2 text-[10px] font-black text-violet-200">Aplicar SL/TP</button>
+                    <button onClick={() => closeTrade(p.id)} disabled={busy} className="rounded-lg border border-rose-500/25 py-2 text-[10px] font-black text-rose-200">Cerrar todo</button>
+                  </div>
+                  <div className="mt-2 text-[8px] leading-4 text-slate-700">*Liquidación = estimación educativa de margen aislado, no cálculo exacto de un exchange.</div>
                 </div>
               ))}
               {!summary?.open_positions?.length && <div className="col-span-full py-8 text-center text-xs text-slate-600">Todavía no has abierto ninguna operación de práctica.</div>}
+            </div>
+          </div>
+
+          <div className="terminal-panel p-4 md:col-span-3">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-sm font-black text-white">Órdenes LIMIT pendientes</div>
+              <div className="text-[10px] text-slate-600">{summary?.pending_orders?.length ?? 0} esperando precio</div>
+            </div>
+            <div className="grid gap-2 lg:grid-cols-2">
+              {(summary?.pending_orders ?? []).map((o) => (
+                <div key={o.id} className="rounded-2xl border border-slate-800 bg-slate-950/45 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className={`font-black ${o.side === "LONG" ? "text-emerald-300" : "text-rose-300"}`}>{o.side} {o.symbol} · {o.leverage}x</div>
+                      <div className="mt-1 text-[10px] text-slate-600">{o.pattern || "MANUAL"} · {o.timeframe || "—"}</div>
+                    </div>
+                    <button onClick={() => cancelOrder(o.id)} disabled={busy} className="rounded-lg border border-rose-500/20 px-2 py-1 text-[10px] font-bold text-rose-300">Cancelar</button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-4 gap-1">
+                    <Mini label="LIMIT" value={fmt(o.limit_price)}/>
+                    <Mini label="SL" value={fmt(o.stop_loss)} bad/>
+                    <Mini label="TP1" value={fmt(o.take_profit)} good/>
+                    <Mini label="Margen" value={money(o.margin_used)}/>
+                  </div>
+                </div>
+              ))}
+              {!summary?.pending_orders?.length && <div className="col-span-full py-5 text-center text-xs text-slate-600">No hay órdenes LIMIT pendientes.</div>}
             </div>
           </div>
 
