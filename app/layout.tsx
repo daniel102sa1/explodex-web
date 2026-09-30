@@ -1,13 +1,10 @@
 import type { Metadata } from "next";
 import AppNav from "@/components/AppNav";
-import GlobalPlanAlerts from "@/components/GlobalPlanAlerts";
-import GlobalScannerBar from "@/components/GlobalScannerBar";
-import TradeCenterShortcut from "@/components/TradeCenterShortcut";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ExplodeX",
-  description: "ExplodeX dashboard",
+  title: "ExplodeX Trading Lab",
+  description: "ExplodeX PAPER trading practice workspace",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -15,10 +12,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="es">
       <body>
         <AppNav />
-        <GlobalScannerBar />
         {children}
-        <TradeCenterShortcut />
-        <GlobalPlanAlerts />
       </body>
     </html>
   );
