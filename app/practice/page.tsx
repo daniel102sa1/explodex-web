@@ -1,31 +1,28 @@
-import { FlaskConical, GraduationCap, ShieldCheck } from "lucide-react";
+import { GraduationCap, ShieldCheck } from "lucide-react";
 import PracticeTradingTerminal from "@/components/PracticeTradingTerminal";
 
 export const dynamic = "force-dynamic";
 
 export default function PracticePage() {
   return (
-    <main className="mx-auto min-h-screen max-w-[1800px] px-3 py-3 sm:px-4 lg:px-5">
-      <header className="mb-3 flex flex-col gap-3 border-b border-slate-800/70 pb-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[.16em] text-cyan-300">
-            <GraduationCap size={14}/> Laboratorio de práctica
+    <main className="min-h-screen w-full px-2 pb-4 pt-2 sm:px-3">
+      <header className="mx-auto mb-2 flex max-w-[1920px] flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800/70 bg-[#07111d]/75 px-4 py-3 shadow-xl shadow-black/10 backdrop-blur">
+        <div className="flex items-center gap-3">
+          <div className="grid h-9 w-9 place-items-center rounded-xl border border-cyan-400/20 bg-cyan-400/[.07] text-cyan-300">
+            <GraduationCap size={17}/>
           </div>
-          <h1 className="mt-1 text-2xl font-black text-white">ExplodeX Trading Lab</h1>
-          <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">
-            Gráfico tipo TradingView, indicadores, patrones, MARKET/LIMIT, apalancamiento, SL/TP1/TP2/TP3, BE y cuenta ficticia aislada de $1,000 para practicar sin órdenes reales.
-          </p>
+          <div>
+            <h1 className="text-sm font-black tracking-tight text-white sm:text-base">ExplodeX Trading Lab</h1>
+            <p className="mt-0.5 text-[10px] text-slate-500">Analiza · dibuja · ejecuta demo · gestiona · revisa</p>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <span className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/[.05] px-3 py-2 text-[10px] font-bold text-emerald-200">
-            <ShieldCheck size={13}/> 100% práctica · dinero ficticio
-          </span>
-          <span className="inline-flex items-center gap-2 rounded-xl border border-violet-500/20 bg-violet-500/[.05] px-3 py-2 text-[10px] font-bold text-violet-200">
-            <FlaskConical size={13}/> Dibuja → confirma → ejecuta → gestiona → revisa métricas
-          </span>
+        <div className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/[.05] px-3 py-2 text-[10px] font-bold text-emerald-200">
+          <ShieldCheck size={13}/> $1,000 ficticios · PAPER ONLY
         </div>
       </header>
-      <PracticeTradingTerminal/>
+      <div className="mx-auto max-w-[1920px]">
+        <PracticeTradingTerminal/>
+      </div>
     </main>
   );
 }
