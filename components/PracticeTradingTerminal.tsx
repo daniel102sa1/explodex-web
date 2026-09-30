@@ -200,7 +200,7 @@ export default function PracticeTradingTerminal() {
   const [interval, setIntervalValue] = useState<Interval>("5m");
   const [livePrice, setLivePrice] = useState(0);
   const [indicatorSet, setIndicatorSet] = useState<Set<IndicatorName>>(
-    new Set(["EMA20/50/200", "VWAP", "RSI", "ATR", "VOL"])
+    new Set(["EMA20/50/200", "VOL"])
   );
   const [summary, setSummary] = useState<PracticeSummary | null>(null);
   const [history, setHistory] = useState<any[]>([]);
@@ -448,28 +448,90 @@ export default function PracticeTradingTerminal() {
 
       localChart.setDataLoader({
         getBars: async ({ type, symbol: chartSymbol, period, callback }: any) => {
-          try {
-            const ticker = normalizeSymbol(chartSymbol?.ticker || symbol);
-            const requestedInterval = intervalFromPeriod(period);
-            const response = await fetch(
-              `${BASE_URL}/api/v1/market/candles/${ticker}?interval=${requestedInterval}&limit=300`,
-              { cache: "no-store" }
-            );
-            if (!response.ok) throw new Error("candles");
-            const payload = await response.json();
-            const bars = (payload.candles ?? []).map((row: any) => ({
-              timestamp: Number(row.time),
+          const ticker = normalizeSymbol(chartSymbol?.ticker || symbol);
+          const requestedInterval = intervalFromPeriod(period);
+
+          const normalizeBars = (rows: any[]) => rows
+            .map((row: any) => ({
+              timestamp: Number(row.time ?? row.timestamp),
               open: Number(row.open),
               high: Number(row.high),
               low: Number(row.low),
               close: Number(row.close),
               volume: Number(row.volume || 0),
-            })).sort((a: any, b: any) => a.timestamp - b.timestamp);
-            if (bars.length) setLivePrice(Number(bars[bars.length - 1].close || 0));
-            callback(bars, { forward: false, backward: false });
-          } catch {
-            callback([], { forward: false, backward: false });
+            }))
+            .filter((row: any) => Number.isFinite(row.timestamp) && row.open > 0 && row.high > 0 && row.low > 0 && row.close > 0)
+            .sort((a: any, b: any) => a.timestamp - b.timestamp);
+
+          let bars: any[] = [];
+
+          // 1) ExplodeX API first. If Railway is waking up, do not leave the
+          // chart with only the live websocket candle.
+          try {
+            const response = await fetch(
+              `${BASE_URL}/api/v1/market/candles/${ticker}?interval=${requestedInterval}&limit=300`,
+              { cache: "no-store" }
+            );
+            if (response.ok) {
+              const payload = await response.json();
+              bars = normalizeBars(payload.candles ?? []);
+            }
+          } catch {}
+
+          // 2) Direct Binance Futures historical fallback.
+          if (bars.length < 20) {
+            try {
+              const response = await fetch(
+                `https://fapi.binance.com/fapi/v1/klines?symbol=${encodeURIComponent(ticker)}&interval=${encodeURIComponent(requestedInterval)}&limit=300`,
+                { cache: "no-store" }
+              );
+              if (response.ok) {
+                const rows = await response.json();
+                if (Array.isArray(rows)) {
+                  bars = rows.map((row: any[]) => ({
+                    timestamp: Number(row[0]),
+                    open: Number(row[1]),
+                    high: Number(row[2]),
+                    low: Number(row[3]),
+                    close: Number(row[4]),
+                    volume: Number(row[7] ?? row[5] ?? 0),
+                  })).filter((row: any) => row.timestamp > 0 && row.open > 0 && row.close > 0);
+                }
+              }
+            } catch {}
           }
+
+          // 3) OKX swap fallback when Binance REST is unavailable.
+          if (bars.length < 20) {
+            try {
+              const base = ticker.replace(/USDT$/, "");
+              const okxBar = requestedInterval === "1d"
+                ? "1D"
+                : requestedInterval.endsWith("h")
+                  ? requestedInterval.replace("h", "H")
+                  : requestedInterval;
+              const response = await fetch(
+                `https://www.okx.com/api/v5/market/history-candles?instId=${base}-USDT-SWAP&bar=${okxBar}&limit=300`,
+                { cache: "no-store" }
+              );
+              if (response.ok) {
+                const payload = await response.json();
+                const rows = Array.isArray(payload?.data) ? payload.data : [];
+                bars = rows.map((row: any[]) => ({
+                  timestamp: Number(row[0]),
+                  open: Number(row[1]),
+                  high: Number(row[2]),
+                  low: Number(row[3]),
+                  close: Number(row[4]),
+                  volume: Number(row[7] ?? row[6] ?? row[5] ?? 0),
+                })).filter((row: any) => row.timestamp > 0 && row.open > 0 && row.close > 0)
+                  .sort((a: any, b: any) => a.timestamp - b.timestamp);
+              }
+            } catch {}
+          }
+
+          if (bars.length) setLivePrice(Number(bars[bars.length - 1].close || 0));
+          callback(bars, { forward: false, backward: false });
         },
         subscribeBar: ({ symbol: chartSymbol, period, callback }: any) => {
           wsCleanupRef.current?.();
@@ -553,7 +615,7 @@ export default function PracticeTradingTerminal() {
         },
       });
 
-      localChart.setSymbol({ ticker: symbol, pricePrecision: 8, volumePrecision: 4 });
+      localChart.setSymbol({ ticker: symbol, pricePrecision: 6, volumePrecision: 4 });
       localChart.setPeriod(periodFromInterval(interval));
       setChartReady(true);
     }
@@ -574,7 +636,7 @@ export default function PracticeTradingTerminal() {
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-    chart.setSymbol({ ticker: symbol, pricePrecision: 8, volumePrecision: 4 });
+    chart.setSymbol({ ticker: symbol, pricePrecision: 6, volumePrecision: 4 });
     chart.setPeriod(periodFromInterval(interval));
     chart.resetData?.();
     window.setTimeout(() => restoreDrawings(false), 700);
