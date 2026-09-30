@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { analyzeTechnical, INDICATOR_HELP, type TechnicalRead } from "@/lib/patternEngine";
 import {
   Activity,
   BarChart3,
@@ -9,6 +10,10 @@ import {
   CircleDollarSign,
   Eraser,
   Gauge,
+  HelpCircle,
+  Magnet,
+  MousePointer2,
+  Sparkles,
   Layers3,
   LineChart,
   Minus,
@@ -228,6 +233,14 @@ type DeepScan = {
   note: string;
 };
 
+type PrecisionScan = {
+  direction: "LONG" | "SHORT" | "ESPERAR";
+  agreement: number;
+  total: number;
+  rows: Array<{ interval: Interval; read: TechnicalRead }>;
+  current: TechnicalRead | null;
+};
+
 function emaValues(values: number[], period: number) {
   if (!values.length) return [];
   const alpha = 2 / (period + 1);
@@ -434,7 +447,11 @@ export default function PracticeTradingTerminal() {
   const [livePrice, setLivePrice] = useState(0);
   const [marketInsight, setMarketInsight] = useState<MarketInsight | null>(null);
   const [deepScan, setDeepScan] = useState<DeepScan | null>(null);
+  const [precisionScan, setPrecisionScan] = useState<PrecisionScan | null>(null);
   const [analyzingAll, setAnalyzingAll] = useState(false);
+  const [activeTool, setActiveTool] = useState<string | null>(null);
+  const [strongMagnet, setStrongMagnet] = useState(true);
+  const [showExplain, setShowExplain] = useState(false);
   const [indicatorSet, setIndicatorSet] = useState<Set<IndicatorName>>(
     new Set(["EMA20/50/200", "VOL"])
   );
@@ -937,12 +954,80 @@ export default function PracticeTradingTerminal() {
     });
   }
 
+  const drawLabels: Record<string, { label: string; hint: string }> = {
+    segment: { label: "Línea de tendencia", hint: "Haz clic en dos swings. Con imán fuerte se ajusta a máximos/mínimos de las velas." },
+    rayLine: { label: "Rayo de tendencia", hint: "Marca dos puntos; la línea se proyecta hacia la derecha." },
+    horizontalStraightLine: { label: "Soporte / resistencia", hint: "Haz clic sobre el nivel que quieres conservar como referencia." },
+    fibonacciLine: { label: "Fibonacci", hint: "Marca inicio y fin del impulso; ajusta los puntos si hace falta." },
+    parallelStraightLine: { label: "Canal paralelo", hint: "Marca la directriz y luego el ancho del canal." },
+    EXPLODEX_FIB_EXTENSION: { label: "Extensión Fibonacci", hint: "Marca A → B → C para proyectar objetivos." },
+    EXPLODEX_MEASURE: { label: "Regla / recorrido", hint: "Marca inicio y final del movimiento para medirlo." },
+    EXPLODEX_LONG_POSITION: { label: "Long Position", hint: "Marca entrada, stop y objetivo para visualizar el R:R." },
+    EXPLODEX_SHORT_POSITION: { label: "Short Position", hint: "Marca entrada, stop y objetivo para visualizar el R:R." },
+    brush: { label: "Dibujo libre", hint: "Dibuja libremente sobre el gráfico." },
+  };
+
   function draw(name: string) {
     const chart = chartRef.current;
     if (!chart) return;
+    const meta = drawLabels[name] || { label: name, hint: "Marca los puntos de la herramienta sobre el gráfico." };
+    setActiveTool(meta.label);
+    setMessage(meta.hint);
     try {
-      chart.createOverlay({ name, groupId: "practice-user", mode: "weak_magnet", modeSensitivity: 8 });
-    } catch {}
+      chart.createOverlay({
+        name,
+        groupId: "practice-user",
+        mode: strongMagnet ? "strong_magnet" : "weak_magnet",
+        modeSensitivity: strongMagnet ? 18 : 10,
+        onDrawStart: () => {
+          setMessage(meta.hint);
+          return false;
+        },
+        onDrawEnd: () => {
+          setActiveTool(null);
+          setMessage(`${meta.label} lista. Puedes arrastrar sus puntos para afinarla.`);
+          return false;
+        },
+      });
+    } catch {
+      setActiveTool(null);
+      setMessage(`No se pudo activar ${meta.label}.`);
+    }
+  }
+
+  function drawPrecisionPattern(read: TechnicalRead | null) {
+    const chart = chartRef.current;
+    const pattern = read?.pattern;
+    if (!chart || !pattern) return;
+    try { chart.removeOverlay({ groupId: "pattern-engine" }); } catch {}
+    const bars = barsRef.current;
+    const startTs = Number(bars[Math.max(0, bars.length - 100)]?.timestamp || pattern.overlays[0]?.points[0]?.timestamp || Date.now());
+    const endTs = Number(bars.at(-1)?.timestamp || Date.now());
+    const colorFor = (label: string) => label.includes("SL") || label.includes("Invalid")
+      ? "#fb7185"
+      : label.includes("TP")
+        ? "#34d399"
+        : label.includes("Entrada")
+          ? "#f8fafc"
+          : "#22d3ee";
+    for (const guide of pattern.overlays) {
+      const points = guide.kind === "horizontal"
+        ? [{ timestamp: startTs, value: Number(guide.value) }, { timestamp: endTs, value: Number(guide.value) }]
+        : guide.points;
+      if (points.length < 2) continue;
+      for (let i = 0; i < points.length - 1; i++) {
+        try {
+          chart.createOverlay({
+            name: "segment",
+            groupId: "pattern-engine",
+            lock: true,
+            points: [points[i], points[i + 1]],
+            styles: { line: { color: colorFor(guide.label), size: 2, style: guide.kind === "horizontal" ? "dashed" : "solid" } },
+          });
+        } catch {}
+      }
+    }
+    setMessage(`${pattern.name} dibujado automáticamente con pivotes 5/5. Revisa que los swings coincidan visualmente antes de usar el plan.`);
   }
 
 
@@ -968,56 +1053,76 @@ export default function PracticeTradingTerminal() {
   async function analyzeEverything() {
     setAnalyzingAll(true);
     setMessage("");
-    try{
-      const frames:Array<{interval:Interval;weight:number}>=[
-        {interval:"5m",weight:1},{interval:"15m",weight:2},{interval:"1h",weight:3},{interval:"4h",weight:4}
+    try {
+      const frames: Array<{ interval: Interval; weight: number }> = [
+        { interval: "5m", weight: 1 },
+        { interval: "15m", weight: 2 },
+        { interval: "1h", weight: 3 },
+        { interval: "4h", weight: 4 },
       ];
-      const results=await Promise.all(frames.map(async item=>{
-        const rows=item.interval===interval&&barsRef.current.length>=35?barsRef.current:await fetchAnalysisBars(symbol,item.interval);
-        return {item,insight:analyzeMarket(rows,item.interval)};
+      const rows = await Promise.all(frames.map(async item => {
+        const bars = item.interval === interval && barsRef.current.length >= 60
+          ? barsRef.current
+          : await fetchAnalysisBars(symbol, item.interval);
+        return { item, read: analyzeTechnical(bars, item.interval) };
       }));
-      const valid=results.filter((x):x is {item:{interval:Interval;weight:number};insight:MarketInsight}=>Boolean(x.insight));
-      let weightedScore=0,totalWeight=0;
-      for(const row of valid){weightedScore+=row.insight.score*row.item.weight;totalWeight+=row.item.weight;}
-      const normalized=totalWeight?weightedScore/totalWeight:0;
-      const direction:DeepScan["direction"]=normalized>=2.5?"LONG":normalized<=-2.5?"SHORT":"ESPERAR";
-      const agreement=valid.filter(x=>direction==="LONG"?x.insight.bias==="ALCISTA":direction==="SHORT"?x.insight.bias==="BAJISTA":x.insight.bias==="ESPERAR").length;
-      const note=direction==="LONG"
-        ? "Contexto mayor inclina al alza. Busca confirmación de ruptura/retest antes de una práctica LONG."
-        : direction==="SHORT"
-          ? "Contexto mayor inclina a la baja. Busca pérdida/retest del soporte antes de una práctica SHORT."
-          : "Las temporalidades no están suficientemente alineadas. Mejor esperar una estructura más limpia.";
-      const scan:DeepScan={direction,weightedScore:normalized,agreement,total:valid.length,rows:valid.map(x=>({interval:x.item.interval,insight:x.insight})),note};
-      setDeepScan(scan);
+      const valid = rows.filter((x): x is { item: { interval: Interval; weight: number }; read: TechnicalRead } => Boolean(x.read));
 
-      const current=analyzeMarket(barsRef.current,interval);
-      if(current){
-        setMarketInsight(current);
-        drawRadarPatterns(current);
-        if(direction!=="ESPERAR"){
-          const side=direction==="LONG"?"LONG":"SHORT";
-          const entry=livePrice>0?livePrice:Number(barsRef.current.at(-1)?.close||0);
-          const stopBase=side==="LONG"?current.support:current.resistance;
-          const stop=side==="LONG"?Math.min(stopBase,entry*.99):Math.max(stopBase,entry*1.01);
-          const risk=Math.abs(entry-stop);
-          if(entry>0&&risk>0){
-            setForm(x=>({
-              ...x,
-              side,
-              stop:String(Number(stop.toPrecision(10))),
-              tp1:String(Number((side==="LONG"?entry+risk*1.5:entry-risk*1.5).toPrecision(10))),
-              tp2:String(Number((side==="LONG"?entry+risk*2:entry-risk*2).toPrecision(10))),
-              tp3:String(Number((side==="LONG"?entry+risk*3:entry-risk*3).toPrecision(10))),
-              pattern:current.patterns[0]?.toUpperCase().replaceAll(" ","_").replaceAll("/","_").slice(0,40)||"OTRO",
-              note:`ANALIZAR TODO: ${direction}. ${current.summary}`
-            }));
-          }
-        }
+      let weighted = 0;
+      let totalWeight = 0;
+      for (const row of valid) {
+        let score = row.read.trendScore;
+        if (row.read.pattern?.direction === "LONG") score += 4;
+        if (row.read.pattern?.direction === "SHORT") score -= 4;
+        weighted += score * row.item.weight;
+        totalWeight += row.item.weight;
       }
-      setMessage(`Análisis completo: ${direction} · ${agreement}/${valid.length} temporalidades alineadas. Revisa las confirmaciones antes de ejecutar.`);
-    }catch(error){
-      setMessage(error instanceof Error?error.message:"No se pudo completar el análisis.");
-    }finally{
+      const normalized = totalWeight ? weighted / totalWeight : 0;
+      let direction: PrecisionScan["direction"] = normalized >= 2 ? "LONG" : normalized <= -2 ? "SHORT" : "ESPERAR";
+
+      const current = analyzeTechnical(barsRef.current, interval);
+      if (current?.pattern?.direction === "LONG") direction = "LONG";
+      if (current?.pattern?.direction === "SHORT") direction = "SHORT";
+
+      const agreement = valid.filter(row =>
+        direction === "LONG" ? row.read.trendScore > 0 :
+        direction === "SHORT" ? row.read.trendScore < 0 :
+        Math.abs(row.read.trendScore) <= 2
+      ).length;
+      const next: PrecisionScan = {
+        direction,
+        agreement,
+        total: valid.length,
+        rows: valid.map(x => ({ interval: x.item.interval, read: x.read })),
+        current,
+      };
+      setPrecisionScan(next);
+
+      if (current?.pattern) {
+        drawPrecisionPattern(current);
+        const p = current.pattern;
+        if (p.direction !== "WAIT" && p.entry && p.stop && p.tp1 && p.tp2 && p.tp3) {
+          setForm(x => ({
+            ...x,
+            side: p.direction,
+            stop: String(Number(p.stop!.toPrecision(10))),
+            tp1: String(Number(p.tp1!.toPrecision(10))),
+            tp2: String(Number(p.tp2!.toPrecision(10))),
+            tp3: String(Number(p.tp3!.toPrecision(10))),
+            pattern: p.name.toUpperCase().replaceAll(" ", "_").replaceAll("-", "_").slice(0, 40),
+            note: `Patrón confirmado: ${p.name}. ${p.rationale.join(" ")}`,
+          }));
+          setMessage(`${p.name} CONFIRMADO ${p.direction}. Dibujé la figura y cargué SL/TP medidos en el ticket demo; revísalos antes de ejecutar.`);
+        } else {
+          setMessage(`${p.name} EN FORMACIÓN. Dibujé la estructura; aún no cargo una entrada porque falta confirmar la ruptura.`);
+        }
+      } else {
+        try { chartRef.current?.removeOverlay({ groupId: "pattern-engine" }); } catch {}
+        setMessage(`Análisis completo: ${direction}. No encontré una figura suficientemente limpia en ${interval.toUpperCase()}; usa soporte/resistencia y la alineación multi-TF.`);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo completar el análisis.");
+    } finally {
       setAnalyzingAll(false);
     }
   }
@@ -1029,18 +1134,19 @@ export default function PracticeTradingTerminal() {
       chart.createOverlay({
         name: "segment",
         groupId: "practice-user",
-        mode: "weak_magnet",
-        modeSensitivity: 8,
+        mode: strongMagnet ? "strong_magnet" : "weak_magnet",
+        modeSensitivity: strongMagnet ? 18 : 10,
         onDrawEnd: () => {
           window.setTimeout(() => {
             try {
-              chart.createOverlay({ name: "segment", groupId: "practice-user", mode: "weak_magnet", modeSensitivity: 8 });
+              chart.createOverlay({ name: "segment", groupId: "practice-user", mode: strongMagnet ? "strong_magnet" : "weak_magnet", modeSensitivity: strongMagnet ? 18 : 10 });
             } catch {}
           }, 120);
           return false;
         },
       });
-      setMessage("Triángulo: dibuja la línea superior; al terminar se activa la segunda línea.");
+      setActiveTool("Triángulo · 2 directrices");
+      setMessage("Triángulo: marca primero dos pivotes de la directriz superior; luego dos pivotes de la inferior. El imán ayuda a enganchar los swings.");
     } catch {}
   }
 
