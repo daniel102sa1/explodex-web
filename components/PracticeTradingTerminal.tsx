@@ -209,6 +209,7 @@ export default function PracticeTradingTerminal() {
   const [message, setMessage] = useState("");
   const [chartReady, setChartReady] = useState(false);
   const [showOrder, setShowOrder] = useState(true);
+  const [bottomTab, setBottomTab] = useState<"positions" | "orders" | "history">("positions");
   const [form, setForm] = useState<OrderForm>({
     side: "LONG",
     orderType: "MARKET",
@@ -982,304 +983,375 @@ export default function PracticeTradingTerminal() {
   const selectedOpen = (summary?.open_positions ?? []).filter((p) => p.symbol === symbol);
 
   return (
-    <div className="space-y-3">
-      <section className="terminal-panel overflow-hidden">
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 p-3">
-          <form
-            className="flex min-w-[250px] flex-1 items-center gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const next = normalizeSymbol(symbolInput);
-              setSymbolInput(next);
-              setSymbol(next);
-            }}
-          >
-            <label className="flex flex-1 items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-              <Search size={15} className="text-slate-500"/>
-              <input
-                value={symbolInput}
-                onChange={(e) => setSymbolInput(e.target.value)}
-                className="w-full bg-transparent text-sm font-black uppercase text-white outline-none"
-                placeholder="BTC, SOL, PENGU..."
-              />
-            </label>
-            <button className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-slate-950">Cargar</button>
-          </form>
+    <div className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#050b14] shadow-2xl shadow-black/30">
+      {/* Market header */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-800/80 bg-[#08111d]/95 px-2.5 py-2">
+        <form
+          className="flex min-w-[220px] flex-1 items-center gap-1.5 lg:max-w-[360px]"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const next = normalizeSymbol(symbolInput);
+            setSymbolInput(next);
+            setSymbol(next);
+          }}
+        >
+          <label className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-slate-700/70 bg-[#030812] px-3 py-2">
+            <Search size={14} className="shrink-0 text-slate-500"/>
+            <input
+              value={symbolInput}
+              onChange={(e) => setSymbolInput(e.target.value)}
+              className="min-w-0 flex-1 bg-transparent text-xs font-black uppercase text-white outline-none"
+              placeholder="BTCUSDT"
+            />
+          </label>
+          <button className="rounded-lg bg-cyan-400 px-3 py-2 text-[10px] font-black text-slate-950 hover:bg-cyan-300">IR</button>
+        </form>
 
-          <div className="flex flex-wrap gap-1">
-            {INTERVALS.map((value) => (
+        <div className="order-3 flex w-full gap-1 overflow-x-auto lg:order-none lg:w-auto">
+          {INTERVALS.map((value) => (
+            <button
+              key={value}
+              onClick={() => setIntervalValue(value)}
+              className={`shrink-0 rounded-lg border px-2.5 py-2 text-[10px] font-black transition ${
+                interval === value
+                  ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-200 shadow-sm shadow-cyan-500/10"
+                  : "border-slate-800 bg-slate-950/50 text-slate-500 hover:text-slate-200"
+              }`}
+            >
+              {value.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
+        <div className="ml-auto flex items-center gap-4">
+          <div className="hidden text-right md:block">
+            <div className="text-[8px] font-black uppercase tracking-[.14em] text-slate-600">Equity demo</div>
+            <div className="font-mono text-sm font-black text-white">{money(summary?.equity ?? 1000)}</div>
+          </div>
+          <div className="hidden text-right md:block">
+            <div className="text-[8px] font-black uppercase tracking-[.14em] text-slate-600">Disponible</div>
+            <div className="font-mono text-sm font-black text-cyan-200">{money(summary?.available_margin ?? 1000)}</div>
+          </div>
+          <div className="border-l border-slate-800 pl-4 text-right">
+            <div className="font-mono text-xl font-black tracking-tight text-white">{fmt(livePrice)}</div>
+            <div className="flex items-center justify-end gap-1 text-[8px] font-black uppercase tracking-[.14em] text-emerald-400">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400"/> {symbol} LIVE
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main trading desk */}
+      <div className="grid min-h-[680px] xl:grid-cols-[54px_minmax(0,1fr)_360px]">
+        {/* Compact drawing toolbar */}
+        <aside className="flex flex-row gap-1 overflow-x-auto border-b border-slate-800 bg-[#060d17] p-1.5 xl:flex-col xl:overflow-visible xl:border-b-0 xl:border-r">
+          <DeskTool icon={<LineChart size={16}/>} label="Línea / swing" onClick={() => draw("segment")}/>
+          <DeskTool icon={<TrendingUp size={16}/>} label="Rayo de tendencia" onClick={() => draw("rayLine")}/>
+          <DeskTool icon={<Minus size={16}/>} label="Soporte / resistencia" onClick={() => draw("horizontalStraightLine")}/>
+          <DeskTool icon={<Triangle size={16}/>} label="Triángulo" onClick={drawTriangle}/>
+          <DeskSeparator/>
+          <DeskTool icon={<Activity size={16}/>} label="Fibonacci retroceso" onClick={() => draw("fibonacciLine")}/>
+          <DeskTool icon={<Layers3 size={16}/>} label="Fibonacci extensión" onClick={() => draw("EXPLODEX_FIB_EXTENSION")}/>
+          <DeskTool icon={<Layers3 size={16}/>} label="Canal paralelo" onClick={() => draw("parallelStraightLine")}/>
+          <DeskTool icon={<Target size={16}/>} label="Medir %" onClick={() => draw("EXPLODEX_MEASURE")}/>
+          <DeskSeparator/>
+          <DeskTool icon={<TrendingUp size={16}/>} label="Long Position" onClick={() => draw("EXPLODEX_LONG_POSITION")}/>
+          <DeskTool icon={<TrendingDown size={16}/>} label="Short Position" onClick={() => draw("EXPLODEX_SHORT_POSITION")}/>
+          <DeskTool icon={<Activity size={16}/>} label="ABCD" onClick={() => draw("EXPLODEX_ABCD")}/>
+          <DeskTool icon={<Activity size={16}/>} label="XABCD / armónico" onClick={() => draw("EXPLODEX_XABCD")}/>
+          <DeskTool icon={<Activity size={16}/>} label="HCH / neckline" onClick={() => draw("EXPLODEX_HCH")}/>
+          <DeskTool icon={<Brush size={16}/>} label="Dibujo libre" onClick={() => draw("brush")}/>
+          <DeskSeparator/>
+          <DeskTool icon={<Save size={16}/>} label="Guardar dibujos" onClick={saveDrawings}/>
+          <DeskTool icon={<RefreshCcw size={16}/>} label="Cargar dibujos" onClick={() => restoreDrawings(true)}/>
+          <DeskTool icon={<Eraser size={16}/>} label="Borrar dibujos" onClick={clearDrawings} danger/>
+        </aside>
+
+        {/* Chart */}
+        <section className="min-w-0 bg-[#050b14]">
+          <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-800/80 bg-[#07101a] px-2 py-1.5">
+            <span className="mr-1 shrink-0 text-[8px] font-black uppercase tracking-[.15em] text-slate-600">Indicadores</span>
+            {INDICATORS.map((name) => (
               <button
-                key={value}
-                onClick={() => setIntervalValue(value)}
-                className={`rounded-lg border px-2.5 py-2 text-[10px] font-black ${interval === value ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-200" : "border-slate-800 text-slate-500"}`}
+                key={name}
+                onClick={() => toggleIndicator(name)}
+                className={`shrink-0 rounded-md border px-2 py-1 text-[9px] font-black transition ${
+                  indicatorSet.has(name)
+                    ? "border-violet-400/30 bg-violet-400/10 text-violet-200"
+                    : "border-slate-800 bg-slate-950/30 text-slate-600 hover:text-slate-300"
+                }`}
               >
-                {value}
+                {name}
               </button>
             ))}
-          </div>
-          <div className="ml-auto text-right">
-            <div className="mono-number text-xl font-black text-white">{fmt(livePrice)}</div>
-            <div className="text-[9px] uppercase tracking-[.12em] text-slate-600">{symbol} · mercado vivo</div>
-          </div>
-        </div>
-
-        <div className="grid border-b border-slate-800 lg:grid-cols-[auto_1fr]">
-          <div className="flex flex-wrap gap-1 border-b border-slate-800 p-2 lg:max-w-[220px] lg:flex-col lg:border-b-0 lg:border-r">
-            <Tool icon={<LineChart size={14}/>} label="Línea / swing" onClick={() => draw("segment")}/>
-            <Tool icon={<LineChart size={14}/>} label="Rayo de tendencia" onClick={() => draw("rayLine")}/>
-            <Tool icon={<Minus size={14}/>} label="Soporte / resistencia" onClick={() => draw("horizontalStraightLine")}/>
-            <Tool icon={<Triangle size={14}/>} label="Triángulo (2 líneas)" onClick={drawTriangle}/>
-            <Tool icon={<Activity size={14}/>} label="Fibonacci retroceso" onClick={() => draw("fibonacciLine")}/>
-            <Tool icon={<Activity size={14}/>} label="Fibonacci extensión" onClick={() => draw("EXPLODEX_FIB_EXTENSION")}/>
-            <Tool icon={<Layers3 size={14}/>} label="Canal paralelo" onClick={() => draw("parallelStraightLine")}/>
-            <Tool icon={<Layers3 size={14}/>} label="Canal de precio" onClick={() => draw("priceChannelLine")}/>
-            <Tool icon={<Target size={14}/>} label="Medir % / recorrido" onClick={() => draw("EXPLODEX_MEASURE")}/>
-            <Tool icon={<TrendingUp size={14}/>} label="Long Position visual" onClick={() => draw("EXPLODEX_LONG_POSITION")}/>
-            <Tool icon={<TrendingDown size={14}/>} label="Short Position visual" onClick={() => draw("EXPLODEX_SHORT_POSITION")}/>
-            <div className="my-1 border-t border-slate-800"/>
-            <Tool icon={<Activity size={14}/>} label="Patrón ABCD" onClick={() => draw("EXPLODEX_ABCD")}/>
-            <Tool icon={<Activity size={14}/>} label="XABCD / armónico" onClick={() => draw("EXPLODEX_XABCD")}/>
-            <Tool icon={<Activity size={14}/>} label="HCH / neckline" onClick={() => draw("EXPLODEX_HCH")}/>
-            <Tool icon={<Activity size={14}/>} label="Elliott 1-2-3-4-5" onClick={() => draw("EXPLODEX_ELLIOTT")}/>
-            <Tool icon={<Activity size={14}/>} label="Three Drives" onClick={() => draw("EXPLODEX_THREE_DRIVES")}/>
-            <Tool icon={<Brush size={14}/>} label="Dibujo libre" onClick={() => draw("brush")}/>
-            <div className="my-1 border-t border-slate-800"/>
-            <Tool icon={<Save size={14}/>} label="Guardar dibujos" onClick={saveDrawings}/>
-            <Tool icon={<RefreshCcw size={14}/>} label="Cargar dibujos" onClick={() => restoreDrawings(true)}/>
-            <Tool icon={<Eraser size={14}/>} label="Borrar dibujos" onClick={clearDrawings} danger/>
-          </div>
-
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-1 border-b border-slate-800 bg-slate-950/40 p-2">
-              <span className="mr-1 text-[9px] font-black uppercase tracking-[.13em] text-slate-600">Indicadores</span>
-              {INDICATORS.map((name) => (
-                <button
-                  key={name}
-                  onClick={() => toggleIndicator(name)}
-                  className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold ${indicatorSet.has(name) ? "border-violet-400/30 bg-violet-400/10 text-violet-200" : "border-slate-800 text-slate-600"}`}
-                >
-                  {name}
-                </button>
-              ))}
+            <div className="ml-auto hidden items-center gap-1 text-[9px] text-slate-600 lg:flex">
+              <span className="rounded-md border border-slate-800 px-2 py-1">Rueda = zoom</span>
+              <span className="rounded-md border border-slate-800 px-2 py-1">Arrastra = mover</span>
             </div>
-            <div ref={chartElRef} className="h-[620px] w-full bg-[#07111d]"/>
           </div>
-        </div>
-      </section>
 
-      <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_390px]">
-        <div className="grid gap-3 md:grid-cols-3">
-          <Stat title="Cuenta ficticia" value={money(summary?.equity ?? 1000)} detail={`Cash ${money(summary?.cash_balance ?? 1000)} · PnL abierto ${money(summary?.unrealized_pnl ?? 0)}`} icon={<CircleDollarSign size={17}/>}/>
-          <Stat title="Margen disponible" value={money(summary?.available_margin ?? 1000)} detail={`Posiciones ${money(summary?.reserved_margin ?? 0)} · LIMIT ${money(summary?.pending_margin ?? 0)}`} icon={<Gauge size={17}/>}/>
-          <Stat title="Resultado demo" value={money(summary?.realized_pnl ?? 0)} detail={`${summary?.closed_trades ?? 0} cerradas · WR ${summary?.win_rate_pct == null ? "—" : `${summary.win_rate_pct}%`}`} icon={<BarChart3 size={17}/>}/>
-          <Stat title="Expectativa" value={money(summary?.performance?.expectancy_usdt ?? 0)} detail="Promedio neto por trade cerrado" icon={<Activity size={17}/>}/>
-          <Stat title="Profit factor / R" value={summary?.performance?.profit_factor == null ? "—" : summary.performance.profit_factor.toFixed(2)} detail={`R medio ${summary?.performance?.average_r == null ? "—" : summary.performance.average_r.toFixed(2)}`} icon={<Target size={17}/>}/>
-          <Stat title="Drawdown máx." value={`${Number(summary?.performance?.max_drawdown_pct ?? 0).toFixed(2)}%`} detail="Desde el máximo de equity de práctica" icon={<TrendingDown size={17}/>}/>
-
-          <div className="terminal-panel p-4 md:col-span-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="text-sm font-black text-white">Ruta de práctica</div>
-                <div className="mt-1 text-xs text-slate-500">No adivines velas: contexto → setup → gatillo → riesgo → ejecución demo.</div>
+          <div className="relative">
+            {!chartReady && (
+              <div className="absolute inset-0 z-10 grid place-items-center bg-[#050b14]/80 backdrop-blur-sm">
+                <div className="rounded-xl border border-cyan-400/20 bg-slate-950/90 px-4 py-3 text-xs font-bold text-cyan-200">Cargando gráfico…</div>
               </div>
-              <button onClick={resetAccount} disabled={busy} className="rounded-xl border border-rose-500/20 px-3 py-2 text-xs font-bold text-rose-300">
-                <RotateCcw size={13} className="mr-1 inline"/> Reiniciar $1,000
+            )}
+            <div ref={chartElRef} className="h-[640px] min-h-[560px] w-full bg-[#050b14] 2xl:h-[720px]"/>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/80 bg-[#07101a] px-3 py-1.5 text-[9px] text-slate-600">
+            <div className="flex gap-3">
+              <span>{symbol}</span>
+              <span>{interval.toUpperCase()}</span>
+              <span className="text-emerald-400">● mercado vivo</span>
+            </div>
+            <div className="flex gap-3">
+              <span>PAPER ONLY</span>
+              <span>Dibujos guardables por par/TF</span>
+            </div>
+          </div>
+        </section>
+
+        {/* Order ticket */}
+        <aside className="border-t border-slate-800 bg-[#070f1a] xl:border-l xl:border-t-0">
+          <div className="border-b border-slate-800/80 px-3 py-3">
+            <div className="grid grid-cols-3 gap-1.5">
+              <CompactMetric label="Equity" value={money(summary?.equity ?? 1000)}/>
+              <CompactMetric label="PnL abierto" value={money(summary?.unrealized_pnl ?? 0)} tone={(summary?.unrealized_pnl ?? 0) >= 0 ? "good" : "bad"}/>
+              <CompactMetric label="PnL real." value={money(summary?.realized_pnl ?? 0)} tone={(summary?.realized_pnl ?? 0) >= 0 ? "good" : "bad"}/>
+            </div>
+          </div>
+
+          <div className="max-h-[700px] overflow-y-auto px-3 py-3">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="text-[9px] font-black uppercase tracking-[.14em] text-cyan-300">Orden demo</div>
+                <div className="mt-0.5 text-sm font-black text-white">{symbol} · {interval.toUpperCase()}</div>
+              </div>
+              <button onClick={() => setShowOrder(v => !v)} className="rounded-lg border border-slate-800 p-2 text-slate-500 hover:text-white">
+                <ChevronDown size={14} className={showOrder ? "rotate-180" : ""}/>
               </button>
             </div>
-            <div className="mt-4 grid gap-2 md:grid-cols-3">
-              <PracticeStep n="1" title="1H / 15m · Contexto" text="Marca tendencia/rango, soportes, resistencias y swings."/>
-              <PracticeStep n="2" title="5m · Setup" text="Busca pullback, triángulo, breakout/retest, Fib o barrido."/>
-              <PracticeStep n="3" title="1m / 3m · Gatillo" text="Espera rechazo + BOS/CHOCH o cierre confirmado antes de simular."/>
-            </div>
-          </div>
 
-          <div className="terminal-panel p-4 md:col-span-3">
-            <div className="mb-3 flex items-center justify-between">
-              <div className="text-sm font-black text-white">Posiciones demo abiertas</div>
-              <div className="text-[10px] text-slate-600">{selectedOpen.length} en {symbol} · {(summary?.open_positions ?? []).length} total</div>
-            </div>
-            <div className="grid gap-2 lg:grid-cols-2">
+            {showOrder && <>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button onClick={() => setForm(x => ({...x, side:"LONG"}))} className={`rounded-lg border py-2.5 text-xs font-black ${
+                  form.side === "LONG" ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300" : "border-slate-800 text-slate-500"
+                }`}><TrendingUp size={14} className="mr-1 inline"/>LONG</button>
+                <button onClick={() => setForm(x => ({...x, side:"SHORT"}))} className={`rounded-lg border py-2.5 text-xs font-black ${
+                  form.side === "SHORT" ? "border-rose-400/40 bg-rose-400/10 text-rose-300" : "border-slate-800 text-slate-500"
+                }`}><TrendingDown size={14} className="mr-1 inline"/>SHORT</button>
+              </div>
+
+              <div className="mt-2 grid grid-cols-2 gap-1.5">
+                {(["MARKET","LIMIT"] as const).map(kind => (
+                  <button
+                    key={kind}
+                    onClick={() => setForm(x => ({...x, orderType:kind, limitPrice:kind === "MARKET" ? "" : (x.limitPrice || String(Number(livePrice.toPrecision(10))))}))}
+                    className={`rounded-lg border py-2 text-[10px] font-black ${
+                      form.orderType === kind ? "border-cyan-400/30 bg-cyan-400/[.07] text-cyan-200" : "border-slate-800 text-slate-600"
+                    }`}
+                  >{kind}</button>
+                ))}
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-1.5">
+                {form.orderType === "LIMIT" && <TradeInput label="Precio LIMIT" value={form.limitPrice} onChange={(v) => setForm(x => ({...x, limitPrice:v}))}/>}
+                <TradeInput label="Margen USDT" value={form.margin} onChange={(v) => setForm(x => ({...x, margin:v}))}/>
+                <TradeInput label="Apalancamiento" value={form.leverage} onChange={(v) => setForm(x => ({...x, leverage:v}))} suffix="x"/>
+                <TradeInput label="Stop loss" value={form.stop} onChange={(v) => setForm(x => ({...x, stop:v}))}/>
+                <TradeInput label="TP1" value={form.tp1} onChange={(v) => setForm(x => ({...x, tp1:v}))}/>
+                <TradeInput label="TP2" value={form.tp2} onChange={(v) => setForm(x => ({...x, tp2:v}))}/>
+                <TradeInput label="TP3" value={form.tp3} onChange={(v) => setForm(x => ({...x, tp3:v}))}/>
+              </div>
+
+              <button onClick={setExamplePlan} className="mt-2 w-full rounded-lg border border-violet-400/20 bg-violet-400/[.04] px-2 py-2 text-[9px] font-black text-violet-200">
+                Auto plan: SL 1% · 1.5R / 2R / 3R
+              </button>
+
+              <label className="mt-2 block rounded-lg border border-slate-800 bg-[#040a12] px-2.5 py-2">
+                <span className="text-[8px] font-black uppercase tracking-[.12em] text-slate-600">Setup</span>
+                <select value={form.pattern} onChange={(e) => setForm(x => ({...x, pattern:e.target.value}))} className="mt-1 w-full bg-transparent text-[10px] font-bold text-white outline-none">
+                  {PATTERNS.map(name => <option key={name} value={name} className="bg-slate-950">{name.replaceAll("_"," ")}</option>)}
+                </select>
+              </label>
+
+              <div className="mt-2 grid grid-cols-3 gap-1.5">
+                <CompactMetric label="Riesgo" value={riskPreview ? money(riskPreview.risk) : "—"} tone="bad"/>
+                <CompactMetric label="% equity" value={riskPreview ? `${riskPreview.riskPct.toFixed(2)}%` : "—"} tone={riskPreview && riskPreview.riskPct > .5 ? "warn" : undefined}/>
+                <CompactMetric label="R:R" value={riskPreview && riskPreview.rr > 0 ? `1:${riskPreview.rr.toFixed(2)}` : "—"} tone={riskPreview && riskPreview.rr >= 1.5 ? "good" : undefined}/>
+              </div>
+
+              <label className="mt-2 block rounded-lg border border-slate-800 bg-[#040a12] px-2.5 py-2">
+                <span className="text-[8px] font-black uppercase tracking-[.12em] text-slate-600">Nota / diario</span>
+                <textarea value={form.note} onChange={(e) => setForm(x => ({...x, note:e.target.value}))} rows={2} className="mt-1 w-full resize-none bg-transparent text-[10px] leading-4 text-slate-300 outline-none" placeholder="Ruptura + retest + volumen…"/>
+              </label>
+
+              <button
+                onClick={openTrade}
+                disabled={busy || !form.stop || !form.tp1 || (form.orderType === "LIMIT" && !form.limitPrice)}
+                className={`mt-3 flex w-full items-center justify-center gap-2 rounded-lg py-3 text-xs font-black text-slate-950 shadow-lg disabled:opacity-40 ${
+                  form.side === "LONG" ? "bg-emerald-400 shadow-emerald-500/10" : "bg-rose-400 shadow-rose-500/10"
+                }`}
+              >
+                <Play size={15}/>{form.orderType === "LIMIT" ? `COLOCAR LIMIT ${form.side}` : `ABRIR ${form.side}`} · FICTICIO
+              </button>
+              <div className="mt-1.5 text-center text-[8px] text-slate-700">No conecta órdenes con Binance ni dinero real.</div>
+            </>}
+          </div>
+        </aside>
+      </div>
+
+      {/* Positions / orders / journal dock */}
+      <section className="border-t border-slate-800/80 bg-[#060d17]">
+        <div className="flex items-center gap-1 border-b border-slate-800/80 px-2 py-1.5">
+          <DockTab active={bottomTab === "positions"} label={`Posiciones (${summary?.open_positions?.length ?? 0})`} onClick={() => setBottomTab("positions")}/>
+          <DockTab active={bottomTab === "orders"} label={`LIMIT (${summary?.pending_orders?.length ?? 0})`} onClick={() => setBottomTab("orders")}/>
+          <DockTab active={bottomTab === "history"} label={`Historial (${history.length})`} onClick={() => setBottomTab("history")}/>
+          <div className="ml-auto hidden gap-4 pr-2 text-[9px] text-slate-600 md:flex">
+            <span>WR {summary?.win_rate_pct == null ? "—" : `${summary.win_rate_pct}%`}</span>
+            <span>Realizado {money(summary?.realized_pnl ?? 0)}</span>
+            <button onClick={resetAccount} disabled={busy} className="font-bold text-rose-400 hover:text-rose-300"><RotateCcw size={11} className="mr-1 inline"/>Reset $1,000</button>
+          </div>
+        </div>
+
+        <div className="max-h-[290px] min-h-[145px] overflow-auto p-2">
+          {bottomTab === "positions" && (
+            <div className="grid gap-2 lg:grid-cols-2 2xl:grid-cols-3">
               {(summary?.open_positions ?? []).map((p) => (
-                <div key={p.id} className="rounded-2xl border border-slate-800 bg-slate-950/45 p-3">
+                <div key={p.id} className="rounded-xl border border-slate-800 bg-[#040a12] p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className={`font-black ${p.side === "LONG" ? "text-emerald-300" : "text-rose-300"}`}>{p.side}</span>
-                        <span className="font-black text-white">{p.symbol}</span>
-                        <span className="text-[10px] text-slate-500">{p.leverage}x</span>
+                        <span className={`text-xs font-black ${p.side === "LONG" ? "text-emerald-300" : "text-rose-300"}`}>{p.side}</span>
+                        <span className="text-xs font-black text-white">{p.symbol}</span>
+                        <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[8px] font-black text-slate-400">{p.leverage}x</span>
                       </div>
-                      <div className="mt-1 text-[10px] text-slate-600">{p.pattern || "MANUAL"} · {p.timeframe || "—"}</div>
+                      <div className="mt-1 text-[8px] uppercase tracking-wide text-slate-600">{p.pattern || "MANUAL"} · {p.timeframe || "—"}</div>
                     </div>
                     <div className="text-right">
-                      <div className={`mono-number font-black ${p.unrealized_pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{money(p.unrealized_pnl)}</div>
-                      <div className="text-[10px] text-slate-500">{p.roi_on_margin_pct >= 0 ? "+" : ""}{p.roi_on_margin_pct.toFixed(2)}%</div>
+                      <div className={`font-mono text-sm font-black ${p.unrealized_pnl >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{money(p.unrealized_pnl)}</div>
+                      <div className="text-[8px] text-slate-500">{p.roi_on_margin_pct >= 0 ? "+" : ""}{p.roi_on_margin_pct.toFixed(2)}%</div>
                     </div>
                   </div>
-                  <div className="mt-3 grid grid-cols-4 gap-1 text-[10px]">
-                    <Mini label="Entrada" value={fmt(p.entry_price)}/>
-                    <Mini label="Ahora" value={fmt(p.mark_price)}/>
-                    <Mini label="SL" value={fmt(p.stop_loss)} bad/>
-                    <Mini label="TP1" value={fmt(p.take_profit)} good/>
-                    <Mini label="TP2" value={fmt(p.tp2)} good={Boolean(p.tp2)}/>
-                    <Mini label="TP3" value={fmt(p.tp3)} good={Boolean(p.tp3)}/>
-                    <Mini label="Liquidación*" value={fmt(p.liquidation_price)} bad/>
-                    <Mini label="Dist. liq." value={p.liquidation_distance_pct == null ? "—" : `${p.liquidation_distance_pct.toFixed(2)}%`} bad={Boolean(p.liquidation_distance_pct != null && p.liquidation_distance_pct < 5)}/>
+                  <div className="mt-2 grid grid-cols-4 gap-1">
+                    <Tiny label="Entrada" value={fmt(p.entry_price)}/>
+                    <Tiny label="Mark" value={fmt(p.mark_price)}/>
+                    <Tiny label="SL" value={fmt(p.stop_loss)} tone="bad"/>
+                    <Tiny label="TP1" value={fmt(p.take_profit)} tone="good"/>
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-1.5 text-[9px]">
-                    {p.moved_to_be && <span className="rounded-md border border-cyan-400/20 bg-cyan-400/[.05] px-2 py-1 text-cyan-200">BE activo</span>}
-                    {p.tp1_hit && <span className="rounded-md border border-emerald-400/20 px-2 py-1 text-emerald-300">TP1 tocado</span>}
-                    {p.tp2_hit && <span className="rounded-md border border-emerald-400/20 px-2 py-1 text-emerald-300">TP2 tocado</span>}
-                    {p.partial_realized_pnl ? <span className="rounded-md border border-violet-400/20 px-2 py-1 text-violet-300">Parcial {money(p.partial_realized_pnl)}</span> : null}
+                  <div className="mt-2 grid grid-cols-5 gap-1">
+                    <ActionButton label="BE" onClick={() => moveToBreakEven(p.id)} disabled={busy || p.moved_to_be}/>
+                    <ActionButton label="25%" onClick={() => partialClose(p.id,.25)} disabled={busy}/>
+                    <ActionButton label="50%" onClick={() => partialClose(p.id,.5)} disabled={busy}/>
+                    <ActionButton label="SL/TP" onClick={() => applyFormLevels(p.id)} disabled={busy || !form.stop || !form.tp1}/>
+                    <ActionButton label="Cerrar" onClick={() => closeTrade(p.id)} disabled={busy} danger/>
                   </div>
-                  <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-5">
-                    <button onClick={() => moveToBreakEven(p.id)} disabled={busy || p.moved_to_be} className="rounded-lg border border-cyan-500/20 py-2 text-[10px] font-black text-cyan-200 disabled:opacity-35">Mover BE</button>
-                    <button onClick={() => partialClose(p.id, .25)} disabled={busy} className="rounded-lg border border-slate-700 py-2 text-[10px] font-black text-slate-300">Cerrar 25%</button>
-                    <button onClick={() => partialClose(p.id, .50)} disabled={busy} className="rounded-lg border border-slate-700 py-2 text-[10px] font-black text-slate-300">Cerrar 50%</button>
-                    <button onClick={() => applyFormLevels(p.id)} disabled={busy || !form.stop || !form.tp1} className="rounded-lg border border-violet-500/20 py-2 text-[10px] font-black text-violet-200">Aplicar SL/TP</button>
-                    <button onClick={() => closeTrade(p.id)} disabled={busy} className="rounded-lg border border-rose-500/25 py-2 text-[10px] font-black text-rose-200">Cerrar todo</button>
-                  </div>
-                  <div className="mt-2 text-[8px] leading-4 text-slate-700">*Liquidación = estimación educativa de margen aislado, no cálculo exacto de un exchange.</div>
                 </div>
               ))}
-              {!summary?.open_positions?.length && <div className="col-span-full py-8 text-center text-xs text-slate-600">Todavía no has abierto ninguna operación de práctica.</div>}
+              {!summary?.open_positions?.length && <EmptyDock text="No tienes posiciones demo abiertas."/>}
             </div>
-          </div>
+          )}
 
-          <div className="terminal-panel p-4 md:col-span-3">
-            <div className="mb-3 flex items-center justify-between">
-              <div className="text-sm font-black text-white">Órdenes LIMIT pendientes</div>
-              <div className="text-[10px] text-slate-600">{summary?.pending_orders?.length ?? 0} esperando precio</div>
-            </div>
-            <div className="grid gap-2 lg:grid-cols-2">
+          {bottomTab === "orders" && (
+            <div className="grid gap-2 lg:grid-cols-2 2xl:grid-cols-3">
               {(summary?.pending_orders ?? []).map((o) => (
-                <div key={o.id} className="rounded-2xl border border-slate-800 bg-slate-950/45 p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className={`font-black ${o.side === "LONG" ? "text-emerald-300" : "text-rose-300"}`}>{o.side} {o.symbol} · {o.leverage}x</div>
-                      <div className="mt-1 text-[10px] text-slate-600">{o.pattern || "MANUAL"} · {o.timeframe || "—"}</div>
-                    </div>
-                    <button onClick={() => cancelOrder(o.id)} disabled={busy} className="rounded-lg border border-rose-500/20 px-2 py-1 text-[10px] font-bold text-rose-300">Cancelar</button>
+                <div key={o.id} className="rounded-xl border border-slate-800 bg-[#040a12] p-3">
+                  <div className="flex justify-between gap-3">
+                    <div><span className={o.side === "LONG" ? "text-emerald-300" : "text-rose-300"}>{o.side}</span> <b className="text-white">{o.symbol}</b> <span className="text-[9px] text-slate-600">{o.leverage}x</span></div>
+                    <button onClick={() => cancelOrder(o.id)} disabled={busy} className="text-[9px] font-black text-rose-300">Cancelar</button>
                   </div>
-                  <div className="mt-3 grid grid-cols-4 gap-1">
-                    <Mini label="LIMIT" value={fmt(o.limit_price)}/>
-                    <Mini label="SL" value={fmt(o.stop_loss)} bad/>
-                    <Mini label="TP1" value={fmt(o.take_profit)} good/>
-                    <Mini label="Margen" value={money(o.margin_used)}/>
+                  <div className="mt-2 grid grid-cols-4 gap-1">
+                    <Tiny label="LIMIT" value={fmt(o.limit_price)}/>
+                    <Tiny label="SL" value={fmt(o.stop_loss)} tone="bad"/>
+                    <Tiny label="TP1" value={fmt(o.take_profit)} tone="good"/>
+                    <Tiny label="Margen" value={money(o.margin_used)}/>
                   </div>
                 </div>
               ))}
-              {!summary?.pending_orders?.length && <div className="col-span-full py-5 text-center text-xs text-slate-600">No hay órdenes LIMIT pendientes.</div>}
+              {!summary?.pending_orders?.length && <EmptyDock text="No hay órdenes LIMIT pendientes."/>}
             </div>
-          </div>
+          )}
 
-          <div className="terminal-panel p-4 md:col-span-3">
-            <div className="text-sm font-black text-white">Últimas operaciones cerradas</div>
-            <div className="mt-3 overflow-x-auto">
-              <table className="w-full min-w-[1100px] text-xs">
-                <thead className="text-[9px] uppercase tracking-[.1em] text-slate-600">
-                  <tr><th className="py-2 text-left">Par</th><th>Setup</th><th>Tipo</th><th>Entrada</th><th>Salida</th><th>SL</th><th>TP</th><th>PnL neto</th><th>R</th><th>Costos</th><th>Motivo</th></tr>
+          {bottomTab === "history" && (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[920px] text-[10px]">
+                <thead className="text-[8px] font-black uppercase tracking-[.1em] text-slate-600">
+                  <tr><th className="px-2 py-2 text-left">Par</th><th>Setup</th><th>Lado</th><th>Entrada</th><th>Salida</th><th>PnL</th><th>R</th><th>Motivo</th></tr>
                 </thead>
                 <tbody>
-                  {history.slice(0, 12).map((row) => (
-                    <tr key={row.id} className="border-t border-slate-900 text-center">
-                      <td className="py-2 text-left font-black text-white">{row.symbol}</td>
-                      <td className="text-[10px] text-slate-500">{(row.pattern || "MANUAL").replaceAll("_"," ")} · {row.timeframe || "—"}</td>
+                  {history.slice(0,20).map((row) => (
+                    <tr key={row.id} className="border-t border-slate-900/80 text-center">
+                      <td className="px-2 py-2 text-left font-black text-white">{row.symbol}</td>
+                      <td className="text-slate-500">{(row.pattern || "MANUAL").replaceAll("_"," ")}</td>
                       <td className={row.side === "LONG" ? "text-emerald-300" : "text-rose-300"}>{row.side}</td>
                       <td>{fmt(row.entry_price)}</td>
                       <td>{fmt(row.exit_price)}</td>
-                      <td className="text-rose-300">{fmt(row.stop_loss)}</td>
-                      <td className="text-emerald-300">{fmt(row.take_profit)}</td>
                       <td className={Number(row.net_pnl) >= 0 ? "text-emerald-300" : "text-rose-300"}>{money(row.net_pnl)}</td>
                       <td>{row.r_multiple == null ? "—" : Number(row.r_multiple).toFixed(2)+"R"}</td>
-                      <td className="text-slate-500">{money(Number(row.fees||0)+Number(row.slippage||0)+Number(row.funding_estimate||0))}</td>
-                      <td className="text-slate-500">{row.close_reason}</td>
+                      <td className="text-slate-600">{row.close_reason}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {!history.length && <div className="py-6 text-center text-xs text-slate-600">Sin operaciones cerradas todavía.</div>}
+              {!history.length && <EmptyDock text="Aún no hay operaciones cerradas."/>}
             </div>
-          </div>
+          )}
         </div>
-
-        <aside className="terminal-panel h-fit p-4 xl:sticky xl:top-20">
-          <button onClick={() => setShowOrder((v) => !v)} className="flex w-full items-center justify-between text-left">
-            <div>
-              <div className="text-[10px] font-black uppercase tracking-[.14em] text-cyan-300">Ejecutar demo</div>
-              <div className="mt-1 text-lg font-black text-white">Orden manual</div>
-            </div>
-            <ChevronDown size={18} className={`text-slate-500 transition ${showOrder ? "rotate-180" : ""}`}/>
-          </button>
-
-          {showOrder && <>
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <button onClick={() => setForm((x) => ({ ...x, side: "LONG" }))} className={`rounded-xl border p-3 font-black ${form.side === "LONG" ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-300" : "border-slate-800 text-slate-500"}`}>
-                <TrendingUp size={16} className="mr-1 inline"/> LONG
-              </button>
-              <button onClick={() => setForm((x) => ({ ...x, side: "SHORT" }))} className={`rounded-xl border p-3 font-black ${form.side === "SHORT" ? "border-rose-500/35 bg-rose-500/10 text-rose-300" : "border-slate-800 text-slate-500"}`}>
-                <TrendingDown size={16} className="mr-1 inline"/> SHORT
-              </button>
-            </div>
-
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              {(["MARKET","LIMIT"] as const).map((kind) => (
-                <button key={kind} onClick={() => setForm((x) => ({ ...x, orderType: kind, limitPrice: kind === "MARKET" ? "" : (x.limitPrice || String(Number(livePrice.toPrecision(10)))) }))} className={`rounded-xl border px-3 py-2 text-xs font-black ${form.orderType === kind ? "border-cyan-500/30 bg-cyan-500/[.08] text-cyan-200" : "border-slate-800 text-slate-500"}`}>{kind}</button>
-              ))}
-            </div>
-
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              {form.orderType === "LIMIT" && <Input label="Precio LIMIT" value={form.limitPrice} onChange={(v) => setForm((x) => ({ ...x, limitPrice: v }))}/>}
-              <Input label="Margen USDT" value={form.margin} onChange={(v) => setForm((x) => ({ ...x, margin: v }))}/>
-              <Input label="Apalancamiento (1–20x)" value={form.leverage} onChange={(v) => setForm((x) => ({ ...x, leverage: v }))}/>
-              <Input label="Stop loss" value={form.stop} onChange={(v) => setForm((x) => ({ ...x, stop: v }))}/>
-              <Input label="TP1" value={form.tp1} onChange={(v) => setForm((x) => ({ ...x, tp1: v }))}/>
-              <Input label="TP2 (opcional)" value={form.tp2} onChange={(v) => setForm((x) => ({ ...x, tp2: v }))}/>
-              <Input label="TP3 (opcional)" value={form.tp3} onChange={(v) => setForm((x) => ({ ...x, tp3: v }))}/>
-            </div>
-
-            <button onClick={setExamplePlan} className="mt-2 w-full rounded-xl border border-violet-500/20 bg-violet-500/[.04] px-3 py-2 text-[10px] font-black text-violet-200">
-              Plantilla educativa: SL 1% · TP1 1.5R · TP2 2R · TP3 3R
-            </button>
-
-            <label className="mt-3 block rounded-xl border border-slate-800 bg-slate-950/45 p-3">
-              <span className="text-[9px] font-black uppercase tracking-[.1em] text-slate-600">Patrón / setup practicado</span>
-              <select value={form.pattern} onChange={(e) => setForm((x) => ({ ...x, pattern: e.target.value }))} className="mt-2 w-full bg-transparent text-xs font-bold text-white outline-none">
-                {PATTERNS.map((name) => <option key={name} value={name} className="bg-slate-950">{name.replaceAll("_", " ")}</option>)}
-              </select>
-            </label>
-
-            <label className="mt-3 block rounded-xl border border-slate-800 bg-slate-950/45 p-3">
-              <span className="text-[9px] font-black uppercase tracking-[.1em] text-slate-600">Diario / razón de entrada</span>
-              <textarea value={form.note} onChange={(e) => setForm((x) => ({ ...x, note: e.target.value }))} rows={3} className="mt-2 w-full resize-none bg-transparent text-xs text-white outline-none" placeholder="Ej. triángulo confirmado + retest + volumen; SL bajo swing; no perseguí la vela..."/>
-            </label>
-
-            <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
-              <div className="grid grid-cols-2 gap-2">
-                <Mini label={form.orderType === "LIMIT" ? "Entrada LIMIT" : "Entrada mercado"} value={riskPreview ? fmt(riskPreview.entry) : fmt(livePrice)}/>
-                <Mini label="Notional" value={riskPreview ? money(riskPreview.notional) : "—"}/>
-                <Mini label="Riesgo al SL" value={riskPreview ? money(riskPreview.risk) : "—"} bad/>
-                <Mini label="% de equity" value={riskPreview ? `${riskPreview.riskPct.toFixed(3)}%` : "—"} bad={Boolean(riskPreview && riskPreview.riskPct > 0.5)}/>
-                <Mini label="R:R a TP1" value={riskPreview && riskPreview.rr > 0 ? `1:${riskPreview.rr.toFixed(2)}` : "—"} good={Boolean(riskPreview && riskPreview.rr >= 1.5)}/>
-                <Mini label="Liquidación aprox.*" value={riskPreview ? fmt(riskPreview.liquidation) : "—"} bad/>
-              </div>
-              {riskPreview && riskPreview.riskPct > 0.5 && <div className="mt-2 text-[10px] font-bold text-amber-300">Para la práctica educativa estás superando 0.5% de riesgo de equity en este trade.</div>}
-              {riskPreview && riskPreview.rr > 0 && riskPreview.rr < 1 && <div className="mt-2 text-[10px] font-bold text-amber-300">Tu TP1 ofrece menos recompensa que el riesgo al SL.</div>}
-              <div className="mt-2 text-[8px] leading-4 text-slate-700">*Estimación educativa de liquidación para margen aislado; un exchange real usa reglas y mantenimiento propios.</div>
-            </div>
-
-            <button onClick={openTrade} disabled={busy || !form.stop || !form.tp1 || (form.orderType === "LIMIT" && !form.limitPrice)} className={`mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-3 font-black text-slate-950 disabled:opacity-40 ${form.side === "LONG" ? "bg-emerald-400" : "bg-rose-400"}`}>
-              <Play size={16}/> {form.orderType === "LIMIT" ? `Colocar LIMIT ${form.side}` : `Abrir MARKET ${form.side}`} ficticio
-            </button>
-            <div className="mt-2 text-center text-[9px] text-slate-600">100% práctica. No envía órdenes a Binance, no usa tu cuenta real ni dinero real.</div>
-          </>}
-        </aside>
       </section>
 
-      {message && <div className="fixed bottom-5 left-1/2 z-[90] flex max-w-[90vw] -translate-x-1/2 items-center gap-2 rounded-xl border border-cyan-500/30 bg-slate-950/95 px-4 py-3 text-xs font-bold text-cyan-100 shadow-2xl">
-        <Target size={14}/>{message}<button onClick={() => setMessage("")}><X size={14} className="text-slate-500"/></button>
-      </div>}
+      {message && (
+        <div className="fixed bottom-5 left-1/2 z-[90] flex max-w-[90vw] -translate-x-1/2 items-center gap-2 rounded-xl border border-cyan-500/30 bg-slate-950/95 px-4 py-3 text-xs font-bold text-cyan-100 shadow-2xl">
+          <Target size={14}/>{message}<button onClick={() => setMessage("")}><X size={14} className="text-slate-500"/></button>
+        </div>
+      )}
     </div>
   );
+}
+
+function DeskTool({ icon, label, onClick, danger=false }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
+  return (
+    <button
+      title={label}
+      aria-label={label}
+      onClick={onClick}
+      className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg border transition ${
+        danger
+          ? "border-rose-500/15 text-rose-400 hover:bg-rose-500/10"
+          : "border-transparent text-slate-500 hover:border-cyan-400/20 hover:bg-cyan-400/[.06] hover:text-cyan-200"
+      }`}
+    >
+      {icon}
+    </button>
+  );
+}
+
+function DeskSeparator() {
+  return <div className="mx-1 h-8 w-px shrink-0 bg-slate-800 xl:my-1 xl:h-px xl:w-8"/>;
+}
+
+function CompactMetric({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" | "warn" }) {
+  return <div className="rounded-lg border border-slate-800 bg-[#040a12] px-2 py-2 text-center"><div className="text-[7px] font-black uppercase tracking-[.1em] text-slate-600">{label}</div><div className={`mt-1 truncate font-mono text-[10px] font-black ${tone === "good" ? "text-emerald-300" : tone === "bad" ? "text-rose-300" : tone === "warn" ? "text-amber-300" : "text-white"}`}>{value}</div></div>;
+}
+
+function TradeInput({ label, value, onChange, suffix }: { label: string; value: string; onChange: (value: string) => void; suffix?: string }) {
+  return <label className="rounded-lg border border-slate-800 bg-[#040a12] px-2.5 py-2"><span className="text-[7px] font-black uppercase tracking-[.11em] text-slate-600">{label}</span><div className="mt-1 flex items-center gap-1"><input inputMode="decimal" value={value} onChange={(e) => onChange(e.target.value)} className="min-w-0 flex-1 bg-transparent font-mono text-xs font-black text-white outline-none" placeholder="0"/>{suffix && <span className="text-[9px] text-slate-600">{suffix}</span>}</div></label>;
+}
+
+function DockTab({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return <button onClick={onClick} className={`rounded-md px-3 py-1.5 text-[9px] font-black transition ${active ? "bg-cyan-400/10 text-cyan-200" : "text-slate-600 hover:text-slate-300"}`}>{label}</button>;
+}
+
+function Tiny({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" }) {
+  return <div className="rounded-md border border-slate-800/80 bg-slate-950/50 px-1.5 py-1.5"><div className="text-[7px] uppercase text-slate-700">{label}</div><div className={`mt-0.5 truncate font-mono text-[9px] font-black ${tone === "good" ? "text-emerald-300" : tone === "bad" ? "text-rose-300" : "text-slate-200"}`}>{value}</div></div>;
+}
+
+function ActionButton({ label, onClick, disabled, danger=false }: { label: string; onClick: () => void; disabled?: boolean; danger?: boolean }) {
+  return <button onClick={onClick} disabled={disabled} className={`rounded-md border py-1.5 text-[8px] font-black disabled:opacity-30 ${danger ? "border-rose-500/20 text-rose-300" : "border-slate-800 text-slate-400 hover:border-cyan-400/20 hover:text-cyan-200"}`}>{label}</button>;
+}
+
+function EmptyDock({ text }: { text: string }) {
+  return <div className="col-span-full grid min-h-[110px] place-items-center rounded-xl border border-dashed border-slate-800 text-[10px] text-slate-600">{text}</div>;
 }
 
 function Tool({ icon, label, onClick, danger=false }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
