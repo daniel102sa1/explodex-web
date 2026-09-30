@@ -940,9 +940,12 @@ export default function PracticeTradingTerminal() {
 
       <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_390px]">
         <div className="grid gap-3 md:grid-cols-3">
-          <Stat title="Cuenta ficticia" value={money(summary?.equity ?? 1000)} detail={`Cash ${money(summary?.cash_balance ?? 1000)}`} icon={<CircleDollarSign size={17}/>}/>
-          <Stat title="Margen disponible" value={money(summary?.available_margin ?? 1000)} detail={`Reservado ${money(summary?.reserved_margin ?? 0)}`} icon={<Gauge size={17}/>}/>
+          <Stat title="Cuenta ficticia" value={money(summary?.equity ?? 1000)} detail={`Cash ${money(summary?.cash_balance ?? 1000)} · PnL abierto ${money(summary?.unrealized_pnl ?? 0)}`} icon={<CircleDollarSign size={17}/>}/>
+          <Stat title="Margen disponible" value={money(summary?.available_margin ?? 1000)} detail={`Posiciones ${money(summary?.reserved_margin ?? 0)} · LIMIT ${money(summary?.pending_margin ?? 0)}`} icon={<Gauge size={17}/>}/>
           <Stat title="Resultado demo" value={money(summary?.realized_pnl ?? 0)} detail={`${summary?.closed_trades ?? 0} cerradas · WR ${summary?.win_rate_pct == null ? "—" : `${summary.win_rate_pct}%`}`} icon={<BarChart3 size={17}/>}/>
+          <Stat title="Expectativa" value={money(summary?.performance?.expectancy_usdt ?? 0)} detail="Promedio neto por trade cerrado" icon={<Activity size={17}/>}/>
+          <Stat title="Profit factor / R" value={summary?.performance?.profit_factor == null ? "—" : summary.performance.profit_factor.toFixed(2)} detail={`R medio ${summary?.performance?.average_r == null ? "—" : summary.performance.average_r.toFixed(2)}`} icon={<Target size={17}/>}/>
+          <Stat title="Drawdown máx." value={`${Number(summary?.performance?.max_drawdown_pct ?? 0).toFixed(2)}%`} detail="Desde el máximo de equity de práctica" icon={<TrendingDown size={17}/>}/>
 
           <div className="terminal-panel p-4 md:col-span-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
