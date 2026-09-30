@@ -13,7 +13,7 @@ export default function PracticePage() {
           </div>
           <h1 className="mt-1 text-2xl font-black text-white">ExplodeX Trading Lab</h1>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">
-            Gráfico vivo, indicadores, dibujos, Fibonacci y cuenta ficticia para practicar LONG/SHORT sin enviar órdenes reales.
+            Gráfico tipo TradingView, indicadores, patrones, MARKET/LIMIT, apalancamiento, SL/TP1/TP2/TP3, BE y cuenta ficticia aislada de $1,000 para practicar sin órdenes reales.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -21,7 +21,7 @@ export default function PracticePage() {
             <ShieldCheck size={13}/> 100% práctica · dinero ficticio
           </span>
           <span className="inline-flex items-center gap-2 rounded-xl border border-violet-500/20 bg-violet-500/[.05] px-3 py-2 text-[10px] font-bold text-violet-200">
-            <FlaskConical size={13}/> Dibuja → confirma → ejecuta demo → mide
+            <FlaskConical size={13}/> Dibuja → confirma → ejecuta → gestiona → revisa métricas
           </span>
         </div>
       </header>
