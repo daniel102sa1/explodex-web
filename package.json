@@ -12,7 +12,8 @@
     "next": "^15.2.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "lucide-react": "^0.468.0"
+    "lucide-react": "^0.468.0",
+    "klinecharts": "^10.0.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
