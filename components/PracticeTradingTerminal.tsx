@@ -170,6 +170,7 @@ export default function PracticeTradingTerminal() {
   const [sid, setSid] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [chartReady, setChartReady] = useState(false);
   const [showOrder, setShowOrder] = useState(true);
   const [form, setForm] = useState<OrderForm>({
     side: "LONG",
@@ -237,7 +238,7 @@ export default function PracticeTradingTerminal() {
       } catch {}
 
       localChart = kc.init(chartElRef.current, {
-        locale: "es-ES",
+        locale: "en-US",
         timezone: "America/Guatemala",
         layout: {
           pane: { minHeight: 70, dragEnabled: true },
@@ -356,6 +357,7 @@ export default function PracticeTradingTerminal() {
 
       localChart.setSymbol({ ticker: symbol, pricePrecision: 8, volumePrecision: 4 });
       localChart.setPeriod(periodFromInterval(interval));
+      setChartReady(true);
     }
 
     boot();
@@ -367,6 +369,7 @@ export default function PracticeTradingTerminal() {
         try { localChart.dispose?.(); } catch {}
       }
       chartRef.current = null;
+      setChartReady(false);
     };
   }, []);
 
@@ -409,7 +412,7 @@ export default function PracticeTradingTerminal() {
     if (indicatorSet.has("OBV")) {
       try { chart.createIndicator({ name: "OBV", paneId: "obv_pane" }); } catch {}
     }
-  }, [indicatorSet]);
+  }, [indicatorSet, chartReady]);
 
   function toggleIndicator(name: IndicatorName) {
     setIndicatorSet((current) => {
