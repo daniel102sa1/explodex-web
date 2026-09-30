@@ -9,7 +9,9 @@ import {
   moveManualPracticeStopToBreakEven,
   openManualPracticePosition,
   resetManualPracticeAccount,
+  updateManualPracticeRisk,
   type ManualPracticeAccount,
+  type ManualPracticePosition,
 } from "@/lib/api";
 
 function fmt(value?: number | null) {
@@ -38,6 +40,11 @@ export default function PracticeOrderPanel({symbol,livePrice}:{symbol:string;liv
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState<string|null>(null);
   const [tab,setTab]=useState<"open"|"orders"|"history">("open");
+  const [editId,setEditId]=useState<number|null>(null);
+  const [editStop,setEditStop]=useState("");
+  const [editTp1,setEditTp1]=useState("");
+  const [editTp2,setEditTp2]=useState("");
+  const [editTp3,setEditTp3]=useState("");
 
   async function refresh(){
     try{setAccount(await getManualPracticeAccount())}
@@ -87,6 +94,15 @@ export default function PracticeOrderPanel({symbol,livePrice}:{symbol:string;liv
       limit_price:orderType==="LIMIT"?Number(limitPrice):undefined,
       practice_note:note,auto_be_after_tp1:autoBe,
     }),orderType==="MARKET"?side+" PAPER abierto.":"Orden LIMIT ficticia colocada.");
+  }
+
+  function beginEdit(p:ManualPracticePosition){
+    setEditId(p.id);setEditStop(String(p.stop_loss));setEditTp1(String(p.tp1));setEditTp2(String(p.tp2));setEditTp3(String(p.tp3));
+  }
+  async function saveEdit(){
+    if(editId==null)return;
+    await run(()=>updateManualPracticeRisk(editId,{stop_loss:Number(editStop),tp1:Number(editTp1),tp2:Number(editTp2),tp3:Number(editTp3)}),"Plan SL/TP actualizado.");
+    setEditId(null);
   }
 
   async function reset(){
@@ -152,12 +168,14 @@ export default function PracticeOrderPanel({symbol,livePrice}:{symbol:string;liv
         {tab==="open"&&(account?.positions?.length?account.positions.map(p=><div key={p.id} className="rounded-xl border border-slate-800 bg-slate-950/55 p-3">
           <div className="flex items-start justify-between gap-2"><div><div className={"text-xs font-black "+(p.side==="LONG"?"text-emerald-300":"text-rose-300")}>{p.symbol+" · "+p.side+" · "+p.leverage+"x"}</div><div className="mt-1 text-[9px] text-slate-600">Entrada {fmt(p.entry_price)} · mark {fmt(p.mark_price)} · qty {fmt(p.quantity_remaining)}</div></div><button disabled={busy} onClick={()=>run(()=>closeManualPracticePosition(p.id,1),"Posición cerrada.")} className="rounded-lg border border-slate-800 p-1.5 text-slate-500 hover:text-rose-300"><X size={12}/></button></div>
           <div className="mt-2 grid grid-cols-4 gap-1"><Stat label="PnL" value={money(p.unrealized_pnl)}/><Stat label="SL" value={fmt(p.stop_loss)}/><Stat label="TP1/2" value={(p.tp1_hit?"✓":"○")+"/"+(p.tp2_hit?"✓":"○")}/><Stat label="Liq." value={fmt(p.liquidation_price)}/></div>
-          <div className="mt-2 grid grid-cols-4 gap-1">
+          <div className="mt-2 grid grid-cols-5 gap-1">
             <SmallButton label="25%" onClick={()=>run(()=>closeManualPracticePosition(p.id,.25),"Cierre parcial 25%.")}/>
             <SmallButton label="50%" onClick={()=>run(()=>closeManualPracticePosition(p.id,.5),"Cierre parcial 50%.")}/>
             <SmallButton label="BE" icon={<ShieldCheck size={10}/>} onClick={()=>run(()=>moveManualPracticeStopToBreakEven(p.id),"Stop movido a break-even.")}/>
+            <SmallButton label="Editar" onClick={()=>beginEdit(p)}/>
             <SmallButton label="Cerrar" onClick={()=>run(()=>closeManualPracticePosition(p.id,1),"Posición cerrada.")}/>
           </div>
+          {editId===p.id&&<div className="mt-2 rounded-xl border border-cyan-400/15 bg-cyan-400/[.03] p-2"><div className="grid grid-cols-2 gap-1.5"><Field label="SL" value={editStop} onChange={setEditStop}/><Field label="TP1" value={editTp1} onChange={setEditTp1}/><Field label="TP2" value={editTp2} onChange={setEditTp2}/><Field label="TP3" value={editTp3} onChange={setEditTp3}/></div><div className="mt-2 grid grid-cols-2 gap-1"><SmallButton label="Guardar plan" onClick={saveEdit}/><SmallButton label="Cancelar" onClick={()=>setEditId(null)}/></div></div>}
           {p.note&&<div className="mt-2 text-[9px] leading-4 text-slate-500">Diario: {p.note}</div>}
         </div>):<Empty text="No hay posiciones manuales abiertas."/>)}
 

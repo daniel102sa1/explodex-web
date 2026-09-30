@@ -13,6 +13,10 @@ function fmt(v:number){if(!Number.isFinite(v))return"—";if(Math.abs(v)>=1000)r
 function ema(v:number[],p:number){if(!v.length)return[];const a=2/(p+1),o:number[]=[];let x=v[0];o.push(x);for(let i=1;i<v.length;i++){x=v[i]*a+x*(1-a);o.push(x)}return o}
 function rsiSeries(v:number[],p=14){const o:(number|null)[]=Array(v.length).fill(null);if(v.length<=p)return o;let g=0,l=0;for(let i=1;i<=p;i++){const d=v[i]-v[i-1];if(d>=0)g+=d;else l-=d}let ag=g/p,al=l/p;o[p]=al===0?100:100-100/(1+ag/al);for(let i=p+1;i<v.length;i++){const d=v[i]-v[i-1];ag=(ag*(p-1)+Math.max(d,0))/p;al=(al*(p-1)+Math.max(-d,0))/p;o[i]=al===0?100:100-100/(1+ag/al)}return o}
 function macdSeries(v:number[]){const a=ema(v,12),b=ema(v,26),line=v.map((_,i)=>a[i]-b[i]),signal=ema(line,9);return{line,signal,hist:line.map((x,i)=>x-signal[i])}}
+function smaSeries(v:number[],p:number){return v.map((_,i)=>i<p-1?null:v.slice(i-p+1,i+1).reduce((a,b)=>a+b,0)/p)}
+function vwapSeries(c:Candle[]){let pv=0,vol=0;return c.map(x=>{const tp=(x.high+x.low+x.close)/3;pv+=tp*x.volume;vol+=x.volume;return vol>0?pv/vol:tp})}
+function bollinger(v:number[],p=20,m=2){const mid=smaSeries(v,p);const up:(number|null)[]=[],low:(number|null)[]=[];for(let i=0;i<v.length;i++){if(mid[i]==null){up.push(null);low.push(null);continue}const s=v.slice(i-p+1,i+1),mean=Number(mid[i]),variance=s.reduce((a,x)=>a+(x-mean)*(x-mean),0)/p,sd=Math.sqrt(variance);up.push(mean+m*sd);low.push(mean-m*sd)}return{mid,up,low}}
+function atrNow(c:Candle[],p=14){if(c.length<2)return 0;const tr=c.map((x,i)=>i===0?x.high-x.low:Math.max(x.high-x.low,Math.abs(x.high-c[i-1].close),Math.abs(x.low-c[i-1].close)));const s=tr.slice(-Math.min(p,tr.length));return s.reduce((a,b)=>a+b,0)/s.length}
 function pathFrom(v:(number|null)[],x:(i:number)=>number,y:(v:number)=>number){let s=false,d="";v.forEach((n,i)=>{if(n==null||!Number.isFinite(n))return;d+=(s?" L ":"M ")+x(i)+" "+y(n);s=true});return d}
 
 const POINTS:Record<Exclude<Tool,"select">,number>={trend:2,hline:1,fib:2,triangle:4,channel:3,rect:2,abcd:4,xabcd:5,hch:5,ruler:2,longpos:3,shortpos:3};
@@ -24,6 +28,9 @@ export default function PracticePriceChart({candles,plan,livePrice,pattern,symbo
   const [showEma,setShowEma]=useState(true);
   const [showRsi,setShowRsi]=useState(true);
   const [showMacd,setShowMacd]=useState(true);
+  const [showEma200,setShowEma200]=useState(false);
+  const [showVwap,setShowVwap]=useState(false);
+  const [showBoll,setShowBoll]=useState(false);
   const [windowSize,setWindowSize]=useState(96);
   const [pan,setPan]=useState(0);
 
@@ -37,7 +44,7 @@ export default function PracticePriceChart({candles,plan,livePrice,pattern,symbo
   const width=1120,priceHeight=370,volumeHeight=70,gap=16,totalHeight=priceHeight+gap+volumeHeight,left=54,right=18,plotRight=width-right,top=18;
   const last=Number(livePrice||visible.at(-1)?.close||0);
   const closes=visible.map((c,i)=>i===visible.length-1&&pan===0&&livePrice?Number(livePrice):Number(c.close));
-  const e20=ema(closes,20),e50=ema(closes,50),rsi=rsiSeries(closes),macd=macdSeries(closes);
+  const e20=ema(closes,20),e50=ema(closes,50),e200=ema(closes,200),rsi=rsiSeries(closes),macd=macdSeries(closes),vwap=vwapSeries(visible),boll=bollinger(closes),atr14=atrNow(visible);
 
   if(!visible.length)return <div className="rounded-2xl border border-dashed border-slate-800 p-8 text-center text-sm text-slate-500">Sin datos de gráfico.</div>;
 
@@ -63,7 +70,7 @@ export default function PracticePriceChart({candles,plan,livePrice,pattern,symbo
     if(next.length>=POINTS[kind]){setDrawings(v=>v.concat({id:String(Date.now()),type:kind,points:next}));setDraft([])}else setDraft(next);
   }
 
-  const rsiNow=rsi.filter((v):v is number=>v!=null).at(-1)??null,macdNow=macd.hist.at(-1)??0,ema20Now=e20.at(-1)??last,ema50Now=e50.at(-1)??last;
+  const rsiNow=rsi.filter((v):v is number=>v!=null).at(-1)??null,macdNow=macd.hist.at(-1)??0,ema20Now=e20.at(-1)??last,ema50Now=e50.at(-1)??last,ema200Now=e200.at(-1)??last,vwapNow=vwap.at(-1)??last;
   const planLevels=[["AHORA",last,"#67e8f9"],["TRIGGER",Number(plan?.trigger||0),"#a78bfa"],["ENTRADA",Number(plan?.actualEntry||0),"#f472b6"],["SL",Number(plan?.stop||0),"#fb7185"],["TP1",Number(plan?.tp1||0),"#34d399"],["TP2",Number(plan?.tp2||0),"#22d3ee"],["TP3",Number(plan?.tp3||0),"#60a5fa"]].filter(r=>Number(r[1])>0) as Array<[string,number,string]>;
 
   return <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-3">
@@ -99,6 +106,10 @@ export default function PracticePriceChart({candles,plan,livePrice,pattern,symbo
       <Toggle active={showEma} onClick={()=>setShowEma(v=>!v)} label={"EMA20/50 "+fmt(ema20Now)+" / "+fmt(ema50Now)}/>
       <Toggle active={showRsi} onClick={()=>setShowRsi(v=>!v)} label={"RSI14 "+(rsiNow==null?"—":rsiNow.toFixed(1))}/>
       <Toggle active={showMacd} onClick={()=>setShowMacd(v=>!v)} label={"MACD "+macdNow.toFixed(5)}/>
+      <Toggle active={showEma200} onClick={()=>setShowEma200(v=>!v)} label={"EMA200 "+fmt(ema200Now)}/>
+      <Toggle active={showVwap} onClick={()=>setShowVwap(v=>!v)} label={"VWAP "+fmt(vwapNow)}/>
+      <Toggle active={showBoll} onClick={()=>setShowBoll(v=>!v)} label="Bollinger 20/2"/>
+      <span className="rounded-lg border border-slate-800 px-2 py-1 text-slate-500">ATR14 {fmt(atr14)}</span>
       <span className="rounded-lg border border-slate-800 px-2 py-1 text-slate-600">{visible.length} velas · desplazamiento {pan}</span>
       {draft.length>0&&<span className="rounded-lg border border-amber-400/20 bg-amber-400/[.05] px-2 py-1 text-amber-200">Punto {draft.length}/{POINTS[tool as Exclude<Tool,"select">]||0} · continúa</span>}
     </div>
@@ -107,6 +118,9 @@ export default function PracticePriceChart({candles,plan,livePrice,pattern,symbo
       {[.2,.4,.6,.8].map(v=><line key={v} x1={left} x2={plotRight} y1={top+(priceHeight-top*2)*v} y2={top+(priceHeight-top*2)*v} stroke="rgba(148,163,184,.10)"/>)}
       {visible.map((c,i)=>{const xx=x(i),op=y(c.open),cl=y(i===visible.length-1&&pan===0&&livePrice?Number(livePrice):c.close),hi=y(c.high),lo=y(c.low),bull=(i===visible.length-1&&pan===0&&livePrice?Number(livePrice):c.close)>=c.open,vh=(c.volume/maxVol)*volumeHeight,vy=priceHeight+gap+(volumeHeight-vh);return <g key={String(c.time)+"-"+i} className={bull?"text-emerald-400":"text-rose-400"}><line x1={xx} x2={xx} y1={hi} y2={lo} stroke="currentColor" strokeWidth="1.2"/><rect x={xx-body/2} y={Math.min(op,cl)} width={body} height={Math.max(1.5,Math.abs(cl-op))} fill="currentColor"/><rect x={xx-body/2} y={vy} width={body} height={vh} fill="currentColor" opacity=".22"/></g>})}
       {showEma&&<><path d={pathFrom(e50,x,y)} fill="none" stroke="#f59e0b" strokeWidth="1.6"/><path d={pathFrom(e20,x,y)} fill="none" stroke="#22d3ee" strokeWidth="1.8"/></>}
+      {showEma200&&<path d={pathFrom(e200,x,y)} fill="none" stroke="#f472b6" strokeWidth="1.5" opacity=".8"/>}
+      {showVwap&&<path d={pathFrom(vwap,x,y)} fill="none" stroke="#34d399" strokeWidth="1.6" strokeDasharray="6 3"/>}
+      {showBoll&&<><path d={pathFrom(boll.up,x,y)} fill="none" stroke="#818cf8" strokeWidth="1.1" opacity=".65"/><path d={pathFrom(boll.mid,x,y)} fill="none" stroke="#64748b" strokeWidth="1" opacity=".45"/><path d={pathFrom(boll.low,x,y)} fill="none" stroke="#818cf8" strokeWidth="1.1" opacity=".65"/></>}
       {planLevels.map(([label,p,color])=><g key={label}><line x1={left} x2={plotRight} y1={y(p)} y2={y(p)} stroke={color} strokeDasharray={label==="AHORA"?"2 4":"6 5"} opacity=".72"/><text x={left+4} y={Math.max(10,y(p)-3)} fill={color} fontSize="9" fontWeight="800">{label+" "+fmt(p)}</text></g>)}
       {pattern&&pattern.level&&<><line x1={left} x2={plotRight} y1={y(Number(pattern.level))} y2={y(Number(pattern.level))} stroke="#c4b5fd" strokeDasharray="8 5"/><text x={left+4} y={y(Number(pattern.level))-4} fill="#c4b5fd" fontSize="9">{pattern.name.replaceAll("_"," ")}</text></>}
       {drawings.map(d=><DrawingShape key={d.id} drawing={d} xt={xt} y={y} left={left} right={plotRight}/>)}
