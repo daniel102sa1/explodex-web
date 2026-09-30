@@ -903,11 +903,16 @@ export default function PracticeTradingTerminal() {
 
         <div className="grid border-b border-slate-800 lg:grid-cols-[auto_1fr]">
           <div className="flex flex-wrap gap-1 border-b border-slate-800 p-2 lg:max-w-[220px] lg:flex-col lg:border-b-0 lg:border-r">
-            <Tool icon={<LineChart size={14}/>} label="Línea" onClick={() => draw("segment")}/>
+            <Tool icon={<LineChart size={14}/>} label="Línea / swing" onClick={() => draw("segment")}/>
+            <Tool icon={<LineChart size={14}/>} label="Rayo de tendencia" onClick={() => draw("rayLine")}/>
             <Tool icon={<Minus size={14}/>} label="Soporte / resistencia" onClick={() => draw("horizontalStraightLine")}/>
             <Tool icon={<Triangle size={14}/>} label="Triángulo (2 líneas)" onClick={drawTriangle}/>
-            <Tool icon={<Activity size={14}/>} label="Fibonacci" onClick={() => draw("fibonacciLine")}/>
+            <Tool icon={<Activity size={14}/>} label="Fibonacci retroceso" onClick={() => draw("fibonacciLine")}/>
             <Tool icon={<Layers3 size={14}/>} label="Canal paralelo" onClick={() => draw("parallelStraightLine")}/>
+            <Tool icon={<Layers3 size={14}/>} label="Canal de precio" onClick={() => draw("priceChannelLine")}/>
+            <Tool icon={<Target size={14}/>} label="Medir % / recorrido" onClick={() => draw("EXPLODEX_MEASURE")}/>
+            <Tool icon={<TrendingUp size={14}/>} label="Long Position visual" onClick={() => draw("EXPLODEX_LONG_POSITION")}/>
+            <Tool icon={<TrendingDown size={14}/>} label="Short Position visual" onClick={() => draw("EXPLODEX_SHORT_POSITION")}/>
             <Tool icon={<Brush size={14}/>} label="Dibujo libre" onClick={() => draw("brush")}/>
             <div className="my-1 border-t border-slate-800"/>
             <Tool icon={<Save size={14}/>} label="Guardar dibujos" onClick={saveDrawings}/>
