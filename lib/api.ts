@@ -599,14 +599,52 @@ export type ManualPracticePosition = {
   entry_price: number;
   mark_price: number;
   stop_loss: number;
-  take_profit: number;
-  quantity: number;
-  notional: number;
-  margin_used: number;
-  risk_usdt: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  liquidation_price?: number | null;
+  quantity_initial: number;
+  quantity_remaining: number;
+  margin_initial: number;
+  margin_remaining: number;
   unrealized_pnl: number;
+  realized_pnl: number;
+  tp1_hit: boolean;
+  tp2_hit: boolean;
   opened_at: string;
   note?: string | null;
+};
+
+export type ManualPracticeOrder = {
+  id: number;
+  symbol: string;
+  side: "LONG" | "SHORT";
+  order_type: "MARKET" | "LIMIT";
+  status: string;
+  limit_price?: number | null;
+  margin_usdt: number;
+  leverage: number;
+  stop_loss: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  practice_note?: string | null;
+  created_at?: string | null;
+};
+
+export type ManualPracticeHistory = {
+  id: number;
+  symbol: string;
+  side: "LONG" | "SHORT";
+  leverage: number;
+  entry_price: number;
+  exit_price?: number | null;
+  exit_reason?: string | null;
+  realized_pnl: number;
+  total_costs: number;
+  practice_note?: string | null;
+  opened_at: string;
+  closed_at?: string | null;
 };
 
 export type ManualPracticeAccount = {
@@ -615,21 +653,32 @@ export type ManualPracticeAccount = {
   starting_balance: number;
   cash_balance: number;
   used_margin: number;
+  reserved_margin: number;
   available_margin: number;
   unrealized_pnl: number;
   equity: number;
   realized_pnl: number;
+  total_costs: number;
   positions: ManualPracticePosition[];
+  pending_orders: ManualPracticeOrder[];
+  history: ManualPracticeHistory[];
+  liquidation_model?: string;
+  sync_mode?: string;
 };
 
 export type ManualPracticeOpenInput = {
   symbol: string;
   side: "LONG" | "SHORT";
+  order_type: "MARKET" | "LIMIT";
   margin_usdt: number;
   leverage: number;
   stop_loss: number;
-  take_profit: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  limit_price?: number;
   practice_note?: string;
+  auto_be_after_tp1?: boolean;
 };
 
 export async function getManualPracticeAccount(): Promise<ManualPracticeAccount> {
@@ -644,8 +693,27 @@ export async function openManualPracticePosition(input: ManualPracticeOpenInput)
   });
 }
 
-export async function closeManualPracticePosition(positionId: number): Promise<Record<string, any>> {
-  return api<Record<string, any>>(`/api/v1/paper-trading/manual/close/${positionId}`, {
+export async function closeManualPracticePosition(positionId: number, fraction = 1): Promise<Record<string, any>> {
+  return api<Record<string, any>>(`/api/v1/paper-trading/manual/close/${positionId}?fraction=${Math.max(.01, Math.min(1, fraction))}`, { method: "POST" });
+}
+
+export async function moveManualPracticeStopToBreakEven(positionId: number): Promise<Record<string, any>> {
+  return api<Record<string, any>>(`/api/v1/paper-trading/manual/be/${positionId}`, { method: "POST" });
+}
+
+export async function updateManualPracticeRisk(positionId: number, input: {stop_loss:number;tp1:number;tp2:number;tp3:number}): Promise<Record<string, any>> {
+  return api<Record<string, any>>(`/api/v1/paper-trading/manual/update/${positionId}`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
   });
 }
+
+export async function cancelManualPracticeOrder(orderId: number): Promise<Record<string, any>> {
+  return api<Record<string, any>>(`/api/v1/paper-trading/manual/cancel/${orderId}`, { method: "POST" });
+}
+
+export async function resetManualPracticeAccount(): Promise<Record<string, any>> {
+  return api<Record<string, any>>("/api/v1/paper-trading/manual/reset", { method: "POST" });
+}
+
