@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { analyzeTechnical, INDICATOR_HELP, type TechnicalRead } from "@/lib/patternEngine";
+import { analyzeTechnical, INDICATOR_HELP, type TechnicalRead, type CandleBar } from "@/lib/patternEngine";
 import PracticeStatsLab from "@/components/PracticeStatsLab";
+import PracticeReplayLab from "@/components/PracticeReplayLab";
 import {
   Activity,
   BarChart3,
@@ -490,6 +491,7 @@ export default function PracticeTradingTerminal() {
   const closedCountRef = useRef(-1);
   const syncingRef = useRef(false);
   const [journalCount, setJournalCount] = useState(0);
+  const [replaySnapshot, setReplaySnapshot] = useState<CandleBar[] | null>(null);
   const [sid, setSid] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -1998,6 +2000,14 @@ export default function PracticeTradingTerminal() {
         {/* Chart */}
         <section className="min-w-0 bg-[#050b14]">
           <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-800/80 bg-[#07101a] px-2 py-1.5">
+            <button onClick={() => {
+              const rows = barsRef.current.slice(-220);
+              if (rows.length < 65) { setMessage("Carga al menos 65 velas antes de iniciar Replay."); return; }
+              setReplaySnapshot(rows.map(row => ({
+                timestamp:Number(row.timestamp),open:Number(row.open),high:Number(row.high),
+                low:Number(row.low),close:Number(row.close),volume:Number(row.volume)
+              })));
+            }} className="mr-1 shrink-0 rounded-lg border border-cyan-400/25 bg-cyan-400/[.05] px-2 py-1 text-[9px] font-black text-cyan-200">▶ REPLAY LOCAL</button>
             <span className="mr-1 shrink-0 text-[8px] font-black uppercase tracking-[.15em] text-slate-500">Indicadores</span>
             {(["principal","momentum","riesgo"] as const).map(group => (
               <button key={group} onClick={()=>setIndicatorCategory(group)}
@@ -2358,6 +2368,8 @@ export default function PracticeTradingTerminal() {
           )}
         </div>
       </section>
+
+      {replaySnapshot && <PracticeReplayLab candles={replaySnapshot} symbol={symbol} interval={interval} sessionId={sid} onClose={() => setReplaySnapshot(null)}/>}
 
       {message && (
         <div className="fixed bottom-5 left-1/2 z-[90] flex max-w-[90vw] -translate-x-1/2 items-center gap-2 rounded-xl border border-cyan-500/30 bg-slate-950/95 px-4 py-3 text-xs font-bold text-cyan-100 shadow-2xl">
