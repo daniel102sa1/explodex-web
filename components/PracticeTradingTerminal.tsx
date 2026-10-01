@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { analyzeTechnical, INDICATOR_HELP, type TechnicalRead } from "@/lib/patternEngine";
+import PracticeStatsLab from "@/components/PracticeStatsLab";
 import {
   Activity,
   BarChart3,
@@ -496,7 +497,7 @@ export default function PracticeTradingTerminal() {
   const [showOrder, setShowOrder] = useState(true);
   const [marginPct, setMarginPct] = useState(0);
   const [showTpSl, setShowTpSl] = useState(false);
-  const [bottomTab, setBottomTab] = useState<"positions" | "orders" | "history">("positions");
+  const [bottomTab, setBottomTab] = useState<"positions" | "orders" | "history" | "stats">("positions");
   const [form, setForm] = useState<OrderForm>({
     side: "LONG",
     orderType: "MARKET",
@@ -2262,6 +2263,7 @@ export default function PracticeTradingTerminal() {
           <DockTab active={bottomTab === "positions"} label={`Posiciones (${summary?.open_positions?.length ?? 0})`} onClick={() => setBottomTab("positions")}/>
           <DockTab active={bottomTab === "orders"} label={`LIMIT (${summary?.pending_orders?.length ?? 0})`} onClick={() => setBottomTab("orders")}/>
           <DockTab active={bottomTab === "history"} label={`Historial (${history.length})`} onClick={() => setBottomTab("history")}/>
+          <DockTab active={bottomTab === "stats"} label="Estadísticas · Coach" onClick={() => setBottomTab("stats")}/>
           <button onClick={exportJournal} className="ml-auto rounded-lg border border-slate-700 px-2 py-1 text-[9px] font-bold text-cyan-200 hover:border-cyan-400/40">Exportar CSV ({journalCount})</button>
           <div className="hidden gap-4 pr-2 text-[9px] text-slate-600 md:flex">
             <span>WR {summary?.win_rate_pct == null ? "—" : `${summary.win_rate_pct}%`}</span>
@@ -2327,6 +2329,8 @@ export default function PracticeTradingTerminal() {
               {!summary?.pending_orders?.length && <EmptyDock text="No hay órdenes LIMIT pendientes."/>}
             </div>
           )}
+
+          {bottomTab === "stats" && <PracticeStatsLab history={history}/>}
 
           {bottomTab === "history" && (
             <div className="overflow-x-auto">
