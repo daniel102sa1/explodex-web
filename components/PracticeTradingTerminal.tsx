@@ -29,7 +29,7 @@ import {
   X,
 } from "lucide-react";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
+const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "https://explodex-backend-production.up.railway.app";
 
 type Side = "LONG" | "SHORT";
 type Interval = "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
