@@ -484,6 +484,9 @@ export default function PracticeTradingTerminal() {
   const [targetRoi, setTargetRoi] = useState("5");
   const [feePerSide, setFeePerSide] = useState("0.05");
   const levelSignatureRef = useRef("");
+  const summaryRef = useRef<PracticeSummary | null>(null);
+  const closedCountRef = useRef(-1);
+  const syncingRef = useRef(false);
   const [journalCount, setJournalCount] = useState(0);
   const [sid, setSid] = useState("");
   const [busy, setBusy] = useState(false);
@@ -549,36 +552,69 @@ export default function PracticeTradingTerminal() {
     URL.revokeObjectURL(url);
   }
 
+  // At rest the chart uses its own websocket; PostgreSQL is queried only for
+  // meaningful account changes and once when returning to the tab.
   const loadPractice = useCallback(async () => {
     if (!BASE_URL || !sid) return;
     try {
-      const [s, h] = await Promise.all([
-        fetch(`${BASE_URL}/api/v1/practice/summary?session_id=${encodeURIComponent(sid)}`, { cache: "no-store" }),
-        fetch(`${BASE_URL}/api/v1/practice/history?session_id=${encodeURIComponent(sid)}&limit=500`, { cache: "no-store" }),
-      ]);
-      if (s.ok) setSummary(await s.json());
-      if (h.ok) setHistory(mergeJournal((await h.json()).rows ?? []));
+      const response = await fetch(`${BASE_URL}/api/v1/practice/summary?session_id=${encodeURIComponent(sid)}`, { cache: "no-store" });
+      if (!response.ok) return;
+      const next = await response.json() as PracticeSummary;
+      summaryRef.current = next;
+      setSummary(next);
+      if (closedCountRef.current !== next.closed_trades) {
+        const historyResponse = await fetch(
+          `${BASE_URL}/api/v1/practice/history?session_id=${encodeURIComponent(sid)}&limit=500`,
+          { cache: "no-store" }
+        );
+        if (historyResponse.ok) {
+          setHistory(mergeJournal((await historyResponse.json()).rows ?? []));
+          closedCountRef.current = next.closed_trades;
+        }
+      }
     } catch {}
   }, [sid]);
 
   const syncPractice = useCallback(async () => {
-    if (!BASE_URL || !sid) return;
+    if (!BASE_URL || !sid || syncingRef.current) return;
+    syncingRef.current = true;
     try {
-      await fetch(`${BASE_URL}/api/v1/practice/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sid }),
-        cache: "no-store",
-      });
-    } catch {}
-    await loadPractice();
+      // No open trades or limit orders = no POST, no candlestick downloads,
+      // no needless last_synced_at writes to PostgreSQL.
+      if ((summaryRef.current?.open_positions?.length ?? 0) > 0 ||
+          (summaryRef.current?.pending_orders?.length ?? 0) > 0) {
+        await fetch(`${BASE_URL}/api/v1/practice/sync`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sid }),
+          cache: "no-store",
+        });
+      }
+      await loadPractice();
+    } catch {} finally { syncingRef.current = false; }
   }, [sid, loadPractice]);
 
   useEffect(() => {
-    syncPractice();
-    const timer = window.setInterval(syncPractice, 3500);
-    return () => window.clearInterval(timer);
-  }, [syncPractice]);
+    if (!sid) return;
+    void loadPractice();
+    // Sync only while the user is viewing the simulator and has live trades.
+    // The old implementation synced and re-read history every 3.5 seconds.
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible" &&
+          ((summaryRef.current?.open_positions?.length ?? 0) > 0 ||
+           (summaryRef.current?.pending_orders?.length ?? 0) > 0)) {
+        void syncPractice();
+      }
+    }, 30_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void syncPractice();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [sid, syncPractice, loadPractice]);
 
   useEffect(() => {
     let disposed = false;
@@ -1822,6 +1858,7 @@ export default function PracticeTradingTerminal() {
       });
       if (!response.ok) throw new Error("No se pudo reiniciar");
       window.localStorage.removeItem(journalKey());
+      closedCountRef.current = -1;
       setHistory([]); setJournalCount(0);
       setMessage("Cuenta de práctica reiniciada a 1,000 USDT.");
       await loadPractice();
