@@ -29,7 +29,7 @@ import {
   X,
 } from "lucide-react";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
+const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "https://explodex-backend-production.up.railway.app";
 
 type Side = "LONG" | "SHORT";
 type Interval = "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
@@ -717,6 +717,12 @@ export default function PracticeTradingTerminal() {
       localChart = kc.init(chartElRef.current, {
         locale: "en-US",
         timezone: "America/Guatemala",
+        styles: {
+          grid: {
+            horizontal: { show: true, size: 1, color: "#17202b", style: "dashed" },
+            vertical: { show: false, size: 1, color: "#111827", style: "dashed" },
+          },
+        },
         layout: {
           pane: { minHeight: 70, dragEnabled: true },
           yAxis: { position: "right", inside: false, scrollZoomEnabled: true },
@@ -1505,7 +1511,11 @@ export default function PracticeTradingTerminal() {
   }
 
   function setMarginFromPct(pct: number) {
-    const available = Math.max(0, Number(summary?.available_margin || 0));
+    if (!summary) {
+      setMessage("La cuenta ficticia todavía está conectando. Espera un momento y vuelve a mover el porcentaje.");
+      return;
+    }
+    const available = Math.max(0, Number(summary.available_margin || 0));
     const margin = available * pct / 100;
     setMarginPct(pct);
     setForm(x => ({ ...x, margin: margin > 0 ? String(Number(margin.toFixed(2))) : "0" }));
@@ -1714,9 +1724,9 @@ export default function PracticeTradingTerminal() {
       </div>
 
       {/* Main trading desk */}
-      <div className="grid min-h-[680px] xl:grid-cols-[64px_minmax(0,1fr)_360px]">
+      <div className="grid min-h-[680px] lg:grid-cols-[58px_minmax(0,1fr)_330px] 2xl:grid-cols-[64px_minmax(0,1fr)_360px]">
         {/* Compact drawing toolbar */}
-        <aside className="flex flex-row gap-1 overflow-x-auto border-b border-slate-800 bg-[#060d17] p-2 xl:flex-col xl:items-center xl:overflow-visible xl:border-b-0 xl:border-r">
+        <aside className="flex flex-row gap-1 overflow-x-auto border-b border-slate-800 bg-[#060d17] p-2 lg:flex-col lg:items-center lg:overflow-visible lg:border-b-0 lg:border-r">
           <DeskTool icon={<MousePointer2 size={17}/>} label="Cursor / mover gráfico" onClick={() => { setActiveTool(null); setMessage("Cursor activo: arrastra el gráfico, usa la rueda para zoom y selecciona una herramienta cuando quieras dibujar."); }} active={!activeTool}/>
           <DeskTool icon={<Magnet size={17}/>} label={strongMagnet ? "Imán fuerte ON" : "Imán suave"} onClick={() => { setStrongMagnet(v => !v); setMessage(strongMagnet ? "Imán cambiado a suave." : "Imán fuerte activado: las herramientas buscarán máximos/mínimos de las velas."); }} active={strongMagnet}/>
           <DeskSeparator/>
@@ -1788,7 +1798,7 @@ export default function PracticeTradingTerminal() {
                 <div className="rounded-xl border border-cyan-400/20 bg-slate-950/90 px-4 py-3 text-xs font-bold text-cyan-200">Cargando gráfico…</div>
               </div>
             )}
-            <div ref={chartElRef} className="h-[640px] min-h-[560px] w-full bg-[#050b14] 2xl:h-[720px]"/>
+            <div ref={chartElRef} className="h-[600px] min-h-[520px] w-full bg-[#050b14] xl:h-[640px] 2xl:h-[720px]"/>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/80 bg-[#07101a] px-3 py-1.5 text-[9px] text-slate-600">
@@ -1805,11 +1815,11 @@ export default function PracticeTradingTerminal() {
         </section>
 
         {/* Futures-style order ticket */}
-        <aside className="border-t border-slate-800 bg-[#090d12] xl:border-l xl:border-t-0">
+        <aside className="border-t border-slate-800 bg-[#090d12] lg:border-l lg:border-t-0">
           <div className="border-b border-slate-800/80 px-4 py-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-[9px] font-black uppercase tracking-[.14em] text-slate-500">Futuros demo · PAPER</div>
+                <div className="flex items-center gap-2 text-[9px] font-black uppercase tracking-[.14em] text-slate-500"><span>Futuros demo · PAPER</span><span className="rounded-full border border-emerald-400/15 bg-emerald-400/[.05] px-2 py-0.5 text-[8px] text-emerald-300">Saldo inicial $1,000</span></div>
                 <div className="mt-1 flex items-center gap-2 text-sm font-black text-white">
                   {symbol}
                   <span className="rounded-md border border-slate-700 bg-slate-950/70 px-1.5 py-0.5 text-[8px] text-slate-400">{interval.toUpperCase()}</span>
@@ -1858,7 +1868,7 @@ export default function PracticeTradingTerminal() {
             <div className="space-y-3 p-4">
               <div className="flex items-center justify-between text-[10px]">
                 <span className="text-slate-600">Disponible</span>
-                <b className="font-mono text-slate-200">{money(summary?.available_margin ?? 0).replace("$","")} USDT</b>
+                <b className="font-mono text-slate-200">{summary ? `${money(summary.available_margin).replace("$","")} USDT` : "Conectando…"}</b>
               </div>
 
               {form.orderType === "LIMIT" && (
@@ -2304,7 +2314,7 @@ danger
 }
 
 function DeskSeparator() {
-  return <div className="mx-1 h-8 w-px shrink-0 bg-slate-800 xl:my-1 xl:h-px xl:w-8"/>;
+  return <div className="mx-1 h-8 w-px shrink-0 bg-slate-800 lg:my-1 lg:h-px lg:w-8"/>;
 }
 
 function CompactMetric({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" | "warn" }) {
