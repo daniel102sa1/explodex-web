@@ -123,7 +123,7 @@ type OrderForm = {
 
 const INTERVALS: Interval[] = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
 const QUICK_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DYDXUSDT", "LINKUSDT", "ADAUSDT"];
-const INDICATORS = ["EMA20/50/200", "VWAP", "RSI", "MACD", "ATR", "VOL", "BOLL", "SAR", "OBV"] as const;
+const INDICATORS = ["EMA20/50/200", "VWAP", "RSI", "MACD", "ATR", "VOL", "BOLL", "SAR", "OBV", "KDJ", "CCI", "DMI"] as const;
 type IndicatorName = typeof INDICATORS[number];
 
 const PATTERNS = [
@@ -1010,7 +1010,7 @@ export default function PracticeTradingTerminal() {
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-    for (const name of ["EMA", "EXPLODEX_VWAP", "EXPLODEX_ATR", "RSI", "MACD", "VOL", "BOLL", "SAR", "OBV"]) {
+    for (const name of ["EMA", "EXPLODEX_VWAP", "EXPLODEX_ATR", "RSI", "MACD", "VOL", "BOLL", "SAR", "OBV", "KDJ", "CCI", "DMI"]) {
       try { chart.removeIndicator({ name }); } catch {}
     }
     if (indicatorSet.has("EMA20/50/200")) {
@@ -1039,6 +1039,15 @@ export default function PracticeTradingTerminal() {
     }
     if (indicatorSet.has("OBV")) {
       try { chart.createIndicator({ name: "OBV", paneId: "obv_pane" }); } catch {}
+    }
+    if (indicatorSet.has("KDJ")) {
+      try { chart.createIndicator({ name: "KDJ", paneId: "kdj_pane", calcParams: [9, 3, 3] }); } catch {}
+    }
+    if (indicatorSet.has("CCI")) {
+      try { chart.createIndicator({ name: "CCI", paneId: "cci_pane", calcParams: [20] }); } catch {}
+    }
+    if (indicatorSet.has("DMI")) {
+      try { chart.createIndicator({ name: "DMI", paneId: "dmi_pane", calcParams: [14, 6] }); } catch {}
     }
   }, [indicatorSet, chartReady]);
 
@@ -1729,6 +1738,38 @@ export default function PracticeTradingTerminal() {
     }
   }, [summary?.open_positions, symbol, interval, chartReady, sid]);
 
+  const roiPlanner = useMemo(() => {
+    const entry = form.orderType === "LIMIT" ? Number(form.limitPrice) : livePrice;
+    const leverage = Number(form.leverage);
+    const margin = Number(form.margin);
+    const roi = Number(targetRoi);
+    const fee = Number(feePerSide) / 100;
+    if (!(entry > 0 && leverage > 0 && margin > 0 && roi > 0 && fee >= 0 && fee < 1)) return null;
+    // Solve entry and exit fees to target a NET return on initial margin.
+    const longTp = (entry * (1 + fee) + entry * roi / (100 * leverage)) / (1 - fee);
+    const shortTp = (entry * (1 - fee) - entry * roi / (100 * leverage)) / (1 + fee);
+    return {entry,longTp,shortTp,longMove:(longTp/entry-1)*100,shortMove:(1-shortTp/entry)*100};
+  }, [form.orderType,form.limitPrice,form.leverage,form.margin,targetRoi,feePerSide,livePrice]);
+
+  function applyRoiTarget(side: Side) {
+    if (!roiPlanner) return;
+    const target = side === "LONG" ? roiPlanner.longTp : roiPlanner.shortTp;
+    if (!(target > 0)) { setMessage("TP inválido: reduce el ROI o el apalancamiento."); return; }
+    const entry = roiPlanner.entry;
+    const delta = target - entry;
+    const stop = Number(form.stop);
+    const correctStop = stop > 0 && (side === "LONG" ? stop < entry : stop > entry);
+    setShowTpSl(true);
+    setForm(x => ({
+      ...x,side,
+      stop: correctStop ? x.stop : String(Number((entry - delta / 2).toPrecision(10))),
+      tp1: String(Number(target.toPrecision(10))),
+      tp2: String(Number((entry + delta * 1.5).toPrecision(10))),
+      tp3: String(Number((entry + delta * 2).toPrecision(10))),
+    }));
+    setMessage(`TP1 ${side} para ROI neto estimado ${targetRoi}%: ${fmt(target)}. Revisa SL, comisión y liquidación.`);
+  }
+
   async function cancelOrder(id: number) {
     if (!BASE_URL || !sid) return;
     setBusy(true);
@@ -2113,6 +2154,24 @@ export default function PracticeTradingTerminal() {
                   <span className="text-slate-600">Máximo</span>
                   <b className="float-right font-mono text-slate-300">{money(summary?.available_margin ?? 0)}</b>
                 </div>
+              </div>
+
+              <div className="rounded-xl border border-cyan-400/15 bg-cyan-400/[.035] p-3">
+                <div className="mb-2 flex items-center justify-between text-[10px] font-black text-cyan-200">
+                  <span>Calculadora de TP por ROI</span><span className="text-[8px] text-slate-500">Estimación · PAPER</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <TradeInput label="ROI objetivo (%)" value={targetRoi} onChange={setTargetRoi}/>
+                  <TradeInput label="Comisión por lado (%)" value={feePerSide} onChange={setFeePerSide}/>
+                </div>
+                {roiPlanner && <div className="mt-2 space-y-2 text-[9px] text-slate-400">
+                  <div>Movimiento LONG: <b className="font-mono text-white">{roiPlanner.longMove.toFixed(3)}%</b> · SHORT: <b className="font-mono text-white">{roiPlanner.shortMove.toFixed(3)}%</b></div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={()=>applyRoiTarget("LONG")} className="rounded-lg border border-emerald-400/25 bg-emerald-400/[.08] px-2 py-2 font-black text-emerald-300">TP LONG {fmt(roiPlanner.longTp)}</button>
+                    <button disabled={roiPlanner.shortTp<=0} onClick={()=>applyRoiTarget("SHORT")} className="rounded-lg border border-rose-400/25 bg-rose-400/[.08] px-2 py-2 font-black text-rose-300 disabled:opacity-30">TP SHORT {fmt(roiPlanner.shortTp)}</button>
+                  </div>
+                  <p className="leading-4 text-slate-600">Incluye comisiones estimadas de entrada y salida; no incluye funding, spread ni deslizamiento.</p>
+                </div>}
               </div>
 
               {riskPreview && <div className="grid grid-cols-3 gap-1">
