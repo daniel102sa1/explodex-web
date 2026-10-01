@@ -475,6 +475,7 @@ export default function PracticeTradingTerminal() {
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [strongMagnet, setStrongMagnet] = useState(true);
   const [showExplain, setShowExplain] = useState(false);
+  const [indicatorCategory, setIndicatorCategory] = useState<"principal"|"momentum"|"riesgo">("principal");
   const [indicatorSet, setIndicatorSet] = useState<Set<IndicatorName>>(
     new Set(["EMA20/50/200", "VOL"])
   );
@@ -1940,8 +1941,19 @@ export default function PracticeTradingTerminal() {
         {/* Chart */}
         <section className="min-w-0 bg-[#050b14]">
           <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-800/80 bg-[#07101a] px-2 py-1.5">
-            <span className="mr-1 shrink-0 text-[8px] font-black uppercase tracking-[.15em] text-slate-600">Indicadores</span>
-            {INDICATORS.map((name) => (
+            <span className="mr-1 shrink-0 text-[8px] font-black uppercase tracking-[.15em] text-slate-500">Indicadores</span>
+            {(["principal","momentum","riesgo"] as const).map(group => (
+              <button key={group} onClick={()=>setIndicatorCategory(group)}
+                className={`shrink-0 rounded-lg px-2 py-1 text-[9px] font-black ${indicatorCategory === group ? "bg-cyan-400/15 text-cyan-200" : "text-slate-600 hover:text-slate-300"}`}>
+                {group==="principal"?"Precio":group==="momentum"?"Osciladores":"Riesgo"} 
+              </button>
+            ))}
+            <span className="mx-1 h-4 shrink-0 border-l border-slate-800"/>
+            {INDICATORS.filter(name => indicatorCategory === "principal"
+              ? ["EMA20/50/200","VWAP","VOL","BOLL"].includes(name)
+              : indicatorCategory === "momentum"
+                ? ["RSI","MACD","KDJ","CCI","DMI","OBV"].includes(name)
+                : ["ATR","SAR"].includes(name)).map((name) => (
               <button
                 key={name}
                 onClick={() => toggleIndicator(name)}
