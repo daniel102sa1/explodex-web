@@ -1653,6 +1653,82 @@ export default function PracticeTradingTerminal() {
     }
   }
 
+
+  // A level is committed once on mouse release, never on every mouse move.
+  async function commitDraggedLevel(p: PracticePosition, kind: "SL"|"TP1"|"TP2"|"TP3", price: number) {
+    if (busy || !sid || !Number.isFinite(price) || price <= 0) return;
+    const valid = kind === "SL"
+      ? (p.side === "LONG" ? price < p.entry_price : price > p.entry_price)
+      : (p.side === "LONG" ? price > p.entry_price : price < p.entry_price);
+    if (!valid) {
+      setMessage(`${kind} inválido: debe estar del lado correcto de la entrada ${fmt(p.entry_price)}.`);
+      levelSignatureRef.current = "";
+      await loadPractice();
+      return;
+    }
+    setBusy(true);
+    setMessage(`Guardando ${kind} de ${p.symbol}…`);
+    try {
+      const levels = {
+        stop_loss: kind === "SL" ? price : p.stop_loss,
+        take_profit: kind === "TP1" ? price : p.take_profit,
+        tp2: kind === "TP2" ? price : (p.tp2 ?? p.take_profit),
+        tp3: kind === "TP3" ? price : (p.tp3 ?? p.tp2 ?? p.take_profit),
+      };
+      const response = await fetch(`${BASE_URL}/api/v1/practice/${p.id}/modify`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid, ...levels }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.detail || "No se pudo guardar el nivel.");
+      setMessage(`${kind} de ${p.symbol} actualizado a ${fmt(price)}.`);
+      levelSignatureRef.current = "";
+      await syncPractice();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo modificar el nivel.");
+      levelSignatureRef.current = "";
+      await loadPractice();
+    } finally { setBusy(false); }
+  }
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !chartReady) return;
+    const positions = (summary?.open_positions ?? []).filter(p => p.symbol === symbol);
+    const signature = symbol + ":" + interval + "|" + positions.map(p =>
+      [p.id,p.entry_price,p.stop_loss,p.take_profit,p.tp2,p.tp3].join(":")).join("|");
+    if (levelSignatureRef.current === signature) return;
+    levelSignatureRef.current = signature;
+    try { chart.removeOverlay({ groupId: "practice-managed" }); } catch {}
+    const timestamp = Number(barsRef.current.at(-1)?.timestamp || Date.now());
+    for (const p of positions) {
+      const levels: Array<{kind:"ENTRY"|"SL"|"TP1"|"TP2"|"TP3";price:number}> = [
+        {kind:"ENTRY",price:p.entry_price}, {kind:"SL",price:p.stop_loss},
+        {kind:"TP1",price:p.take_profit},
+        ...(p.tp2 ? [{kind:"TP2" as const,price:p.tp2}] : []),
+        ...(p.tp3 ? [{kind:"TP3" as const,price:p.tp3}] : []),
+      ];
+      for (const {kind,price} of levels) {
+        if (!(Number(price) > 0)) continue;
+        try {
+          chart.createOverlay({
+            name: "EXPLODEX_MANAGED_LEVEL", groupId: "practice-managed",
+            lock: kind === "ENTRY", zLevel: 10, mode: "normal",
+            points: [{timestamp,value:price}],
+            extendData: {kind,label:`${p.side} #${p.id} ${kind}`},
+            onRightClick: (event:any) => { event?.preventDefault?.(); return true; },
+            onPressedMoveEnd: (event:any) => {
+              if (kind === "ENTRY") return true;
+              const value = Number(event?.overlay?.points?.[0]?.value);
+              if (Number.isFinite(value)) void commitDraggedLevel(p,kind,value);
+              return false;
+            },
+          });
+        } catch {}
+      }
+    }
+  }, [summary?.open_positions, symbol, interval, chartReady, sid]);
+
   async function cancelOrder(id: number) {
     if (!BASE_URL || !sid) return;
     setBusy(true);
@@ -1877,7 +1953,7 @@ export default function PracticeTradingTerminal() {
             </div>
             <div className="flex gap-3">
               <span>PAPER ONLY</span>
-              <span>Dibujos guardables por par/TF</span>
+              <span>SL/TP arrastrables · diario con copia local</span>
             </div>
           </div>
         </section>
