@@ -480,6 +480,10 @@ export default function PracticeTradingTerminal() {
   );
   const [summary, setSummary] = useState<PracticeSummary | null>(null);
   const [history, setHistory] = useState<any[]>([]);
+  const [targetRoi, setTargetRoi] = useState("5");
+  const [feePerSide, setFeePerSide] = useState("0.05");
+  const levelSignatureRef = useRef("");
+  const [journalCount, setJournalCount] = useState(0);
   const [sid, setSid] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -504,15 +508,55 @@ export default function PracticeTradingTerminal() {
 
   useEffect(() => setSid(sessionId()), []);
 
+  // Local backup, linked to the same browser session as the PAPER backend.
+  function journalKey() { return `explodex:practice-journal:${sid}`; }
+  function mergeJournal(remote: any[]) {
+    if (!sid) return remote;
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(journalKey()) || "[]");
+      const unique = new Map<string, any>();
+      for (const item of [...(Array.isArray(saved) ? saved : []), ...remote]) {
+        if (item?.id != null) unique.set(String(item.id), item);
+      }
+      const rows = Array.from(unique.values()).sort((a,b) => (
+        (Date.parse(b.closed_at || b.created_at || b.opened_at || "") || 0) -
+        (Date.parse(a.closed_at || a.created_at || a.opened_at || "") || 0)
+      )).slice(0, 2000);
+      window.localStorage.setItem(journalKey(), JSON.stringify(rows));
+      setJournalCount(rows.length);
+      return rows;
+    } catch { return remote; }
+  }
+  useEffect(() => {
+    if (!sid) return;
+    try {
+      const rows = JSON.parse(window.localStorage.getItem(journalKey()) || "[]");
+      if (Array.isArray(rows)) { setHistory(rows); setJournalCount(rows.length); }
+    } catch {}
+  }, [sid]);
+
+  function exportJournal() {
+    if (!history.length) { setMessage("Todavía no hay operaciones cerradas para exportar."); return; }
+    const cols = ["id","symbol","side","leverage","entry_price","exit_price","net_pnl","r_multiple","pattern","close_reason","opened_at","closed_at"];
+    const csv = [cols.join(","), ...history.map(row => cols.map(key =>
+      '"' + String(row[key] ?? "").replaceAll('"','""') + '"'
+    ).join(","))].join("\\r\\n");
+    const blob = new Blob(["\\uFEFF" + csv], {type:"text/csv;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url; link.download = "ExplodeX-diario-PAPER.csv"; link.click();
+    URL.revokeObjectURL(url);
+  }
+
   const loadPractice = useCallback(async () => {
     if (!BASE_URL || !sid) return;
     try {
       const [s, h] = await Promise.all([
         fetch(`${BASE_URL}/api/v1/practice/summary?session_id=${encodeURIComponent(sid)}`, { cache: "no-store" }),
-        fetch(`${BASE_URL}/api/v1/practice/history?session_id=${encodeURIComponent(sid)}&limit=30`, { cache: "no-store" }),
+        fetch(`${BASE_URL}/api/v1/practice/history?session_id=${encodeURIComponent(sid)}&limit=500`, { cache: "no-store" }),
       ]);
       if (s.ok) setSummary(await s.json());
-      if (h.ok) setHistory((await h.json()).rows ?? []);
+      if (h.ok) setHistory(mergeJournal((await h.json()).rows ?? []));
     } catch {}
   }, [sid]);
 
@@ -1637,6 +1681,8 @@ export default function PracticeTradingTerminal() {
         body: JSON.stringify({ session_id: sid }),
       });
       if (!response.ok) throw new Error("No se pudo reiniciar");
+      window.localStorage.removeItem(journalKey());
+      setHistory([]); setJournalCount(0);
       setMessage("Cuenta de práctica reiniciada a 1,000 USDT.");
       await loadPractice();
     } catch (error) {
@@ -1991,7 +2037,8 @@ export default function PracticeTradingTerminal() {
           <DockTab active={bottomTab === "positions"} label={`Posiciones (${summary?.open_positions?.length ?? 0})`} onClick={() => setBottomTab("positions")}/>
           <DockTab active={bottomTab === "orders"} label={`LIMIT (${summary?.pending_orders?.length ?? 0})`} onClick={() => setBottomTab("orders")}/>
           <DockTab active={bottomTab === "history"} label={`Historial (${history.length})`} onClick={() => setBottomTab("history")}/>
-          <div className="ml-auto hidden gap-4 pr-2 text-[9px] text-slate-600 md:flex">
+          <button onClick={exportJournal} className="ml-auto rounded-lg border border-slate-700 px-2 py-1 text-[9px] font-bold text-cyan-200 hover:border-cyan-400/40">Exportar CSV ({journalCount})</button>
+          <div className="hidden gap-4 pr-2 text-[9px] text-slate-600 md:flex">
             <span>WR {summary?.win_rate_pct == null ? "—" : `${summary.win_rate_pct}%`}</span>
             <span>Realizado {money(summary?.realized_pnl ?? 0)}</span>
             <button onClick={resetAccount} disabled={busy} className="font-bold text-rose-400 hover:text-rose-300"><RotateCcw size={11} className="mr-1 inline"/>Reset $1,000</button>
