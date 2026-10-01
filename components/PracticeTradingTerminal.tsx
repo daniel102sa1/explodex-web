@@ -673,6 +673,28 @@ export default function PracticeTradingTerminal() {
       };
       registerPositionOverlay("EXPLODEX_LONG_POSITION", "LONG");
       registerPositionOverlay("EXPLODEX_SHORT_POSITION", "SHORT");
+      // Draggable chart levels for open PAPER trades.
+      try {
+        kc.registerOverlay({
+          name: "EXPLODEX_MANAGED_LEVEL",
+          totalStep: 2,
+          needDefaultYAxisFigure: true,
+          needDefaultPointFigure: false,
+          mode: "normal",
+          createPointFigures: ({ coordinates, overlay, bounding }: any) => {
+            if (!coordinates?.length) return [];
+            const level = overlay?.extendData || {};
+            const color = level.kind === "SL" ? "#fb7185" : level.kind === "ENTRY" ? "#67e8f9" : "#34d399";
+            const y = coordinates[0].y;
+            const width = Number(bounding?.width || 1600);
+            return [
+              { type: "line", attrs: { coordinates: [{x: 0, y}, {x: width, y}] }, styles: { color, size: 1.5, style: level.kind === "ENTRY" ? "dashed" : "solid" } },
+              { type: "text", attrs: { x: 8, y: y - 5, text: `${level.label || level.kind} · ${Number(overlay?.points?.[0]?.value || 0).toPrecision(7)}` }, styles: { color, size: 10 } },
+            ];
+          },
+        } as any);
+      } catch {}
+
 
       const registerPolylinePattern = (name: string, label: string, totalStep: number) => {
         try {
