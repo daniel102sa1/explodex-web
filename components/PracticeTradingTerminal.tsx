@@ -540,8 +540,8 @@ export default function PracticeTradingTerminal() {
     const cols = ["id","symbol","side","leverage","entry_price","exit_price","net_pnl","r_multiple","pattern","close_reason","opened_at","closed_at"];
     const csv = [cols.join(","), ...history.map(row => cols.map(key =>
       '"' + String(row[key] ?? "").replaceAll('"','""') + '"'
-    ).join(","))].join("\\r\\n");
-    const blob = new Blob(["\\uFEFF" + csv], {type:"text/csv;charset=utf-8"});
+    ).join(","))].join("\r\n");
+    const blob = new Blob(["\uFEFF" + csv], {type:"text/csv;charset=utf-8"});
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url; link.download = "ExplodeX-diario-PAPER.csv"; link.click();
