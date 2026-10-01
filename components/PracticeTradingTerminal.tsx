@@ -472,6 +472,7 @@ export default function PracticeTradingTerminal() {
   const [aiDirection, setAiDirection] = useState<AiDirectionResult | null>(null);
   const [analyzingAll, setAnalyzingAll] = useState(false);
   const [askingAi, setAskingAi] = useState(false);
+  const aiCacheRef = useRef<{ symbol: string; interval: Interval; at: number; price: number; result: AiDirectionResult } | null>(null);
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [strongMagnet, setStrongMagnet] = useState(true);
   const [showExplain, setShowExplain] = useState(false);
@@ -1235,8 +1236,17 @@ export default function PracticeTradingTerminal() {
   }
 
   async function askAiDirection() {
-    if (!BASE_URL) {
-      setMessage("El backend de ExplodeX no está configurado.");
+    if (!BASE_URL || !sid) {
+      setMessage("Espera a que la sesión demo se conecte.");
+      return;
+    }
+    const cached = aiCacheRef.current;
+    if (cached && cached.symbol === symbol && cached.interval === interval &&
+        Date.now() - cached.at < 120_000 && cached.price > 0 &&
+        Math.abs(livePrice - cached.price) / cached.price < .001) {
+      setAiDirection(cached.result);
+      drawAiProjection(cached.result);
+      setMessage("Análisis reutilizado durante 2 minutos para no gastar otra consulta de IA.");
       return;
     }
     setAskingAi(true);
@@ -1252,6 +1262,7 @@ export default function PracticeTradingTerminal() {
       } : null;
       const scan = precisionScan ?? fallbackScan;
       const payload = {
+        session_id: sid,
         symbol,
         interval,
         engine_direction: scan?.direction ?? "ESPERAR",
@@ -1269,9 +1280,16 @@ export default function PracticeTradingTerminal() {
           atr14: row.read.atr14,
           support: row.read.support,
           resistance: row.read.resistance,
-          pattern: row.read.pattern,
+          pattern: row.read.pattern ? {name:row.read.pattern.name,status:row.read.pattern.status,direction:row.read.pattern.direction} : null,
         })),
-        recent_candles: barsRef.current.slice(-120),
+        recent_candles: barsRef.current.slice(-36).map(row => ({
+          timestamp:row.timestamp,open:row.open,high:row.high,low:row.low,close:row.close,volume:row.volume
+        })),
+        recent_trades: history.slice(0, 10).map(row => ({
+          symbol:row.symbol, side:row.side, timeframe:row.timeframe, pattern:row.pattern,
+          entry_price:row.entry_price,exit_price:row.exit_price,net_pnl:row.net_pnl,
+          r_multiple:row.r_multiple,close_reason:row.close_reason
+        })),
       };
       const response = await fetch(`${BASE_URL}/api/v1/practice/ai-direction`, {
         method: "POST",
@@ -1281,6 +1299,7 @@ export default function PracticeTradingTerminal() {
       });
       if (!response.ok) throw new Error(`Backend ${response.status}`);
       const result = await response.json() as AiDirectionResult;
+      aiCacheRef.current = {symbol,interval,at:Date.now(),price:livePrice,result};
       setAiDirection(result);
       drawAiProjection(result);
 
