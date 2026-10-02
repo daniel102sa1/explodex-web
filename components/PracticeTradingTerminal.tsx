@@ -480,6 +480,7 @@ export default function PracticeTradingTerminal() {
   const aiCacheRef = useRef<{ symbol: string; interval: Interval; context: string; at: number; price: number; result: AiDirectionResult } | null>(null);
   const [autoDetect, setAutoDetect] = useState(true);
   const [autoRead, setAutoRead] = useState<TechnicalRead | null>(null);
+  const [showAnalysisPanel, setShowAnalysisPanel] = useState(false);
   const lastDetectedBarRef = useRef("");
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [strongMagnet, setStrongMagnet] = useState(true);
@@ -1334,6 +1335,7 @@ export default function PracticeTradingTerminal() {
   }
 
   async function askAiDirection(mode:"market"|"drawing"|"position"="market", position?:PracticePosition) {
+    setShowAnalysisPanel(true);
     if (!BASE_URL || !sid) {
       setMessage("Espera a que la sesión demo se conecte.");
       return;
@@ -1459,6 +1461,7 @@ export default function PracticeTradingTerminal() {
   }
 
   async function analyzeEverything() {
+    setShowAnalysisPanel(true);
     setAnalyzingAll(true);
     setMessage("");
     try {
@@ -2047,6 +2050,18 @@ export default function PracticeTradingTerminal() {
         {/* Chart */}
         <section className="min-w-0 bg-[#050b14]">
           <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-800/80 bg-[#07101a] px-2 py-1.5">
+            <button onClick={()=>void analyzeEverything()} disabled={analyzingAll}
+              className="shrink-0 rounded-lg border border-cyan-400/30 bg-cyan-400/[.08] px-2 py-1 text-[9px] font-black text-cyan-100 disabled:opacity-40">
+              {analyzingAll?"Analizando…":"⚡ Análisis técnico"}
+            </button>
+            <button onClick={()=>void askAiDirection("market")} disabled={askingAi}
+              className="shrink-0 rounded-lg border border-violet-400/30 bg-violet-400/[.09] px-2 py-1 text-[9px] font-black text-violet-100 disabled:opacity-40">
+              {askingAi?"Consultando…":"🤖 IA proyectar"}
+            </button>
+            <button onClick={()=>setShowAnalysisPanel(v=>!v)}
+              className="shrink-0 rounded-lg border border-slate-700 px-2 py-1 text-[9px] font-black text-slate-300">
+              {showAnalysisPanel?"Ocultar panel":"Ver análisis"}
+            </button>
             <button onClick={() => {
               const rows = barsRef.current.slice(-220);
               if (rows.length < 65) { setMessage("Carga al menos 65 velas antes de iniciar Replay."); return; }
@@ -2105,7 +2120,7 @@ export default function PracticeTradingTerminal() {
 
           {activeTool && <div className="flex items-center justify-between gap-2 border-b border-cyan-400/15 bg-cyan-400/[.04] px-3 py-2 text-[10px] text-cyan-100"><span><b>{activeTool}</b> activa · {strongMagnet ? "imán fuerte" : "imán suave"} · marca los puntos directamente sobre las velas</span><button onClick={() => setActiveTool(null)} className="rounded-md border border-cyan-400/20 px-2 py-1 text-[9px] font-black">Cursor</button></div>}
 
-          <PrecisionAssistant
+          {showAnalysisPanel && <PrecisionAssistant
             scan={precisionScan}
             aiDirection={aiDirection}
             analyzing={analyzingAll}
@@ -2117,7 +2132,7 @@ export default function PracticeTradingTerminal() {
             onDraw={() => drawPrecisionPattern(precisionScan?.current ?? autoRead)}
             onDrawLong={() => draw("EXPLODEX_LONG_POSITION")}
             onDrawShort={() => draw("EXPLODEX_SHORT_POSITION")}
-          />
+          />}
 
           {showFlow && <PracticeFlowPanel symbol={symbol}/>}
 
