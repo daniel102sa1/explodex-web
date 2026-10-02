@@ -11,6 +11,7 @@ import PracticeMultiTimeframes from "@/components/PracticeMultiTimeframes";
 import PracticeScanner from "@/components/PracticeScanner";
 import PracticePriceAlerts from "@/components/PracticePriceAlerts";
 import PracticeDrawingManager, { type UserDrawing } from "@/components/PracticeDrawingManager";
+import PracticeTradeCoach from "@/components/PracticeTradeCoach";
 import { sizePaperPosition } from "@/lib/practiceRisk";
 import {
   Activity,
@@ -526,6 +527,8 @@ export default function PracticeTradingTerminal() {
   const [marginPct, setMarginPct] = useState(0);
   const [showTpSl, setShowTpSl] = useState(true);
   const [editingPosition, setEditingPosition] = useState<number | null>(null);
+  const [reviewTrade, setReviewTrade] = useState<any | null>(null);
+  const [reviewAi, setReviewAi] = useState<AiDirectionResult | null>(null);
   const [bottomTab, setBottomTab] = useState<"positions" | "orders" | "history" | "stats">("positions");
   const [form, setForm] = useState<OrderForm>({
     side: "LONG",
@@ -1374,8 +1377,8 @@ export default function PracticeTradingTerminal() {
     setMessage(`Altura geométrica ${fmt(height)}; ruptura ${fmt(breakout)}; objetivo medido ${fmt(target)}. Es una proyección educativa que requiere validar la figura, no un precio garantizado.`);
   }
 
-  async function askAiDirection(mode:"market"|"drawing"|"position"="market", position?:PracticePosition) {
-    setShowAnalysisPanel(true);
+  async function askAiDirection(mode:"market"|"drawing"|"position"|"review"="market", position?:PracticePosition, trade?:any) {
+    if(mode!=="review")setShowAnalysisPanel(true);
     if (!BASE_URL || !sid) {
       setMessage("Espera a que la sesión demo se conecte.");
       return;
@@ -1387,13 +1390,13 @@ export default function PracticeTradingTerminal() {
     }
     const activePosition = position ?? summary?.open_positions?.find(p=>p.symbol===symbol);
     const context = mode+":"+(activePosition ? [activePosition.id,activePosition.entry_price,activePosition.stop_loss,activePosition.take_profit].join("/") : "")+
-      ":"+(manualDrawing ? JSON.stringify(manualDrawing) : "");
+      ":"+(manualDrawing ? JSON.stringify(manualDrawing) : "")+":"+(trade?trade.id:"");
     const cached = aiCacheRef.current;
     if (cached && cached.symbol === symbol && cached.interval === interval && cached.context === context &&
         Date.now() - cached.at < 120_000 && cached.price > 0 &&
         Math.abs(livePrice - cached.price) / cached.price < .001) {
-      setAiDirection(cached.result);
-      drawAiProjection(cached.result);
+      if(mode==="review")setReviewAi(cached.result);
+      else {setAiDirection(cached.result);drawAiProjection(cached.result);}
       if (manualDrawing) drawManualMeasurement(manualDrawing,cached.result);
       else setMessage("Análisis reutilizado durante 2 minutos para no gastar otra consulta de IA.");
       return;
@@ -1412,8 +1415,14 @@ export default function PracticeTradingTerminal() {
       const scan = precisionScan ?? fallbackScan;
       const payload = {
         session_id: sid,
-        symbol,
-        interval,
+        symbol:trade?.symbol||symbol,
+        interval:mode==="review"?(trade?.timeframe||interval):interval,
+        review_trade:mode==="review" && trade ? {
+          symbol:trade.symbol,side:trade.side,timeframe:trade.timeframe,
+          pattern:trade.pattern,entry_price:trade.entry_price,exit_price:trade.exit_price,
+          net_pnl:trade.net_pnl,r_multiple:trade.r_multiple,close_reason:trade.close_reason,
+          fees:trade.fees,slippage:trade.slippage,
+        } : null,
         manual_drawing: manualDrawing,
         open_position: activePosition ? {
           side:activePosition.side,entry_price:activePosition.entry_price,
@@ -1421,9 +1430,9 @@ export default function PracticeTradingTerminal() {
           mark_price:activePosition.mark_price,quantity:activePosition.quantity,
           margin_used:activePosition.margin_used,leverage:activePosition.leverage,
         } : null,
-        engine_direction: scan?.direction ?? "ESPERAR",
-        current,
-        multi_timeframe: (scan?.rows ?? []).map(row => ({
+        engine_direction: mode==="review"?"ESPERAR":(scan?.direction ?? "ESPERAR"),
+        current:mode==="review"?null:current,
+        multi_timeframe: (mode==="review"?[]:(scan?.rows ?? [])).map(row => ({
           interval: row.interval,
           trend_score: row.read.trendScore,
           price: row.read.price,
@@ -1438,10 +1447,10 @@ export default function PracticeTradingTerminal() {
           resistance: row.read.resistance,
           pattern: row.read.pattern ? {name:row.read.pattern.name,status:row.read.pattern.status,direction:row.read.pattern.direction} : null,
         })),
-        recent_candles: barsRef.current.slice(-36).map(row => ({
+        recent_candles: (mode==="review"?[]:barsRef.current.slice(-36)).map(row => ({
           timestamp:row.timestamp,open:row.open,high:row.high,low:row.low,close:row.close,volume:row.volume
         })),
-        recent_trades: history.slice(0, 10).map(row => ({
+        recent_trades: (mode==="review" && trade ? [trade,...history.filter(row=>row.id!==trade.id)].slice(0,10) : history.slice(0, 10)).map(row => ({
           symbol:row.symbol, side:row.side, timeframe:row.timeframe, pattern:row.pattern,
           entry_price:row.entry_price,exit_price:row.exit_price,net_pnl:row.net_pnl,
           r_multiple:row.r_multiple,close_reason:row.close_reason
@@ -1456,11 +1465,11 @@ export default function PracticeTradingTerminal() {
       if (!response.ok) throw new Error(`Backend ${response.status}`);
       const result = await response.json() as AiDirectionResult;
       aiCacheRef.current = {symbol,interval,context,at:Date.now(),price:livePrice,result};
-      setAiDirection(result);
-      drawAiProjection(result);
+      if(mode==="review")setReviewAi(result);
+      else {setAiDirection(result);drawAiProjection(result);}
       if (manualDrawing) drawManualMeasurement(manualDrawing,result);
 
-      if (mode!=="position" && result.direction !== "WAIT" && result.stop_loss > 0 && result.tp1 > 0) {
+      if (mode!=="position" && mode!=="review" && result.direction !== "WAIT" && result.stop_loss > 0 && result.tp1 > 0) {
         const side: Side = result.direction === "LONG" ? "LONG" : "SHORT";
         setShowTpSl(true);
         setForm(x => ({
@@ -2634,7 +2643,7 @@ export default function PracticeTradingTerminal() {
             <div className="overflow-x-auto">
               <table className="w-full min-w-[920px] text-[10px]">
                 <thead className="text-[8px] font-black uppercase tracking-[.1em] text-slate-600">
-                  <tr><th className="px-2 py-2 text-left">Par</th><th>Setup</th><th>Lado</th><th>Entrada</th><th>Salida</th><th>PnL</th><th>R</th><th>Motivo</th></tr>
+                  <tr><th className="px-2 py-2 text-left">Par</th><th>Setup</th><th>Lado</th><th>Entrada</th><th>Salida</th><th>PnL</th><th>R</th><th>Motivo</th><th>Revisión</th></tr>
                 </thead>
                 <tbody>
                   {history.slice(0,20).map((row) => (
@@ -2647,11 +2656,16 @@ export default function PracticeTradingTerminal() {
                       <td className={Number(row.net_pnl) >= 0 ? "text-emerald-300" : "text-rose-300"}>{money(row.net_pnl)}</td>
                       <td>{row.r_multiple == null ? "—" : Number(row.r_multiple).toFixed(2)+"R"}</td>
                       <td className="text-slate-600">{row.close_reason}</td>
+                      <td><button onClick={()=>{setReviewTrade(row);setReviewAi(null);}} className="rounded border border-violet-400/25 px-2 py-1 text-[9px] font-bold text-violet-200">Revisar</button></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
               {!history.length && <EmptyDock text="Aún no hay operaciones cerradas."/>}
+              {reviewTrade&&<PracticeTradeCoach trade={reviewTrade} history={history}
+                onClose={()=>{setReviewTrade(null);setReviewAi(null);}}
+                onAi={()=>void askAiDirection("review",undefined,reviewTrade)}
+                review={reviewAi} busy={askingAi}/>}
             </div>
           )}
         </div>
