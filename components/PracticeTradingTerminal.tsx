@@ -7,6 +7,11 @@ import PracticeReplayLab from "@/components/PracticeReplayLab";
 import PracticeFlowPanel from "@/components/PracticeFlowPanel";
 import PracticeSymbolSearch from "@/components/PracticeSymbolSearch";
 import PracticePositionEditor from "@/components/PracticePositionEditor";
+import PracticeMultiTimeframes from "@/components/PracticeMultiTimeframes";
+import PracticeScanner from "@/components/PracticeScanner";
+import PracticePriceAlerts from "@/components/PracticePriceAlerts";
+import PracticeDrawingManager, { type UserDrawing } from "@/components/PracticeDrawingManager";
+import { sizePaperPosition } from "@/lib/practiceRisk";
 import {
   Activity,
   BarChart3,
@@ -492,6 +497,18 @@ export default function PracticeTradingTerminal() {
   const [summary, setSummary] = useState<PracticeSummary | null>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [targetRoi, setTargetRoi] = useState("5");
+  const [riskPercent, setRiskPercent] = useState("1");
+  const [confirmSide, setConfirmSide] = useState<Side | null>(null);
+  const confirmEntryRef = useRef(0);
+  const [showFrames, setShowFrames] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [showAlerts, setShowAlerts] = useState(false);
+  const [showDrawingManager, setShowDrawingManager] = useState(false);
+  const [userDrawings, setUserDrawings] = useState<UserDrawing[]>([]);
+  const [selectedDrawing, setSelectedDrawing] = useState("");
+  const undoDrawings = useRef<UserDrawing[][]>([]);
+  const redoDrawings = useRef<UserDrawing[][]>([]);
+  const [drawingRevision, setDrawingRevision] = useState(0);
   const [feePerSide, setFeePerSide] = useState("0.05");
   const levelSignatureRef = useRef("");
   const summaryRef = useRef<PracticeSummary | null>(null);
@@ -1234,6 +1251,11 @@ export default function PracticeTradingTerminal() {
     try { chartRef.current?.removeOverlay({groupId:"pattern-auto"}); } catch {}
     try { chartRef.current?.removeOverlay({groupId:"ai-direction"}); } catch {}
     try { chartRef.current?.removeOverlay({groupId:"ai-measure"}); } catch {}
+    try { chartRef.current?.removeOverlay({groupId:"order-plan"}); } catch {}
+    setConfirmSide(null);
+    setUserDrawings([]);
+    setSelectedDrawing("");
+    undoDrawings.current=[];redoDrawings.current=[];
   }, [symbol, interval]);
 
   function intervalMilliseconds(value: Interval) {
