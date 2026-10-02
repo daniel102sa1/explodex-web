@@ -2410,7 +2410,7 @@ export default function PracticeTradingTerminal() {
                   </div>}
                 </div>
               ))}
-              {!summary?.open_positions?.length && <EmptyDock text="No tienes posiciones demo abiertas."/>
+              {!summary?.open_positions?.length && <EmptyDock text="No tienes posiciones demo abiertas."/>}
             </div>
           )}
 
