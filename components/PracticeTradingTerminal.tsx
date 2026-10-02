@@ -500,6 +500,7 @@ export default function PracticeTradingTerminal() {
   const [riskPercent, setRiskPercent] = useState("1");
   const [confirmSide, setConfirmSide] = useState<Side | null>(null);
   const confirmEntryRef = useRef(0);
+  const [draftPlan, setDraftPlan] = useState<{side:Side;entry:number;stop:number;target:number;qty:number;netGain:number;netLoss:number;roi:number;rr:number} | null>(null);
   const [showFrames, setShowFrames] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [showAlerts, setShowAlerts] = useState(false);
@@ -1743,15 +1744,41 @@ export default function PracticeTradingTerminal() {
     };
   }
 
-  async function openTrade(sideOverride?: Side) {
+  function openTrade(sideOverride?:Side) {
+    if(busy||!sid)return;
+    const side=sideOverride??form.side;
+    const plan=buildPlanForSide(side);
+    const margin=Number(form.margin),lev=Number(form.leverage);
+    if(!plan){setMessage("Primero indica un SL y un TP válidos o déjalos ambos vacíos para un plan de práctica automático.");return;}
+    if(!(margin>0&&lev>=1&&lev<=20&&margin<=(summary?.available_margin??0))){
+      setMessage("Revisa margen y apalancamiento: el margen no debe superar el saldo ficticio disponible.");return;
+    }
+    const qty=margin*lev/plan.entry;
+    const grossGain=Math.abs(plan.tp1-plan.entry)*qty;
+    const grossRisk=Math.abs(plan.stop-plan.entry)*qty;
+    const netGain=grossGain-(plan.entry+plan.tp1)*qty*.0005-plan.entry*qty*.0004;
+    const netLoss=-grossRisk-(plan.entry+plan.stop)*qty*.0005-plan.entry*qty*.0004;
+    confirmEntryRef.current=plan.entry;
+    setDraftPlan({side,entry:plan.entry,stop:plan.stop,target:plan.tp1,qty,
+      netGain,netLoss,roi:margin>0?netGain/margin*100:0,
+      rr:netLoss<0?netGain/-netLoss:0});
+    setConfirmSide(side);
+  }
+
+  async function executeOpenTrade(sideOverride:Side) {
     if (!BASE_URL || !sid) return;
-    const side = sideOverride ?? form.side;
+    const side = sideOverride;
     const plan = buildPlanForSide(side);
     if (!plan) {
       setMessage(livePrice > 0 ? "Revisa el SL y TP: el SL debe quedar del lado opuesto al TP respecto a la entrada. Completa ambos campos o vacíalos para un plan demo automático." : "Todavía no hay precio de mercado para abrir la práctica.");
       return;
     }
 
+    if (form.orderType==="MARKET" && confirmEntryRef.current>0 &&
+      Math.abs(plan.entry-confirmEntryRef.current)/confirmEntryRef.current>.003){
+      setConfirmSide(null);setDraftPlan(null);
+      setMessage("El precio de mercado se movió más de 0.3 % desde la vista previa. Abre una nueva confirmación.");return;
+    }
     setForm(x => ({
       ...x,
       side,
@@ -1793,6 +1820,7 @@ export default function PracticeTradingTerminal() {
           : "";
         setMessage(`Demo ${payload.side} abierta a ${fmt(payload.entry_price)}${plan.auto ? " · SL/TP automático aplicado." : ""}${warning}`);
       }
+      setConfirmSide(null);setDraftPlan(null);
       await syncPractice();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo abrir la operación demo.");
