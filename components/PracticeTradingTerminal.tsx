@@ -734,8 +734,8 @@ export default function PracticeTradingTerminal() {
               const x1 = Math.min(coordinates[0].x, coordinates[2].x);
               const x2 = Math.max(coordinates[0].x, coordinates[2].x);
               return [
-                { type: "rect", attrs: { x:x1, y:Math.min(coordinates[0].y,coordinates[2].y),width:x2-x1,height:Math.abs(coordinates[0].y-coordinates[2].y) },styles:{color:"rgba(52,211,153,0.10)"} },
-                { type: "rect", attrs: { x:x1, y:Math.min(coordinates[0].y,coordinates[1].y),width:x2-x1,height:Math.abs(coordinates[0].y-coordinates[1].y) },styles:{color:"rgba(251,113,133,0.10)"} },
+                { type: "rect", attrs: { x:x1, y:Math.min(coordinates[0].y,coordinates[2].y),width:x2-x1,height:Math.abs(coordinates[0].y-coordinates[2].y) },styles:{color:"rgba(52,211,153,0.10)"},ignoreEvent:true },
+                { type: "rect", attrs: { x:x1, y:Math.min(coordinates[0].y,coordinates[1].y),width:x2-x1,height:Math.abs(coordinates[0].y-coordinates[1].y) },styles:{color:"rgba(251,113,133,0.10)"},ignoreEvent:true },
                 { type: "line", attrs: { coordinates: [{ x: x1, y: coordinates[0].y }, { x: x2, y: coordinates[0].y }] }, styles: { color: "#22d3ee", size: 1.5 } },
                 { type: "line", attrs: { coordinates: [{ x: x1, y: coordinates[1].y }, { x: x2, y: coordinates[1].y }] }, styles: { color: "#fb7185", size: 1.5 } },
                 { type: "line", attrs: { coordinates: [{ x: x1, y: coordinates[2].y }, { x: x2, y: coordinates[2].y }] }, styles: { color: "#34d399", size: 1.5 } },
