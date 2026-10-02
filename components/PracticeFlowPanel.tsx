@@ -76,7 +76,7 @@ export default function PracticeFlowPanel({symbol}:{symbol:string}){
         <Metric name="Open Interest" value={shown.openInterest==null?"—":shown.openInterest.toLocaleString("en-US",{maximumFractionDigits:0})}/>
         <Metric name="Cambio OI / 5m" value={signed(shown.openInterestChange)+"%"}/>
         <Metric name="Taker buy/sell" value={shown.buySellRatio==null?"—":shown.buySellRatio.toFixed(2)+"x"}/>
-        <Metric name="Delta taker / 5m" value={signed(shown.delta)+" BTC/activos"}/>
+        <Metric name="Delta taker / 5m" value={signed(shown.delta)+" "+symbol.replace(/USDT$/,"")}/>
         <Metric name="Funding indicado" value={shown.fundingRate==null?"—":signed(shown.fundingRate*100,4)+"%"}/>
       </div>
       <p className="mt-2 text-[10px] text-slate-400">{signal} No demuestra quién abrió las posiciones ni garantiza continuidad.</p>
