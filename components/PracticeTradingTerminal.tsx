@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { analyzeTechnical, INDICATOR_HELP, type TechnicalRead } from "@/lib/patternEngine";
+import { analyzeTechnical, INDICATOR_HELP, type TechnicalRead, type CandleBar } from "@/lib/patternEngine";
+import PracticeStatsLab from "@/components/PracticeStatsLab";
+import PracticeReplayLab from "@/components/PracticeReplayLab";
+import PracticeFlowPanel from "@/components/PracticeFlowPanel";
+import PracticeSymbolSearch from "@/components/PracticeSymbolSearch";
 import {
   Activity,
   BarChart3,
@@ -123,7 +127,7 @@ type OrderForm = {
 
 const INTERVALS: Interval[] = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
 const QUICK_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DYDXUSDT", "LINKUSDT", "ADAUSDT"];
-const INDICATORS = ["EMA20/50/200", "VWAP", "RSI", "MACD", "ATR", "VOL", "BOLL", "SAR", "OBV"] as const;
+const INDICATORS = ["EMA20/50/200", "VWAP", "RSI", "MACD", "ATR", "VOL", "BOLL", "SAR", "OBV", "KDJ", "CCI", "DMI"] as const;
 type IndicatorName = typeof INDICATORS[number];
 
 const PATTERNS = [
@@ -472,14 +476,25 @@ export default function PracticeTradingTerminal() {
   const [aiDirection, setAiDirection] = useState<AiDirectionResult | null>(null);
   const [analyzingAll, setAnalyzingAll] = useState(false);
   const [askingAi, setAskingAi] = useState(false);
+  const aiCacheRef = useRef<{ symbol: string; interval: Interval; at: number; price: number; result: AiDirectionResult } | null>(null);
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [strongMagnet, setStrongMagnet] = useState(true);
   const [showExplain, setShowExplain] = useState(false);
+  const [indicatorCategory, setIndicatorCategory] = useState<"principal"|"momentum"|"riesgo">("principal");
   const [indicatorSet, setIndicatorSet] = useState<Set<IndicatorName>>(
     new Set(["EMA20/50/200", "VOL"])
   );
   const [summary, setSummary] = useState<PracticeSummary | null>(null);
   const [history, setHistory] = useState<any[]>([]);
+  const [targetRoi, setTargetRoi] = useState("5");
+  const [feePerSide, setFeePerSide] = useState("0.05");
+  const levelSignatureRef = useRef("");
+  const summaryRef = useRef<PracticeSummary | null>(null);
+  const closedCountRef = useRef(-1);
+  const syncingRef = useRef(false);
+  const [journalCount, setJournalCount] = useState(0);
+  const [replaySnapshot, setReplaySnapshot] = useState<CandleBar[] | null>(null);
+  const [showFlow, setShowFlow] = useState(false);
   const [sid, setSid] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -487,7 +502,7 @@ export default function PracticeTradingTerminal() {
   const [showOrder, setShowOrder] = useState(true);
   const [marginPct, setMarginPct] = useState(0);
   const [showTpSl, setShowTpSl] = useState(false);
-  const [bottomTab, setBottomTab] = useState<"positions" | "orders" | "history">("positions");
+  const [bottomTab, setBottomTab] = useState<"positions" | "orders" | "history" | "stats">("positions");
   const [form, setForm] = useState<OrderForm>({
     side: "LONG",
     orderType: "MARKET",
@@ -504,36 +519,109 @@ export default function PracticeTradingTerminal() {
 
   useEffect(() => setSid(sessionId()), []);
 
+  // Local backup, linked to the same browser session as the PAPER backend.
+  function journalKey() { return `explodex:practice-journal:${sid}`; }
+  function mergeJournal(remote: any[]) {
+    if (!sid) return remote;
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(journalKey()) || "[]");
+      const unique = new Map<string, any>();
+      for (const item of [...(Array.isArray(saved) ? saved : []), ...remote]) {
+        if (item?.id != null) unique.set(String(item.id), item);
+      }
+      const rows = Array.from(unique.values()).sort((a,b) => (
+        (Date.parse(b.closed_at || b.created_at || b.opened_at || "") || 0) -
+        (Date.parse(a.closed_at || a.created_at || a.opened_at || "") || 0)
+      )).slice(0, 2000);
+      window.localStorage.setItem(journalKey(), JSON.stringify(rows));
+      setJournalCount(rows.length);
+      return rows;
+    } catch { return remote; }
+  }
+  useEffect(() => {
+    if (!sid) return;
+    try {
+      const rows = JSON.parse(window.localStorage.getItem(journalKey()) || "[]");
+      if (Array.isArray(rows)) { setHistory(rows); setJournalCount(rows.length); }
+    } catch {}
+  }, [sid]);
+
+  function exportJournal() {
+    if (!history.length) { setMessage("Todavía no hay operaciones cerradas para exportar."); return; }
+    const cols = ["id","symbol","side","leverage","entry_price","exit_price","net_pnl","r_multiple","pattern","close_reason","opened_at","closed_at"];
+    const csv = [cols.join(","), ...history.map(row => cols.map(key =>
+      '"' + String(row[key] ?? "").replaceAll('"','""') + '"'
+    ).join(","))].join("\r\n");
+    const blob = new Blob(["\uFEFF" + csv], {type:"text/csv;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url; link.download = "ExplodeX-diario-PAPER.csv"; link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // At rest the chart uses its own websocket; PostgreSQL is queried only for
+  // meaningful account changes and once when returning to the tab.
   const loadPractice = useCallback(async () => {
     if (!BASE_URL || !sid) return;
     try {
-      const [s, h] = await Promise.all([
-        fetch(`${BASE_URL}/api/v1/practice/summary?session_id=${encodeURIComponent(sid)}`, { cache: "no-store" }),
-        fetch(`${BASE_URL}/api/v1/practice/history?session_id=${encodeURIComponent(sid)}&limit=30`, { cache: "no-store" }),
-      ]);
-      if (s.ok) setSummary(await s.json());
-      if (h.ok) setHistory((await h.json()).rows ?? []);
+      const response = await fetch(`${BASE_URL}/api/v1/practice/summary?session_id=${encodeURIComponent(sid)}`, { cache: "no-store" });
+      if (!response.ok) return;
+      const next = await response.json() as PracticeSummary;
+      summaryRef.current = next;
+      setSummary(next);
+      if (closedCountRef.current !== next.closed_trades) {
+        const historyResponse = await fetch(
+          `${BASE_URL}/api/v1/practice/history?session_id=${encodeURIComponent(sid)}&limit=500`,
+          { cache: "no-store" }
+        );
+        if (historyResponse.ok) {
+          setHistory(mergeJournal((await historyResponse.json()).rows ?? []));
+          closedCountRef.current = next.closed_trades;
+        }
+      }
     } catch {}
   }, [sid]);
 
   const syncPractice = useCallback(async () => {
-    if (!BASE_URL || !sid) return;
+    if (!BASE_URL || !sid || syncingRef.current) return;
+    syncingRef.current = true;
     try {
-      await fetch(`${BASE_URL}/api/v1/practice/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sid }),
-        cache: "no-store",
-      });
-    } catch {}
-    await loadPractice();
+      // No open trades or limit orders = no POST, no candlestick downloads,
+      // no needless last_synced_at writes to PostgreSQL.
+      if ((summaryRef.current?.open_positions?.length ?? 0) > 0 ||
+          (summaryRef.current?.pending_orders?.length ?? 0) > 0) {
+        await fetch(`${BASE_URL}/api/v1/practice/sync`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sid }),
+          cache: "no-store",
+        });
+      }
+      await loadPractice();
+    } catch {} finally { syncingRef.current = false; }
   }, [sid, loadPractice]);
 
   useEffect(() => {
-    syncPractice();
-    const timer = window.setInterval(syncPractice, 3500);
-    return () => window.clearInterval(timer);
-  }, [syncPractice]);
+    if (!sid) return;
+    void loadPractice();
+    // Sync only while the user is viewing the simulator and has live trades.
+    // The old implementation synced and re-read history every 3.5 seconds.
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible" &&
+          ((summaryRef.current?.open_positions?.length ?? 0) > 0 ||
+           (summaryRef.current?.pending_orders?.length ?? 0) > 0)) {
+        void syncPractice();
+      }
+    }, 30_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void syncPractice();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [sid, syncPractice, loadPractice]);
 
   useEffect(() => {
     let disposed = false;
@@ -629,6 +717,28 @@ export default function PracticeTradingTerminal() {
       };
       registerPositionOverlay("EXPLODEX_LONG_POSITION", "LONG");
       registerPositionOverlay("EXPLODEX_SHORT_POSITION", "SHORT");
+      // Draggable chart levels for open PAPER trades.
+      try {
+        kc.registerOverlay({
+          name: "EXPLODEX_MANAGED_LEVEL",
+          totalStep: 2,
+          needDefaultYAxisFigure: true,
+          needDefaultPointFigure: false,
+          mode: "normal",
+          createPointFigures: ({ coordinates, overlay, bounding }: any) => {
+            if (!coordinates?.length) return [];
+            const level = overlay?.extendData || {};
+            const color = level.kind === "SL" ? "#fb7185" : level.kind === "ENTRY" ? "#67e8f9" : "#34d399";
+            const y = coordinates[0].y;
+            const width = Number(bounding?.width || 1600);
+            return [
+              { type: "line", attrs: { coordinates: [{x: 0, y}, {x: width, y}] }, styles: { color, size: 1.5, style: level.kind === "ENTRY" ? "dashed" : "solid" } },
+              { type: "text", attrs: { x: 8, y: y - 5, text: `${level.label || level.kind} · ${Number(overlay?.points?.[0]?.value || 0).toPrecision(7)}` }, styles: { color, size: 10 } },
+            ];
+          },
+        } as any);
+      } catch {}
+
 
       const registerPolylinePattern = (name: string, label: string, totalStep: number) => {
         try {
@@ -944,7 +1054,7 @@ export default function PracticeTradingTerminal() {
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-    for (const name of ["EMA", "EXPLODEX_VWAP", "EXPLODEX_ATR", "RSI", "MACD", "VOL", "BOLL", "SAR", "OBV"]) {
+    for (const name of ["EMA", "EXPLODEX_VWAP", "EXPLODEX_ATR", "RSI", "MACD", "VOL", "BOLL", "SAR", "OBV", "KDJ", "CCI", "DMI"]) {
       try { chart.removeIndicator({ name }); } catch {}
     }
     if (indicatorSet.has("EMA20/50/200")) {
@@ -973,6 +1083,15 @@ export default function PracticeTradingTerminal() {
     }
     if (indicatorSet.has("OBV")) {
       try { chart.createIndicator({ name: "OBV", paneId: "obv_pane" }); } catch {}
+    }
+    if (indicatorSet.has("KDJ")) {
+      try { chart.createIndicator({ name: "KDJ", paneId: "kdj_pane", calcParams: [9, 3, 3] }); } catch {}
+    }
+    if (indicatorSet.has("CCI")) {
+      try { chart.createIndicator({ name: "CCI", paneId: "cci_pane", calcParams: [20] }); } catch {}
+    }
+    if (indicatorSet.has("DMI")) {
+      try { chart.createIndicator({ name: "DMI", paneId: "dmi_pane", calcParams: [14, 6] }); } catch {}
     }
   }, [indicatorSet, chartReady]);
 
@@ -1123,8 +1242,17 @@ export default function PracticeTradingTerminal() {
   }
 
   async function askAiDirection() {
-    if (!BASE_URL) {
-      setMessage("El backend de ExplodeX no está configurado.");
+    if (!BASE_URL || !sid) {
+      setMessage("Espera a que la sesión demo se conecte.");
+      return;
+    }
+    const cached = aiCacheRef.current;
+    if (cached && cached.symbol === symbol && cached.interval === interval &&
+        Date.now() - cached.at < 120_000 && cached.price > 0 &&
+        Math.abs(livePrice - cached.price) / cached.price < .001) {
+      setAiDirection(cached.result);
+      drawAiProjection(cached.result);
+      setMessage("Análisis reutilizado durante 2 minutos para no gastar otra consulta de IA.");
       return;
     }
     setAskingAi(true);
@@ -1140,6 +1268,7 @@ export default function PracticeTradingTerminal() {
       } : null;
       const scan = precisionScan ?? fallbackScan;
       const payload = {
+        session_id: sid,
         symbol,
         interval,
         engine_direction: scan?.direction ?? "ESPERAR",
@@ -1157,9 +1286,16 @@ export default function PracticeTradingTerminal() {
           atr14: row.read.atr14,
           support: row.read.support,
           resistance: row.read.resistance,
-          pattern: row.read.pattern,
+          pattern: row.read.pattern ? {name:row.read.pattern.name,status:row.read.pattern.status,direction:row.read.pattern.direction} : null,
         })),
-        recent_candles: barsRef.current.slice(-120),
+        recent_candles: barsRef.current.slice(-36).map(row => ({
+          timestamp:row.timestamp,open:row.open,high:row.high,low:row.low,close:row.close,volume:row.volume
+        })),
+        recent_trades: history.slice(0, 10).map(row => ({
+          symbol:row.symbol, side:row.side, timeframe:row.timeframe, pattern:row.pattern,
+          entry_price:row.entry_price,exit_price:row.exit_price,net_pnl:row.net_pnl,
+          r_multiple:row.r_multiple,close_reason:row.close_reason
+        })),
       };
       const response = await fetch(`${BASE_URL}/api/v1/practice/ai-direction`, {
         method: "POST",
@@ -1169,6 +1305,7 @@ export default function PracticeTradingTerminal() {
       });
       if (!response.ok) throw new Error(`Backend ${response.status}`);
       const result = await response.json() as AiDirectionResult;
+      aiCacheRef.current = {symbol,interval,at:Date.now(),price:livePrice,result};
       setAiDirection(result);
       drawAiProjection(result);
 
@@ -1587,6 +1724,114 @@ export default function PracticeTradingTerminal() {
     }
   }
 
+
+  // A level is committed once on mouse release, never on every mouse move.
+  async function commitDraggedLevel(p: PracticePosition, kind: "SL"|"TP1"|"TP2"|"TP3", price: number) {
+    if (busy || !sid || !Number.isFinite(price) || price <= 0) return;
+    const valid = kind === "SL"
+      ? (p.side === "LONG" ? price < p.entry_price : price > p.entry_price)
+      : (p.side === "LONG" ? price > p.entry_price : price < p.entry_price);
+    if (!valid) {
+      setMessage(`${kind} inválido: debe estar del lado correcto de la entrada ${fmt(p.entry_price)}.`);
+      levelSignatureRef.current = "";
+      await loadPractice();
+      return;
+    }
+    setBusy(true);
+    setMessage(`Guardando ${kind} de ${p.symbol}…`);
+    try {
+      const levels = {
+        stop_loss: kind === "SL" ? price : p.stop_loss,
+        take_profit: kind === "TP1" ? price : p.take_profit,
+        tp2: kind === "TP2" ? price : (p.tp2 ?? p.take_profit),
+        tp3: kind === "TP3" ? price : (p.tp3 ?? p.tp2 ?? p.take_profit),
+      };
+      const response = await fetch(`${BASE_URL}/api/v1/practice/${p.id}/modify`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sid, ...levels }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.detail || "No se pudo guardar el nivel.");
+      setMessage(`${kind} de ${p.symbol} actualizado a ${fmt(price)}.`);
+      levelSignatureRef.current = "";
+      await syncPractice();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo modificar el nivel.");
+      levelSignatureRef.current = "";
+      await loadPractice();
+    } finally { setBusy(false); }
+  }
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !chartReady) return;
+    const positions = (summary?.open_positions ?? []).filter(p => p.symbol === symbol);
+    const signature = symbol + ":" + interval + "|" + positions.map(p =>
+      [p.id,p.entry_price,p.stop_loss,p.take_profit,p.tp2,p.tp3].join(":")).join("|");
+    if (levelSignatureRef.current === signature) return;
+    levelSignatureRef.current = signature;
+    try { chart.removeOverlay({ groupId: "practice-managed" }); } catch {}
+    const timestamp = Number(barsRef.current.at(-1)?.timestamp || Date.now());
+    for (const p of positions) {
+      const levels: Array<{kind:"ENTRY"|"SL"|"TP1"|"TP2"|"TP3";price:number}> = [
+        {kind:"ENTRY",price:p.entry_price}, {kind:"SL",price:p.stop_loss},
+        {kind:"TP1",price:p.take_profit},
+        ...(p.tp2 ? [{kind:"TP2" as const,price:p.tp2}] : []),
+        ...(p.tp3 ? [{kind:"TP3" as const,price:p.tp3}] : []),
+      ];
+      for (const {kind,price} of levels) {
+        if (!(Number(price) > 0)) continue;
+        try {
+          chart.createOverlay({
+            name: "EXPLODEX_MANAGED_LEVEL", groupId: "practice-managed",
+            lock: kind === "ENTRY", zLevel: 10, mode: "normal",
+            points: [{timestamp,value:price}],
+            extendData: {kind,label:`${p.side} #${p.id} ${kind}`},
+            onRightClick: (event:any) => { event?.preventDefault?.(); return true; },
+            onPressedMoveEnd: (event:any) => {
+              if (kind === "ENTRY") return true;
+              const value = Number(event?.overlay?.points?.[0]?.value);
+              if (Number.isFinite(value)) void commitDraggedLevel(p,kind,value);
+              return false;
+            },
+          });
+        } catch {}
+      }
+    }
+  }, [summary?.open_positions, symbol, interval, chartReady, sid]);
+
+  const roiPlanner = useMemo(() => {
+    const entry = form.orderType === "LIMIT" ? Number(form.limitPrice) : livePrice;
+    const leverage = Number(form.leverage);
+    const margin = Number(form.margin);
+    const roi = Number(targetRoi);
+    const fee = Number(feePerSide) / 100;
+    if (!(entry > 0 && leverage > 0 && margin > 0 && roi > 0 && fee >= 0 && fee < 1)) return null;
+    // Solve entry and exit fees to target a NET return on initial margin.
+    const longTp = (entry * (1 + fee) + entry * roi / (100 * leverage)) / (1 - fee);
+    const shortTp = (entry * (1 - fee) - entry * roi / (100 * leverage)) / (1 + fee);
+    return {entry,longTp,shortTp,longMove:(longTp/entry-1)*100,shortMove:(1-shortTp/entry)*100};
+  }, [form.orderType,form.limitPrice,form.leverage,form.margin,targetRoi,feePerSide,livePrice]);
+
+  function applyRoiTarget(side: Side) {
+    if (!roiPlanner) return;
+    const target = side === "LONG" ? roiPlanner.longTp : roiPlanner.shortTp;
+    if (!(target > 0)) { setMessage("TP inválido: reduce el ROI o el apalancamiento."); return; }
+    const entry = roiPlanner.entry;
+    const delta = target - entry;
+    const stop = Number(form.stop);
+    const correctStop = stop > 0 && (side === "LONG" ? stop < entry : stop > entry);
+    setShowTpSl(true);
+    setForm(x => ({
+      ...x,side,
+      stop: correctStop ? x.stop : String(Number((entry - delta / 2).toPrecision(10))),
+      tp1: String(Number(target.toPrecision(10))),
+      tp2: String(Number((entry + delta * 1.5).toPrecision(10))),
+      tp3: String(Number((entry + delta * 2).toPrecision(10))),
+    }));
+    setMessage(`TP1 ${side} para ROI neto estimado ${targetRoi}%: ${fmt(target)}. Revisa SL, comisión y liquidación.`);
+  }
+
   async function cancelOrder(id: number) {
     if (!BASE_URL || !sid) return;
     setBusy(true);
@@ -1637,6 +1882,9 @@ export default function PracticeTradingTerminal() {
         body: JSON.stringify({ session_id: sid }),
       });
       if (!response.ok) throw new Error("No se pudo reiniciar");
+      window.localStorage.removeItem(journalKey());
+      closedCountRef.current = -1;
+      setHistory([]); setJournalCount(0);
       setMessage("Cuenta de práctica reiniciada a 1,000 USDT.");
       await loadPractice();
     } catch (error) {
@@ -1652,26 +1900,9 @@ export default function PracticeTradingTerminal() {
     <div className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#050b14] shadow-2xl shadow-black/30">
       {/* Market header */}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-800/80 bg-[#08111d]/95 px-2.5 py-2">
-        <form
-          className="flex min-w-[220px] flex-1 items-center gap-1.5 lg:max-w-[360px]"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const next = normalizeSymbol(symbolInput);
-            setSymbolInput(next);
-            setSymbol(next);
-          }}
-        >
-          <label className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-slate-700/70 bg-[#030812] px-3 py-2">
-            <Search size={14} className="shrink-0 text-slate-500"/>
-            <input
-              value={symbolInput}
-              onChange={(e) => setSymbolInput(e.target.value)}
-              className="min-w-0 flex-1 bg-transparent text-xs font-black uppercase text-white outline-none"
-              placeholder="BTCUSDT"
-            />
-          </label>
-          <button className="rounded-lg bg-cyan-400 px-3 py-2 text-[10px] font-black text-slate-950 hover:bg-cyan-300">IR</button>
-        </form>
+        <PracticeSymbolSearch value={symbolInput} selected={symbol}
+          onInput={setSymbolInput} onSelect={(pair) => { setSymbol(pair); setSymbolInput(pair); }}/>
+
 
         <div className="hidden items-center gap-1 overflow-x-auto xl:flex">
           {QUICK_SYMBOLS.map((pair) => (
@@ -1755,8 +1986,28 @@ export default function PracticeTradingTerminal() {
         {/* Chart */}
         <section className="min-w-0 bg-[#050b14]">
           <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-800/80 bg-[#07101a] px-2 py-1.5">
-            <span className="mr-1 shrink-0 text-[8px] font-black uppercase tracking-[.15em] text-slate-600">Indicadores</span>
-            {INDICATORS.map((name) => (
+            <button onClick={() => {
+              const rows = barsRef.current.slice(-220);
+              if (rows.length < 65) { setMessage("Carga al menos 65 velas antes de iniciar Replay."); return; }
+              setReplaySnapshot(rows.map(row => ({
+                timestamp:Number(row.timestamp),open:Number(row.open),high:Number(row.high),
+                low:Number(row.low),close:Number(row.close),volume:Number(row.volume)
+              })));
+            }} title="Practicar sin base de datos con hasta 220 velas ya cargadas" className="mr-1 shrink-0 rounded-lg border border-cyan-400/25 bg-cyan-400/[.05] px-2 py-1 text-[9px] font-black text-cyan-200">▶ REPLAY LOCAL</button>
+            <button onClick={() => setShowFlow(v=>!v)} className={"shrink-0 rounded-lg border px-2 py-1 text-[9px] font-black "+(showFlow?"border-cyan-400/30 bg-cyan-400/10 text-cyan-200":"border-slate-700 text-slate-500")}>Flujo / OI</button>
+            <span className="mr-1 shrink-0 text-[8px] font-black uppercase tracking-[.15em] text-slate-500">Indicadores</span>
+            {(["principal","momentum","riesgo"] as const).map(group => (
+              <button key={group} onClick={()=>setIndicatorCategory(group)}
+                className={`shrink-0 rounded-lg px-2 py-1 text-[9px] font-black ${indicatorCategory === group ? "bg-cyan-400/15 text-cyan-200" : "text-slate-600 hover:text-slate-300"}`}>
+                {group==="principal"?"Precio":group==="momentum"?"Osciladores":"Riesgo"} 
+              </button>
+            ))}
+            <span className="mx-1 h-4 shrink-0 border-l border-slate-800"/>
+            {INDICATORS.filter(name => indicatorCategory === "principal"
+              ? ["EMA20/50/200","VWAP","VOL","BOLL"].includes(name)
+              : indicatorCategory === "momentum"
+                ? ["RSI","MACD","KDJ","CCI","DMI","OBV"].includes(name)
+                : ["ATR","SAR"].includes(name)).map((name) => (
               <button
                 key={name}
                 onClick={() => toggleIndicator(name)}
@@ -1792,6 +2043,8 @@ export default function PracticeTradingTerminal() {
             onDrawShort={() => draw("EXPLODEX_SHORT_POSITION")}
           />
 
+          {showFlow && <PracticeFlowPanel symbol={symbol}/>}
+
           <div className="relative">
             {!chartReady && (
               <div className="absolute inset-0 z-10 grid place-items-center bg-[#050b14]/80 backdrop-blur-sm">
@@ -1809,7 +2062,7 @@ export default function PracticeTradingTerminal() {
             </div>
             <div className="flex gap-3">
               <span>PAPER ONLY</span>
-              <span>Dibujos guardables por par/TF</span>
+              <span>SL/TP arrastrables · diario con copia local</span>
             </div>
           </div>
         </section>
@@ -1971,6 +2224,24 @@ export default function PracticeTradingTerminal() {
                 </div>
               </div>
 
+              <div className="rounded-xl border border-cyan-400/15 bg-cyan-400/[.035] p-3">
+                <div className="mb-2 flex items-center justify-between text-[10px] font-black text-cyan-200">
+                  <span>Calculadora de TP por ROI</span><span className="text-[8px] text-slate-500">Estimación · PAPER</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <TradeInput label="ROI objetivo (%)" value={targetRoi} onChange={setTargetRoi}/>
+                  <TradeInput label="Comisión por lado (%)" value={feePerSide} onChange={setFeePerSide}/>
+                </div>
+                {roiPlanner && <div className="mt-2 space-y-2 text-[9px] text-slate-400">
+                  <div>Movimiento LONG: <b className="font-mono text-white">{roiPlanner.longMove.toFixed(3)}%</b> · SHORT: <b className="font-mono text-white">{roiPlanner.shortMove.toFixed(3)}%</b></div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={()=>applyRoiTarget("LONG")} className="rounded-lg border border-emerald-400/25 bg-emerald-400/[.08] px-2 py-2 font-black text-emerald-300">TP LONG {fmt(roiPlanner.longTp)}</button>
+                    <button disabled={roiPlanner.shortTp<=0} onClick={()=>applyRoiTarget("SHORT")} className="rounded-lg border border-rose-400/25 bg-rose-400/[.08] px-2 py-2 font-black text-rose-300 disabled:opacity-30">TP SHORT {fmt(roiPlanner.shortTp)}</button>
+                  </div>
+                  <p className="leading-4 text-slate-600">Incluye comisiones estimadas de entrada y salida; no incluye funding, spread ni deslizamiento.</p>
+                </div>}
+              </div>
+
               {riskPreview && <div className="grid grid-cols-3 gap-1">
                 <CompactMetric label="Riesgo SL" value={money(riskPreview.risk)} tone="bad"/>
                 <CompactMetric label="% equity" value={`${riskPreview.riskPct.toFixed(2)}%`} tone={riskPreview.riskPct>.5?"warn":undefined}/>
@@ -1991,7 +2262,9 @@ export default function PracticeTradingTerminal() {
           <DockTab active={bottomTab === "positions"} label={`Posiciones (${summary?.open_positions?.length ?? 0})`} onClick={() => setBottomTab("positions")}/>
           <DockTab active={bottomTab === "orders"} label={`LIMIT (${summary?.pending_orders?.length ?? 0})`} onClick={() => setBottomTab("orders")}/>
           <DockTab active={bottomTab === "history"} label={`Historial (${history.length})`} onClick={() => setBottomTab("history")}/>
-          <div className="ml-auto hidden gap-4 pr-2 text-[9px] text-slate-600 md:flex">
+          <DockTab active={bottomTab === "stats"} label="Estadísticas · Coach" onClick={() => setBottomTab("stats")}/>
+          <button onClick={exportJournal} className="ml-auto rounded-lg border border-slate-700 px-2 py-1 text-[9px] font-bold text-cyan-200 hover:border-cyan-400/40">Exportar CSV ({journalCount})</button>
+          <div className="hidden gap-4 pr-2 text-[9px] text-slate-600 md:flex">
             <span>WR {summary?.win_rate_pct == null ? "—" : `${summary.win_rate_pct}%`}</span>
             <span>Realizado {money(summary?.realized_pnl ?? 0)}</span>
             <button onClick={resetAccount} disabled={busy} className="font-bold text-rose-400 hover:text-rose-300"><RotateCcw size={11} className="mr-1 inline"/>Reset $1,000</button>
@@ -2056,6 +2329,8 @@ export default function PracticeTradingTerminal() {
             </div>
           )}
 
+          {bottomTab === "stats" && <PracticeStatsLab history={history}/>}
+
           {bottomTab === "history" && (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[920px] text-[10px]">
@@ -2082,6 +2357,8 @@ export default function PracticeTradingTerminal() {
           )}
         </div>
       </section>
+
+      {replaySnapshot && <PracticeReplayLab candles={replaySnapshot} symbol={symbol} interval={interval} sessionId={sid} onClose={() => setReplaySnapshot(null)}/>}
 
       {message && (
         <div className="fixed bottom-5 left-1/2 z-[90] flex max-w-[90vw] -translate-x-1/2 items-center gap-2 rounded-xl border border-cyan-500/30 bg-slate-950/95 px-4 py-3 text-xs font-bold text-cyan-100 shadow-2xl">
