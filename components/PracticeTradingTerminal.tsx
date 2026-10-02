@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { analyzeTechnical, INDICATOR_HELP, type TechnicalRead, type CandleBar } from "@/lib/patternEngine";
 import PracticeStatsLab from "@/components/PracticeStatsLab";
 import PracticeReplayLab from "@/components/PracticeReplayLab";
+import PracticeFlowPanel from "@/components/PracticeFlowPanel";
 import {
   Activity,
   BarChart3,
@@ -492,6 +493,7 @@ export default function PracticeTradingTerminal() {
   const syncingRef = useRef(false);
   const [journalCount, setJournalCount] = useState(0);
   const [replaySnapshot, setReplaySnapshot] = useState<CandleBar[] | null>(null);
+  const [showFlow, setShowFlow] = useState(false);
   const [sid, setSid] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -2008,6 +2010,7 @@ export default function PracticeTradingTerminal() {
                 low:Number(row.low),close:Number(row.close),volume:Number(row.volume)
               })));
             }} title="Practicar sin base de datos con hasta 220 velas ya cargadas" className="mr-1 shrink-0 rounded-lg border border-cyan-400/25 bg-cyan-400/[.05] px-2 py-1 text-[9px] font-black text-cyan-200">▶ REPLAY LOCAL</button>
+            <button onClick={() => setShowFlow(v=>!v)} className={"shrink-0 rounded-lg border px-2 py-1 text-[9px] font-black "+(showFlow?"border-cyan-400/30 bg-cyan-400/10 text-cyan-200":"border-slate-700 text-slate-500")}>Flujo / OI</button>
             <span className="mr-1 shrink-0 text-[8px] font-black uppercase tracking-[.15em] text-slate-500">Indicadores</span>
             {(["principal","momentum","riesgo"] as const).map(group => (
               <button key={group} onClick={()=>setIndicatorCategory(group)}
@@ -2055,6 +2058,8 @@ export default function PracticeTradingTerminal() {
             onDrawLong={() => draw("EXPLODEX_LONG_POSITION")}
             onDrawShort={() => draw("EXPLODEX_SHORT_POSITION")}
           />
+
+          {showFlow && <PracticeFlowPanel symbol={symbol}/>}
 
           <div className="relative">
             {!chartReady && (
