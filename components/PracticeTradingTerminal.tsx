@@ -2056,6 +2056,15 @@ export default function PracticeTradingTerminal() {
               })));
             }} title="Practicar sin base de datos con hasta 220 velas ya cargadas" className="mr-1 shrink-0 rounded-lg border border-cyan-400/25 bg-cyan-400/[.05] px-2 py-1 text-[9px] font-black text-cyan-200">▶ REPLAY LOCAL</button>
             <button onClick={() => setShowFlow(v=>!v)} className={"shrink-0 rounded-lg border px-2 py-1 text-[9px] font-black "+(showFlow?"border-cyan-400/30 bg-cyan-400/10 text-cyan-200":"border-slate-700 text-slate-500")}>Flujo / OI</button>
+            <button onClick={()=>{setAutoDetect(v=>!v);lastDetectedBarRef.current="";}}
+              className={"shrink-0 rounded-lg border px-2 py-1 text-[9px] font-black "+(autoDetect?"border-emerald-400/30 bg-emerald-400/10 text-emerald-200":"border-slate-700 text-slate-500")}>
+              Autofiguras {autoDetect?"ON":"OFF"}
+            </button>
+            <button onClick={()=>void askAiDirection("drawing")} disabled={askingAi}
+              title="Selecciona tu último dibujo y pide a la IA interpretarlo y medir el escenario. Usa una consulta de IA, no guarda el dibujo en PostgreSQL."
+              className="shrink-0 rounded-lg border border-violet-400/30 bg-violet-400/10 px-2 py-1 text-[9px] font-black text-violet-200 disabled:opacity-40">
+              {askingAi?"IA…":"🤖 IA medir dibujo"}
+            </button>
             <span className="mr-1 shrink-0 text-[8px] font-black uppercase tracking-[.15em] text-slate-500">Indicadores</span>
             {(["principal","momentum","riesgo"] as const).map(group => (
               <button key={group} onClick={()=>setIndicatorCategory(group)}
@@ -2087,6 +2096,12 @@ export default function PracticeTradingTerminal() {
               <span className="hidden rounded-md border border-slate-800 px-2 py-1 text-slate-600 lg:inline">Rueda = zoom · arrastra = mover</span>
             </div>
           </div>
+
+          {autoDetect && autoRead?.pattern &&
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-400/15 bg-violet-400/[.035] px-3 py-1.5 text-[9px] text-violet-200">
+              <span>Autofigura · <b>{autoRead.pattern.name}</b> · {autoRead.pattern.status==="FORMING"?"en formación, sin confirmar":autoRead.pattern.direction+" confirmado"} · {autoRead.pattern.direction==="WAIT"?"Sin TP hasta ruptura":"TP posible "+fmt(autoRead.pattern.tp1)}</span>
+              <button onClick={()=>drawPrecisionPattern(autoRead)} className="rounded-md border border-violet-400/25 px-2 py-1 font-bold">Ver trazado</button>
+            </div>}
 
           {activeTool && <div className="flex items-center justify-between gap-2 border-b border-cyan-400/15 bg-cyan-400/[.04] px-3 py-2 text-[10px] text-cyan-100"><span><b>{activeTool}</b> activa · {strongMagnet ? "imán fuerte" : "imán suave"} · marca los puntos directamente sobre las velas</span><button onClick={() => setActiveTool(null)} className="rounded-md border border-cyan-400/20 px-2 py-1 text-[9px] font-black">Cursor</button></div>}
 
@@ -2123,7 +2138,7 @@ export default function PracticeTradingTerminal() {
             </div>
             <div className="flex gap-3">
               <span>PAPER ONLY</span>
-              <span>SL/TP arrastrables · diario con copia local</span>
+              <span>Un TP y un SL arrastrables · diario local</span>
             </div>
           </div>
         </section>
@@ -2363,10 +2378,21 @@ export default function PracticeTradingTerminal() {
                     <ActionButton label={editingPosition===p.id?"Ocultar":"Editar TP/SL"} onClick={() => setEditingPosition(id=>id===p.id?null:p.id)} disabled={busy}/>
                     <ActionButton label="Cerrar" onClick={() => closeTrade(p.id)} disabled={busy} danger/>
                   </div>
-                  {editingPosition===p.id && <PracticePositionEditor position={p} sessionId={sid} baseUrl={BASE_URL}
+                  {editingPosition===p.id && <div className="mt-2">
+                    <button onClick={()=>{
+                      if (p.symbol!==symbol) {
+                        setSymbolInput(p.symbol);setSymbol(p.symbol);
+                        setMessage("Cambié el gráfico a "+p.symbol+". Cuando carguen sus velas vuelve a pulsar IA · ANALIZAR MI POSICIÓN.");
+                      } else void askAiDirection("position",p);
+                    }} disabled={askingAi}
+                      className="w-full rounded-lg border border-violet-400/25 bg-violet-400/[.05] px-3 py-2 text-[9px] font-black text-violet-200 disabled:opacity-40">
+                      {askingAi?"IA analizando…":"🤖 IA · analizar mi posición y sugerir TP"}
+                    </button>
+                    <PracticePositionEditor position={p} sessionId={sid} baseUrl={BASE_URL}
                     aiHint={p.symbol===symbol?aiDirection:null}
                     onSaved={async()=>{await loadPractice();setMessage(`Posición #${p.id}: se guardó un único TP y un SL.`);}}
-                    onCancel={()=>setEditingPosition(null)}/>}
+                    onCancel={()=>setEditingPosition(null)}/>
+                  </div>}
                 </div>
               ))}
               {!summary?.open_positions?.length && <EmptyDock text="No tienes posiciones demo abiertas."/>
@@ -2555,12 +2581,10 @@ function PrecisionAssistant({
                   La figura todavía no decide dirección. Escenario LONG si confirma por arriba de <b>{fmt(pattern.breakoutLong)}</b>; escenario SHORT si confirma por debajo de <b>{fmt(pattern.breakoutShort)}</b>. No se precarga una entrada antes de la ruptura.
                 </div>
               ) : (
-                <div className="mt-2 grid grid-cols-5 gap-1">
+                <div className="mt-2 grid grid-cols-3 gap-1">
                   <Tiny label="Entrada" value={fmt(pattern.entry)}/>
                   <Tiny label="SL" value={fmt(pattern.stop)} tone="bad"/>
-                  <Tiny label="TP1" value={fmt(pattern.tp1)} tone="good"/>
-                  <Tiny label="TP2 medido" value={fmt(pattern.tp2)} tone="good"/>
-                  <Tiny label="TP3 ext." value={fmt(pattern.tp3)} tone="good"/>
+                  <Tiny label="TP único" value={fmt(pattern.tp1)} tone="good"/>
                 </div>
               )}
               <div className="mt-2 flex flex-wrap gap-1">
