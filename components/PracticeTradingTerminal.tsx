@@ -1779,11 +1779,16 @@ export default function PracticeTradingTerminal() {
     const step=intervalMilliseconds(interval);
     try{
       chart.createOverlay({name:form.side==="LONG"?"EXPLODEX_LONG_POSITION":"EXPLODEX_SHORT_POSITION",
-        groupId:"order-plan",lock:true,points:[
+        groupId:"order-plan",lock:false,zLevel:12,points:[
           {timestamp:lastTs-3*step,value:plan.entry},
           {timestamp:lastTs-3*step,value:plan.stop},
           {timestamp:lastTs+12*step,value:plan.tp1},
-        ]});
+        ],
+        onPressedMoveEnd:(event:any)=>{
+          syncPositionDrawing(form.side==="LONG"?"EXPLODEX_LONG_POSITION":"EXPLODEX_SHORT_POSITION",event?.overlay?.points||[]);
+          return false;
+        },
+      });
     }catch{}
   },[chartReady,form.side,form.stop,form.tp1,form.orderType,form.limitPrice,livePrice,interval,symbol,showTpSl]);
 
