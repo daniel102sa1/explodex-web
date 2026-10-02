@@ -1231,7 +1231,7 @@ export default function PracticeTradingTerminal() {
     const signature = symbol + ":" + interval + ":" + lastClosed;
     if (!lastClosed || signature === lastDetectedBarRef.current) return;
     lastDetectedBarRef.current = signature;
-    const read = analyzeTechnical(rows, interval);
+    const read = analyzeTechnical(rows.slice(0,-1), interval);
     setAutoRead(read);
     if (read?.pattern) drawPrecisionPattern(read, true);
     else {
@@ -1722,7 +1722,7 @@ export default function PracticeTradingTerminal() {
     if(!sizedPlan||!plan){setMessage("Completa la entrada, SL y TP, y espera a que cargue el saldo demo.");return;}
     setShowTpSl(true);
     setMarginPct(0);
-    setForm(x=>({...x,margin:String(Number(sizedPlan.margin.toFixed(2))),
+    setForm(x=>({...x,margin:String(Math.floor(sizedPlan.margin*100)/100),
       stop:String(Number(plan.stop.toPrecision(10))),
       tp1:String(Number(plan.tp1.toPrecision(10))),tp2:"",tp3:""}));
     setMessage(sizedPlan.capped
