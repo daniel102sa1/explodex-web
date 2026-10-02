@@ -719,23 +719,33 @@ export default function PracticeTradingTerminal() {
       };
       registerPositionOverlay("EXPLODEX_LONG_POSITION", "LONG");
       registerPositionOverlay("EXPLODEX_SHORT_POSITION", "SHORT");
-      // Draggable chart levels for open PAPER trades.
+      // Exchange-style entry, SL and ONE TP, with an inline price and PnL label.
       try {
         kc.registerOverlay({
           name: "EXPLODEX_MANAGED_LEVEL",
-          totalStep: 2,
-          needDefaultYAxisFigure: true,
-          needDefaultPointFigure: false,
+          totalStep: 2, needDefaultYAxisFigure: true, needDefaultPointFigure: true,
           mode: "normal",
           createPointFigures: ({ coordinates, overlay, bounding }: any) => {
             if (!coordinates?.length) return [];
             const level = overlay?.extendData || {};
             const color = level.kind === "SL" ? "#fb7185" : level.kind === "ENTRY" ? "#67e8f9" : "#34d399";
             const y = coordinates[0].y;
-            const width = Number(bounding?.width || 1600);
+            const width = Number(bounding?.width || 1200);
+            const value = Number(overlay?.points?.[0]?.value || 0);
+            const entry = Number(level.entry || value);
+            const quantity = Number(level.quantity || 0);
+            const margin = Number(level.margin || 0);
+            const gross = level.side === "LONG" ? (value-entry)*quantity : (entry-value)*quantity;
+            const fee = (entry+value)*quantity*.0005;
+            const net = gross-fee;
+            const roi = margin > 0 ? net/margin*100 : 0;
+            const label = `${level.label || level.kind} ${fmt(value)}` +
+              (level.kind === "ENTRY" ? "" : ` | ${net>=0?"+":""}${net.toFixed(2)}$ | ${roi>=0?"+":""}${roi.toFixed(2)}%`);
             return [
-              { type: "line", attrs: { coordinates: [{x: 0, y}, {x: width, y}] }, styles: { color, size: 1.5, style: level.kind === "ENTRY" ? "dashed" : "solid" } },
-              { type: "text", attrs: { x: 8, y: y - 5, text: `${level.label || level.kind} · ${Number(overlay?.points?.[0]?.value || 0).toPrecision(7)}` }, styles: { color, size: 10 } },
+              { type: "line", attrs: { coordinates: [{x: 0, y}, {x: width, y}] },
+                styles: { color, size: 1.5, style: "dashed" } },
+              { type: "text", attrs: { x: Math.max(8, width - 300), y: y - 6, text: label },
+                styles: { color, size: 11 } },
             ];
           },
         } as any);
@@ -1218,9 +1228,7 @@ export default function PracticeTradingTerminal() {
     const levels = [
       ["ENTRY", result.entry, "#f8fafc"],
       ["SL", result.stop_loss, "#fb7185"],
-      ["TP1", result.tp1, "#6ee7b7"],
-      ["TP2", result.tp2, "#34d399"],
-      ["TP3", result.tp3, "#22d3ee"],
+      ["TP", result.tp1, "#34d399"],
     ] as Array<[string, number, string]>;
 
     for (const [label, value, color] of levels) {
@@ -1682,7 +1690,7 @@ export default function PracticeTradingTerminal() {
   }
 
   // A level is committed once on mouse release, never on every mouse move.
-  async function commitDraggedLevel(p: PracticePosition, kind: "SL"|"TP1"|"TP2"|"TP3", price: number) {
+  async function commitDraggedLevel(p: PracticePosition, kind: "SL"|"TP", price: number) {
     if (busy || !sid || !Number.isFinite(price) || price <= 0) return;
     const valid = kind === "SL"
       ? (p.side === "LONG" ? price < p.entry_price : price > p.entry_price)
@@ -1698,9 +1706,8 @@ export default function PracticeTradingTerminal() {
     try {
       const levels = {
         stop_loss: kind === "SL" ? price : p.stop_loss,
-        take_profit: kind === "TP1" ? price : p.take_profit,
-        tp2: kind === "TP2" ? price : (p.tp2 ?? p.take_profit),
-        tp3: kind === "TP3" ? price : (p.tp3 ?? p.tp2 ?? p.take_profit),
+        take_profit: kind === "TP" ? price : p.take_profit,
+        single_target: true,
       };
       const response = await fetch(`${BASE_URL}/api/v1/practice/${p.id}/modify`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -1729,11 +1736,9 @@ export default function PracticeTradingTerminal() {
     try { chart.removeOverlay({ groupId: "practice-managed" }); } catch {}
     const timestamp = Number(barsRef.current.at(-1)?.timestamp || Date.now());
     for (const p of positions) {
-      const levels: Array<{kind:"ENTRY"|"SL"|"TP1"|"TP2"|"TP3";price:number}> = [
+      const levels: Array<{kind:"ENTRY"|"SL"|"TP";price:number}> = [
         {kind:"ENTRY",price:p.entry_price}, {kind:"SL",price:p.stop_loss},
-        {kind:"TP1",price:p.take_profit},
-        ...(p.tp2 ? [{kind:"TP2" as const,price:p.tp2}] : []),
-        ...(p.tp3 ? [{kind:"TP3" as const,price:p.tp3}] : []),
+        {kind:"TP",price:p.take_profit},
       ];
       for (const {kind,price} of levels) {
         if (!(Number(price) > 0)) continue;
@@ -1742,7 +1747,7 @@ export default function PracticeTradingTerminal() {
             name: "EXPLODEX_MANAGED_LEVEL", groupId: "practice-managed",
             lock: kind === "ENTRY", zLevel: 10, mode: "normal",
             points: [{timestamp,value:price}],
-            extendData: {kind,label:`${p.side} #${p.id} ${kind}`},
+            extendData: {kind,label:`#${p.id} ${kind}`,side:p.side,entry:p.entry_price,quantity:p.quantity,margin:p.margin_used},
             onRightClick: (event:any) => { event?.preventDefault?.(); return true; },
             onPressedMoveEnd: (event:any) => {
               if (kind === "ENTRY") return true;
@@ -2250,6 +2255,7 @@ export default function PracticeTradingTerminal() {
                     <Tiny label="SL" value={fmt(p.stop_loss)} tone="bad"/>
                     <Tiny label="TP" value={fmt(p.take_profit)} tone="good"/>
                   </div>
+                  {(p.tp2!=null||p.tp3!=null)&&<div className="mt-2 text-[9px] text-amber-300">Esta posición conserva objetivos antiguos: entra a Editar TP/SL y guarda para convertirla a TP único.</div>}
                   <div className="mt-2 grid grid-cols-5 gap-1">
                     <ActionButton label="BE" onClick={() => moveToBreakEven(p.id)} disabled={busy || p.moved_to_be}/>
                     <ActionButton label="25%" onClick={() => partialClose(p.id,.25)} disabled={busy}/>
