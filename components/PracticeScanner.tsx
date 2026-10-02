@@ -25,7 +25,7 @@ async function scanSymbol(symbol:string):Promise<Scan|null>{
     timestamp:Number(r.time??r.timestamp),open:Number(r.open),high:Number(r.high),low:Number(r.low),
     close:Number(r.close),volume:Number(r.volume||0)
   })).filter((r:CandleBar)=>r.timestamp>0&&r.close>0);
-  const read=analyzeTechnical(bars,"15m");
+  const read=analyzeTechnical(bars.slice(0,-1),"15m");
   return read?{pattern:read.pattern?.name||"Sin figura clara",status:read.pattern?.status||"NONE",
     bias:read.trendScore>=2?"Alcista":read.trendScore<=-2?"Bajista":"Mixto"}:null;
 }
