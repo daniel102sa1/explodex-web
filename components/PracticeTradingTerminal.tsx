@@ -6,6 +6,7 @@ import PracticeStatsLab from "@/components/PracticeStatsLab";
 import PracticeReplayLab from "@/components/PracticeReplayLab";
 import PracticeFlowPanel from "@/components/PracticeFlowPanel";
 import PracticeSymbolSearch from "@/components/PracticeSymbolSearch";
+import PracticePositionEditor from "@/components/PracticePositionEditor";
 import {
   Activity,
   BarChart3,
@@ -501,7 +502,8 @@ export default function PracticeTradingTerminal() {
   const [chartReady, setChartReady] = useState(false);
   const [showOrder, setShowOrder] = useState(true);
   const [marginPct, setMarginPct] = useState(0);
-  const [showTpSl, setShowTpSl] = useState(false);
+  const [showTpSl, setShowTpSl] = useState(true);
+  const [editingPosition, setEditingPosition] = useState<number | null>(null);
   const [bottomTab, setBottomTab] = useState<"positions" | "orders" | "history" | "stats">("positions");
   const [form, setForm] = useState<OrderForm>({
     side: "LONG",
@@ -1539,35 +1541,21 @@ export default function PracticeTradingTerminal() {
   function buildPlanForSide(side: Side) {
     const entry = form.orderType === "LIMIT" && Number(form.limitPrice) > 0 ? Number(form.limitPrice) : livePrice;
     if (!(entry > 0)) return null;
-
-    const rawStop = Number(form.stop || 0);
-    const rawTp1 = Number(form.tp1 || 0);
-    const rawTp2 = Number(form.tp2 || 0);
-    const rawTp3 = Number(form.tp3 || 0);
+    const stop = showTpSl ? Number(form.stop || 0) : 0;
+    const target = showTpSl ? Number(form.tp1 || 0) : 0;
+    const supplied = Boolean(stop || target);
     const valid = side === "LONG"
-      ? rawStop > 0 && rawStop < entry && rawTp1 > entry
-      : rawStop > entry && rawTp1 > 0 && rawTp1 < entry;
-
-    if (valid) {
-      return {
-        entry,
-        stop: rawStop,
-        tp1: rawTp1,
-        tp2: rawTp2 > 0 ? rawTp2 : rawTp1,
-        tp3: rawTp3 > 0 ? rawTp3 : (rawTp2 > 0 ? rawTp2 : rawTp1),
-        auto: false,
-      };
-    }
-
-    const stop = side === "LONG" ? entry * .99 : entry * 1.01;
-    const risk = Math.abs(entry - stop);
+      ? stop > 0 && stop < entry && target > entry
+      : stop > entry && target > 0 && target < entry;
+    // Never silently replace an invalid manually entered TP/SL.
+    if (supplied && !valid) return null;
+    if (valid) return {entry,stop,tp1:target,auto:false};
+    const autoStop = side === "LONG" ? entry * .99 : entry * 1.01;
+    const risk = Math.abs(entry - autoStop);
     return {
-      entry,
-      stop,
-      tp1: side === "LONG" ? entry + risk * 1.5 : entry - risk * 1.5,
-      tp2: side === "LONG" ? entry + risk * 2 : entry - risk * 2,
-      tp3: side === "LONG" ? entry + risk * 3 : entry - risk * 3,
-      auto: true,
+      entry,stop:autoStop,
+      tp1:side === "LONG" ? entry + risk * 1.5 : entry - risk * 1.5,
+      auto:true,
     };
   }
 
@@ -1576,7 +1564,7 @@ export default function PracticeTradingTerminal() {
     const side = sideOverride ?? form.side;
     const plan = buildPlanForSide(side);
     if (!plan) {
-      setMessage("Todavía no hay precio de mercado para abrir la práctica.");
+      setMessage(livePrice > 0 ? "Revisa el SL y TP: el SL debe quedar del lado opuesto al TP respecto a la entrada. Completa ambos campos o vacíalos para un plan demo automático." : "Todavía no hay precio de mercado para abrir la práctica.");
       return;
     }
 
@@ -1585,8 +1573,8 @@ export default function PracticeTradingTerminal() {
       side,
       stop: String(Number(plan.stop.toPrecision(10))),
       tp1: String(Number(plan.tp1.toPrecision(10))),
-      tp2: String(Number(plan.tp2.toPrecision(10))),
-      tp3: String(Number(plan.tp3.toPrecision(10))),
+      tp2: "",
+      tp3: "",
     }));
     setBusy(true);
     setMessage("");
@@ -1604,8 +1592,8 @@ export default function PracticeTradingTerminal() {
           leverage: Number(form.leverage),
           stop_loss: plan.stop,
           take_profit: plan.tp1,
-          tp2: plan.tp2,
-          tp3: plan.tp3,
+          tp2: null,
+          tp3: null,
           timeframe: interval,
           pattern: form.pattern,
           note: form.note || null,
@@ -1630,20 +1618,15 @@ export default function PracticeTradingTerminal() {
   }
 
   function setExamplePlan(side: Side = form.side) {
-    if (!(livePrice > 0)) return;
     const entry = form.orderType === "LIMIT" && Number(form.limitPrice) > 0 ? Number(form.limitPrice) : livePrice;
+    if (!(entry > 0)) return;
     const stop = side === "LONG" ? entry * .99 : entry * 1.01;
     const risk = Math.abs(entry - stop);
-    const tp1 = side === "LONG" ? entry + risk * 1.5 : entry - risk * 1.5;
-    const tp2 = side === "LONG" ? entry + risk * 2 : entry - risk * 2;
-    const tp3 = side === "LONG" ? entry + risk * 3 : entry - risk * 3;
+    const tp = side === "LONG" ? entry + risk * 1.5 : entry - risk * 1.5;
+    setShowTpSl(true);
     setForm(x => ({
-      ...x,
-      side,
-      stop: String(Number(stop.toPrecision(10))),
-      tp1: String(Number(tp1.toPrecision(10))),
-      tp2: String(Number(tp2.toPrecision(10))),
-      tp3: String(Number(tp3.toPrecision(10))),
+      ...x,side,stop:String(Number(stop.toPrecision(10))),
+      tp1:String(Number(tp.toPrecision(10))),tp2:"",tp3:"",
     }));
   }
 
@@ -1697,33 +1680,6 @@ export default function PracticeTradingTerminal() {
       setBusy(false);
     }
   }
-
-  async function applyFormLevels(id: number) {
-    if (!BASE_URL || !sid) return;
-    setBusy(true);
-    try {
-      const response = await fetch(`${BASE_URL}/api/v1/practice/${id}/modify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          session_id: sid,
-          stop_loss: form.stop ? Number(form.stop) : null,
-          take_profit: form.tp1 ? Number(form.tp1) : null,
-          tp2: form.tp2 ? Number(form.tp2) : null,
-          tp3: form.tp3 ? Number(form.tp3) : null,
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.detail || "No se pudieron actualizar niveles");
-      setMessage("SL/TP de la posición actualizados desde el formulario.");
-      await syncPractice();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No se pudieron actualizar niveles.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
 
   // A level is committed once on mouse release, never on every mouse move.
   async function commitDraggedLevel(p: PracticePosition, kind: "SL"|"TP1"|"TP2"|"TP3", price: number) {
@@ -1826,10 +1782,10 @@ export default function PracticeTradingTerminal() {
       ...x,side,
       stop: correctStop ? x.stop : String(Number((entry - delta / 2).toPrecision(10))),
       tp1: String(Number(target.toPrecision(10))),
-      tp2: String(Number((entry + delta * 1.5).toPrecision(10))),
-      tp3: String(Number((entry + delta * 2).toPrecision(10))),
+      tp2: "",
+      tp3: "",
     }));
-    setMessage(`TP1 ${side} para ROI neto estimado ${targetRoi}%: ${fmt(target)}. Revisa SL, comisión y liquidación.`);
+    setMessage(`TP ${side} para ROI neto estimado ${targetRoi}%: ${fmt(target)}. Revisa SL, comisión y liquidación.`);
   }
 
   async function cancelOrder(id: number) {
@@ -2177,21 +2133,19 @@ export default function PracticeTradingTerminal() {
               </div>
 
               <button
-                onClick={()=>setShowTpSl(v=>!v)}
+                onClick={()=>{setShowTpSl(v=>!v);setForm(x=>({...x,stop:"",tp1:"",tp2:"",tp3:""}));}}
                 className="flex w-full items-center justify-between rounded-xl border border-slate-800 bg-[#0d1117] px-3 py-2.5 text-left"
               >
                 <span className="flex items-center gap-2 text-[10px] font-black text-slate-300">
                   <span className={`grid h-4 w-4 place-items-center rounded border ${showTpSl?"border-cyan-400 bg-cyan-400 text-slate-950":"border-slate-600"}`}>{showTpSl?"✓":""}</span>
-                  TP / SL
+                  TP único / SL
                 </span>
-                <span className="text-[8px] text-slate-600">{showTpSl ? "Manual" : "Auto al abrir"}</span>
+                <span className="text-[8px] text-slate-600">{showTpSl ? "Precio editable" : "Plan demo automático"}</span>
               </button>
 
               {showTpSl && <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-800 bg-[#0d1117] p-2">
                 <TradeInput label="Stop Loss" value={form.stop} onChange={(v)=>setForm(x=>({...x,stop:v}))}/>
-                <TradeInput label="TP1" value={form.tp1} onChange={(v)=>setForm(x=>({...x,tp1:v}))}/>
-                <TradeInput label="TP2" value={form.tp2} onChange={(v)=>setForm(x=>({...x,tp2:v}))}/>
-                <TradeInput label="TP3" value={form.tp3} onChange={(v)=>setForm(x=>({...x,tp3:v}))}/>
+                <TradeInput label="Take Profit (1 TP)" value={form.tp1} onChange={(v)=>setForm(x=>({...x,tp1:v,tp2:"",tp3:""}))}/>
                 <button onClick={()=>setExamplePlan("LONG")} className="rounded-lg border border-emerald-400/15 px-2 py-2 text-[8px] font-black text-emerald-300">Plan LONG auto</button>
                 <button onClick={()=>setExamplePlan("SHORT")} className="rounded-lg border border-rose-400/15 px-2 py-2 text-[8px] font-black text-rose-300">Plan SHORT auto</button>
               </div>}
@@ -2294,18 +2248,22 @@ export default function PracticeTradingTerminal() {
                     <Tiny label="Entrada" value={fmt(p.entry_price)}/>
                     <Tiny label="Mark" value={fmt(p.mark_price)}/>
                     <Tiny label="SL" value={fmt(p.stop_loss)} tone="bad"/>
-                    <Tiny label="TP1" value={fmt(p.take_profit)} tone="good"/>
+                    <Tiny label="TP" value={fmt(p.take_profit)} tone="good"/>
                   </div>
                   <div className="mt-2 grid grid-cols-5 gap-1">
                     <ActionButton label="BE" onClick={() => moveToBreakEven(p.id)} disabled={busy || p.moved_to_be}/>
                     <ActionButton label="25%" onClick={() => partialClose(p.id,.25)} disabled={busy}/>
                     <ActionButton label="50%" onClick={() => partialClose(p.id,.5)} disabled={busy}/>
-                    <ActionButton label="SL/TP" onClick={() => applyFormLevels(p.id)} disabled={busy || !form.stop || !form.tp1}/>
+                    <ActionButton label={editingPosition===p.id?"Ocultar":"Editar TP/SL"} onClick={() => setEditingPosition(id=>id===p.id?null:p.id)} disabled={busy}/>
                     <ActionButton label="Cerrar" onClick={() => closeTrade(p.id)} disabled={busy} danger/>
                   </div>
+                  {editingPosition===p.id && <PracticePositionEditor position={p} sessionId={sid} baseUrl={BASE_URL}
+                    aiHint={p.symbol===symbol?aiDirection:null}
+                    onSaved={async()=>{await loadPractice();setMessage(`Posición #${p.id}: se guardó un único TP y un SL.`);}}
+                    onCancel={()=>setEditingPosition(null)}/>}
                 </div>
               ))}
-              {!summary?.open_positions?.length && <EmptyDock text="No tienes posiciones demo abiertas."/>}
+              {!summary?.open_positions?.length && <EmptyDock text="No tienes posiciones demo abiertas."/>
             </div>
           )}
 
@@ -2320,7 +2278,7 @@ export default function PracticeTradingTerminal() {
                   <div className="mt-2 grid grid-cols-4 gap-1">
                     <Tiny label="LIMIT" value={fmt(o.limit_price)}/>
                     <Tiny label="SL" value={fmt(o.stop_loss)} tone="bad"/>
-                    <Tiny label="TP1" value={fmt(o.take_profit)} tone="good"/>
+                    <Tiny label="TP" value={fmt(o.take_profit)} tone="good"/>
                     <Tiny label="Margen" value={money(o.margin_used)}/>
                   </div>
                 </div>
