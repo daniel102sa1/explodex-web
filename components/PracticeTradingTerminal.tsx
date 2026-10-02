@@ -9,6 +9,7 @@ import PracticeSymbolSearch from "@/components/PracticeSymbolSearch";
 import PracticePositionEditor from "@/components/PracticePositionEditor";
 import PracticeMultiTimeframes from "@/components/PracticeMultiTimeframes";
 import PracticeScanner from "@/components/PracticeScanner";
+import { opportunityCanLoad, type PracticeOpportunity } from "@/lib/practiceOpportunity";
 import PracticePriceAlerts from "@/components/PracticePriceAlerts";
 import PracticeDrawingManager, { type UserDrawing } from "@/components/PracticeDrawingManager";
 import PracticeTradeCoach from "@/components/PracticeTradeCoach";
@@ -505,6 +506,7 @@ export default function PracticeTradingTerminal() {
   const previewDrawRef = useRef({key:"",at:0});
   const [showFrames, setShowFrames] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+  const [pendingRadarPlan, setPendingRadarPlan] = useState<PracticeOpportunity|null>(null);
   const [showAlerts, setShowAlerts] = useState(false);
   const [showDrawingManager, setShowDrawingManager] = useState(false);
   const [userDrawings, setUserDrawings] = useState<UserDrawing[]>([]);
@@ -1271,6 +1273,29 @@ export default function PracticeTradingTerminal() {
   useEffect(() => {
     setForm(x=>({...x,stop:"",tp1:"",tp2:"",tp3:""}));
   }, [symbol]);
+
+  // This effect follows the coin-change reset so a selected scanner plan is
+  // applied only to its own symbol/timeframe. It NEVER opens a PAPER order.
+  useEffect(() => {
+    const idea=pendingRadarPlan;
+    if(!idea || symbol!==idea.symbol || interval!==idea.timeframe)return;
+    setPendingRadarPlan(null);
+    if(!opportunityCanLoad(idea) || Date.now()-idea.closedAt>45*60_000){
+      setMessage("Esta zona ya no es válida o sus velas son antiguas. Vuelve a analizarla.");
+      return;
+    }
+    setShowOrder(true);
+    setShowTpSl(true);
+    setForm(old=>({...old,side:idea.side,orderType:"LIMIT",
+      limitPrice:String(Number(idea.entry.toPrecision(10))),leverage:"5",
+      stop:String(Number(idea.stop.toPrecision(10))),
+      tp1:String(Number(idea.takeProfit.toPrecision(10))),tp2:"",tp3:"",
+      pattern:idea.pattern.toUpperCase().replace(/[^A-Z0-9]+/g,"_").slice(0,40),
+      note:"Radar PAPER: "+idea.pattern+". "+idea.condition,
+    }));
+    setShowScanner(false);
+    setMessage("Plan de "+idea.symbol+" cargado como orden LIMIT ficticia. Verifica el precio y la zona antes de confirmar. La operación NO se ha abierto.");
+  }, [symbol,interval,pendingRadarPlan]);
 
   useEffect(() => {
     if (!autoDetect) {
@@ -2330,6 +2355,13 @@ export default function PracticeTradingTerminal() {
 
           {showScanner&&<PracticeScanner symbol={symbol}
             onSelect={s=>{setSymbol(s);setSymbolInput(s);}}
+            onPlan={idea=>{
+              if(!opportunityCanLoad(idea))return;
+              setPendingRadarPlan(idea);
+              setSymbolInput(idea.symbol);
+              setSymbol(idea.symbol);
+              setIntervalValue(idea.timeframe);
+            }}
             onClose={()=>setShowScanner(false)}/>}
 
           <div className={showAlerts?"":"hidden"}>
