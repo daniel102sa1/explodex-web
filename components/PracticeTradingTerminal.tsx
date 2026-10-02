@@ -7,6 +7,12 @@ import PracticeReplayLab from "@/components/PracticeReplayLab";
 import PracticeFlowPanel from "@/components/PracticeFlowPanel";
 import PracticeSymbolSearch from "@/components/PracticeSymbolSearch";
 import PracticePositionEditor from "@/components/PracticePositionEditor";
+import PracticeMultiTimeframes from "@/components/PracticeMultiTimeframes";
+import PracticeScanner from "@/components/PracticeScanner";
+import PracticePriceAlerts from "@/components/PracticePriceAlerts";
+import PracticeDrawingManager, { type UserDrawing } from "@/components/PracticeDrawingManager";
+import PracticeTradeCoach from "@/components/PracticeTradeCoach";
+import { sizePaperPosition } from "@/lib/practiceRisk";
 import {
   Activity,
   BarChart3,
@@ -492,6 +498,20 @@ export default function PracticeTradingTerminal() {
   const [summary, setSummary] = useState<PracticeSummary | null>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [targetRoi, setTargetRoi] = useState("5");
+  const [riskPercent, setRiskPercent] = useState("1");
+  const [confirmSide, setConfirmSide] = useState<Side | null>(null);
+  const confirmEntryRef = useRef(0);
+  const [draftPlan, setDraftPlan] = useState<{side:Side;entry:number;stop:number;target:number;qty:number;netGain:number;netLoss:number;roi:number;rr:number} | null>(null);
+  const previewDrawRef = useRef({key:"",at:0});
+  const [showFrames, setShowFrames] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [showAlerts, setShowAlerts] = useState(false);
+  const [showDrawingManager, setShowDrawingManager] = useState(false);
+  const [userDrawings, setUserDrawings] = useState<UserDrawing[]>([]);
+  const [selectedDrawing, setSelectedDrawing] = useState("");
+  const undoDrawings = useRef<UserDrawing[][]>([]);
+  const redoDrawings = useRef<UserDrawing[][]>([]);
+  const [drawingRevision, setDrawingRevision] = useState(0);
   const [feePerSide, setFeePerSide] = useState("0.05");
   const levelSignatureRef = useRef("");
   const summaryRef = useRef<PracticeSummary | null>(null);
@@ -508,6 +528,8 @@ export default function PracticeTradingTerminal() {
   const [marginPct, setMarginPct] = useState(0);
   const [showTpSl, setShowTpSl] = useState(true);
   const [editingPosition, setEditingPosition] = useState<number | null>(null);
+  const [reviewTrade, setReviewTrade] = useState<any | null>(null);
+  const [reviewAi, setReviewAi] = useState<AiDirectionResult | null>(null);
   const [bottomTab, setBottomTab] = useState<"positions" | "orders" | "history" | "stats">("positions");
   const [form, setForm] = useState<OrderForm>({
     side: "LONG",
@@ -712,6 +734,8 @@ export default function PracticeTradingTerminal() {
               const x1 = Math.min(coordinates[0].x, coordinates[2].x);
               const x2 = Math.max(coordinates[0].x, coordinates[2].x);
               return [
+                { type: "rect", attrs: { x:x1, y:Math.min(coordinates[0].y,coordinates[2].y),width:x2-x1,height:Math.abs(coordinates[0].y-coordinates[2].y) },styles:{color:"rgba(52,211,153,0.10)"},ignoreEvent:true },
+                { type: "rect", attrs: { x:x1, y:Math.min(coordinates[0].y,coordinates[1].y),width:x2-x1,height:Math.abs(coordinates[0].y-coordinates[1].y) },styles:{color:"rgba(251,113,133,0.10)"},ignoreEvent:true },
                 { type: "line", attrs: { coordinates: [{ x: x1, y: coordinates[0].y }, { x: x2, y: coordinates[0].y }] }, styles: { color: "#22d3ee", size: 1.5 } },
                 { type: "line", attrs: { coordinates: [{ x: x1, y: coordinates[1].y }, { x: x2, y: coordinates[1].y }] }, styles: { color: "#fb7185", size: 1.5 } },
                 { type: "line", attrs: { coordinates: [{ x: x1, y: coordinates[2].y }, { x: x2, y: coordinates[2].y }] }, styles: { color: "#34d399", size: 1.5 } },
@@ -766,11 +790,12 @@ export default function PracticeTradingTerminal() {
             needDefaultYAxisFigure: true,
             mode: "weak_magnet",
             modeSensitivity: 8,
-            createPointFigures: ({ coordinates }: any) => {
+            createPointFigures: ({ coordinates,overlay }: any) => {
               if (!Array.isArray(coordinates) || coordinates.length < 2) return [];
+              const custom=overlay?.styles?.line||{};
               return [
-                { type: "line", attrs: { coordinates }, styles: { color: "#c084fc", size: 1.8 } },
-                { type: "text", attrs: { x: coordinates[0].x + 6, y: coordinates[0].y - 8, text: label }, styles: { color: "#e9d5ff", size: 11 } },
+                { type: "line", attrs: { coordinates }, styles: { color:custom.color||"#c084fc", size:custom.size||1.8 } },
+                { type: "text", attrs: { x: coordinates[0].x + 6, y: coordinates[0].y - 8, text: label }, styles: { color:custom.color||"#e9d5ff", size: 11 } },
               ];
             },
           } as any);
@@ -1134,6 +1159,22 @@ export default function PracticeTradingTerminal() {
     brush: { label: "Dibujo libre", hint: "Dibuja libremente sobre el gráfico." },
   };
 
+  function syncPositionDrawing(name:string,points:any[]) {
+    if(name!=="EXPLODEX_LONG_POSITION"&&name!=="EXPLODEX_SHORT_POSITION")return;
+    if(!Array.isArray(points)||points.length<3)return;
+    const entry=Number(points[0]?.value),stop=Number(points[1]?.value),tp=Number(points[2]?.value);
+    const side:Side=name==="EXPLODEX_LONG_POSITION"?"LONG":"SHORT";
+    const valid=entry>0 && (side==="LONG"?stop>0&&stop<entry&&tp>entry:stop>entry&&tp>0&&tp<entry);
+    if(!valid){setMessage("La herramienta requiere entrada, SL y TP en el orden correcto para "+side+".");return;}
+    const useLimit=!(livePrice>0)||Math.abs(entry-livePrice)/livePrice>.002;
+    setShowTpSl(true);
+    setForm(x=>({...x,side,orderType:useLimit?"LIMIT":"MARKET",
+      limitPrice:useLimit?String(Number(entry.toPrecision(10))):"",
+      stop:String(Number(stop.toPrecision(10))),
+      tp1:String(Number(tp.toPrecision(10))),tp2:"",tp3:""}));
+    setMessage("Plan "+side+" trasladado del gráfico al ticket: entrada "+fmt(entry)+", SL "+fmt(stop)+", TP "+fmt(tp)+". Confirma antes de abrir.");
+  }
+
   function draw(name: string) {
     const chart = chartRef.current;
     if (!chart) return;
@@ -1147,13 +1188,26 @@ export default function PracticeTradingTerminal() {
         mode: strongMagnet ? "strong_magnet" : "weak_magnet",
         modeSensitivity: strongMagnet ? 18 : 10,
         onDrawStart: () => {
+          snapshotDrawings();
           setMessage(meta.hint);
           return false;
         },
-        onDrawEnd: () => {
+        onDrawEnd: (event:any) => {
+          if(name==="EXPLODEX_LONG_POSITION"||name==="EXPLODEX_SHORT_POSITION") {
+            const points=event?.overlay?.points||readUserDrawings().at(-1)?.points||[];
+            syncPositionDrawing(name,points);
+          }
           setActiveTool(null);
-          setMessage(`${meta.label} lista. Puedes arrastrar sus puntos para afinarla.`);
+          window.setTimeout(()=>refreshUserDrawings(),60);
+          if(name!=="EXPLODEX_LONG_POSITION"&&name!=="EXPLODEX_SHORT_POSITION")
+            setMessage(`${meta.label} lista. Puedes arrastrar sus puntos para afinarla.`);
           return false;
+        },
+        onPressedMoveStart:()=>{snapshotDrawings();return false;},
+        onPressedMoveEnd:(event:any)=>{
+          if(name==="EXPLODEX_LONG_POSITION"||name==="EXPLODEX_SHORT_POSITION")
+            syncPositionDrawing(name,event?.overlay?.points||[]);
+          refreshUserDrawings();return false;
         },
       });
     } catch {
@@ -1206,7 +1260,7 @@ export default function PracticeTradingTerminal() {
     const signature = symbol + ":" + interval + ":" + lastClosed;
     if (!lastClosed || signature === lastDetectedBarRef.current) return;
     lastDetectedBarRef.current = signature;
-    const read = analyzeTechnical(rows, interval);
+    const read = analyzeTechnical(rows.slice(0,-1), interval);
     setAutoRead(read);
     if (read?.pattern) drawPrecisionPattern(read, true);
     else {
@@ -1234,6 +1288,12 @@ export default function PracticeTradingTerminal() {
     try { chartRef.current?.removeOverlay({groupId:"pattern-auto"}); } catch {}
     try { chartRef.current?.removeOverlay({groupId:"ai-direction"}); } catch {}
     try { chartRef.current?.removeOverlay({groupId:"ai-measure"}); } catch {}
+    try { chartRef.current?.removeOverlay({groupId:"order-plan"}); } catch {}
+    setConfirmSide(null);
+    previewDrawRef.current={key:"",at:0};
+    setUserDrawings([]);
+    setSelectedDrawing("");
+    undoDrawings.current=[];redoDrawings.current=[];
   }, [symbol, interval]);
 
   function intervalMilliseconds(value: Interval) {
@@ -1347,8 +1407,8 @@ export default function PracticeTradingTerminal() {
     setMessage(`Altura geométrica ${fmt(height)}; ruptura ${fmt(breakout)}; objetivo medido ${fmt(target)}. Es una proyección educativa que requiere validar la figura, no un precio garantizado.`);
   }
 
-  async function askAiDirection(mode:"market"|"drawing"|"position"="market", position?:PracticePosition) {
-    setShowAnalysisPanel(true);
+  async function askAiDirection(mode:"market"|"drawing"|"position"|"review"="market", position?:PracticePosition, trade?:any) {
+    if(mode!=="review")setShowAnalysisPanel(true);
     if (!BASE_URL || !sid) {
       setMessage("Espera a que la sesión demo se conecte.");
       return;
@@ -1360,13 +1420,13 @@ export default function PracticeTradingTerminal() {
     }
     const activePosition = position ?? summary?.open_positions?.find(p=>p.symbol===symbol);
     const context = mode+":"+(activePosition ? [activePosition.id,activePosition.entry_price,activePosition.stop_loss,activePosition.take_profit].join("/") : "")+
-      ":"+(manualDrawing ? JSON.stringify(manualDrawing) : "");
+      ":"+(manualDrawing ? JSON.stringify(manualDrawing) : "")+":"+(trade?trade.id:"");
     const cached = aiCacheRef.current;
     if (cached && cached.symbol === symbol && cached.interval === interval && cached.context === context &&
         Date.now() - cached.at < 120_000 && cached.price > 0 &&
         Math.abs(livePrice - cached.price) / cached.price < .001) {
-      setAiDirection(cached.result);
-      drawAiProjection(cached.result);
+      if(mode==="review")setReviewAi(cached.result);
+      else {setAiDirection(cached.result);drawAiProjection(cached.result);}
       if (manualDrawing) drawManualMeasurement(manualDrawing,cached.result);
       else setMessage("Análisis reutilizado durante 2 minutos para no gastar otra consulta de IA.");
       return;
@@ -1385,8 +1445,14 @@ export default function PracticeTradingTerminal() {
       const scan = precisionScan ?? fallbackScan;
       const payload = {
         session_id: sid,
-        symbol,
-        interval,
+        symbol:trade?.symbol||symbol,
+        interval:mode==="review"?(trade?.timeframe||interval):interval,
+        review_trade:mode==="review" && trade ? {
+          symbol:trade.symbol,side:trade.side,timeframe:trade.timeframe,
+          pattern:trade.pattern,entry_price:trade.entry_price,exit_price:trade.exit_price,
+          net_pnl:trade.net_pnl,r_multiple:trade.r_multiple,close_reason:trade.close_reason,
+          fees:trade.fees,slippage:trade.slippage,
+        } : null,
         manual_drawing: manualDrawing,
         open_position: activePosition ? {
           side:activePosition.side,entry_price:activePosition.entry_price,
@@ -1394,9 +1460,9 @@ export default function PracticeTradingTerminal() {
           mark_price:activePosition.mark_price,quantity:activePosition.quantity,
           margin_used:activePosition.margin_used,leverage:activePosition.leverage,
         } : null,
-        engine_direction: scan?.direction ?? "ESPERAR",
-        current,
-        multi_timeframe: (scan?.rows ?? []).map(row => ({
+        engine_direction: mode==="review"?"ESPERAR":(scan?.direction ?? "ESPERAR"),
+        current:mode==="review"?null:current,
+        multi_timeframe: (mode==="review"?[]:(scan?.rows ?? [])).map(row => ({
           interval: row.interval,
           trend_score: row.read.trendScore,
           price: row.read.price,
@@ -1411,10 +1477,10 @@ export default function PracticeTradingTerminal() {
           resistance: row.read.resistance,
           pattern: row.read.pattern ? {name:row.read.pattern.name,status:row.read.pattern.status,direction:row.read.pattern.direction} : null,
         })),
-        recent_candles: barsRef.current.slice(-36).map(row => ({
+        recent_candles: (mode==="review"?[]:barsRef.current.slice(-36)).map(row => ({
           timestamp:row.timestamp,open:row.open,high:row.high,low:row.low,close:row.close,volume:row.volume
         })),
-        recent_trades: history.slice(0, 10).map(row => ({
+        recent_trades: (mode==="review" && trade ? [trade,...history.filter(row=>row.id!==trade.id)].slice(0,10) : history.slice(0, 10)).map(row => ({
           symbol:row.symbol, side:row.side, timeframe:row.timeframe, pattern:row.pattern,
           entry_price:row.entry_price,exit_price:row.exit_price,net_pnl:row.net_pnl,
           r_multiple:row.r_multiple,close_reason:row.close_reason
@@ -1429,11 +1495,11 @@ export default function PracticeTradingTerminal() {
       if (!response.ok) throw new Error(`Backend ${response.status}`);
       const result = await response.json() as AiDirectionResult;
       aiCacheRef.current = {symbol,interval,context,at:Date.now(),price:livePrice,result};
-      setAiDirection(result);
-      drawAiProjection(result);
+      if(mode==="review")setReviewAi(result);
+      else {setAiDirection(result);drawAiProjection(result);}
       if (manualDrawing) drawManualMeasurement(manualDrawing,result);
 
-      if (mode!=="position" && result.direction !== "WAIT" && result.stop_loss > 0 && result.tp1 > 0) {
+      if (mode!=="position" && mode!=="review" && result.direction !== "WAIT" && result.stop_loss > 0 && result.tp1 > 0) {
         const side: Side = result.direction === "LONG" ? "LONG" : "SHORT";
         setShowTpSl(true);
         setForm(x => ({
@@ -1585,54 +1651,146 @@ export default function PracticeTradingTerminal() {
     } catch {}
   }
 
-  function drawingKey() {
-    return `explodex:practice-drawings:${symbol}:${interval}`;
-  }
+  function drawingKey() { return "explodex:practice-drawings:"+symbol+":"+interval; }
 
-  function saveDrawings() {
-    const chart = chartRef.current;
-    if (!chart) return;
-    try {
-      const rows = (chart.getOverlays({ groupId: "practice-user" }) ?? []).map((item: any) => ({
-        name: item.name,
-        points: item.points,
-        groupId: "practice-user",
-        mode: item.mode || "weak_magnet",
-      }));
-      window.localStorage.setItem(drawingKey(), JSON.stringify(rows));
-      setMessage(`${rows.length} dibujo(s) guardados para ${symbol} ${interval}.`);
-    } catch {
-      setMessage("No pude guardar los dibujos.");
-    }
+  function readUserDrawings():UserDrawing[] {
+    const chart=chartRef.current;
+    if(!chart)return [];
+    try{
+      return (chart.getOverlays({groupId:"practice-user"})||[]).filter((row:any)=>
+        row && row.name && Array.isArray(row.points)&&row.points.length)
+        .slice(0,80).map((row:any)=>({
+          id:String(row.id),name:String(row.name),points:row.points,
+          mode:row.mode||"weak_magnet",lock:Boolean(row.lock),styles:row.styles||undefined,
+        }));
+    }catch{return [];}
   }
-
-  function restoreDrawings(showMessage = true) {
-    const chart = chartRef.current;
-    if (!chart) return;
-    try {
-      chart.removeOverlay({ groupId: "practice-user" });
-      const raw = window.localStorage.getItem(drawingKey());
-      const rows = raw ? JSON.parse(raw) : [];
-      for (const row of Array.isArray(rows) ? rows : []) {
-        if (!row?.name || !Array.isArray(row.points)) continue;
+  function saveDrawingRows(rows:UserDrawing[],announce=false) {
+    try{window.localStorage.setItem(drawingKey(),JSON.stringify(rows));}
+    catch {if(announce)setMessage("No se pudieron guardar los dibujos en este navegador.");return;}
+    if(announce)setMessage(rows.length+" dibujo(s) guardado(s) para "+symbol+" "+interval+".");
+  }
+  function refreshUserDrawings(announce=false){
+    const rows=readUserDrawings();
+    setUserDrawings(rows);setDrawingRevision(x=>x+1);
+    saveDrawingRows(rows,announce);
+  }
+  function snapshotDrawings(){
+    undoDrawings.current.push(readUserDrawings());
+    undoDrawings.current=undoDrawings.current.slice(-20);
+    redoDrawings.current=[];
+    setDrawingRevision(x=>x+1);
+  }
+  function renderDrawingSnapshot(rows:UserDrawing[]){
+    const chart=chartRef.current;if(!chart)return;
+    try{
+      chart.removeOverlay({groupId:"practice-user"});
+      for(const d of rows.slice(0,80)) {
         chart.createOverlay({
-          name: row.name,
-          points: row.points,
-          groupId: "practice-user",
-          mode: row.mode || "weak_magnet",
+          id:d.id,name:d.name,points:d.points,groupId:"practice-user",
+          mode:d.mode||"weak_magnet",lock:Boolean(d.lock),styles:d.styles,
+          onPressedMoveStart:()=>{snapshotDrawings();return false;},
+          onPressedMoveEnd:()=>{refreshUserDrawings();return false;},
         });
       }
-      if (showMessage) setMessage(`${rows.length || 0} dibujo(s) restaurados.`);
-    } catch {
-      if (showMessage) setMessage("No pude restaurar los dibujos.");
-    }
+      setUserDrawings(readUserDrawings());setDrawingRevision(x=>x+1);
+      saveDrawingRows(readUserDrawings());
+    }catch{setMessage("No se pudo restaurar uno de los objetos.");}
+  }
+  function saveDrawings(){refreshUserDrawings(true);}
+  function restoreDrawings(showMessage=true){
+    try{
+      const saved=JSON.parse(window.localStorage.getItem(drawingKey())||"[]");
+      renderDrawingSnapshot(Array.isArray(saved)?saved:[]);
+      if(showMessage)setMessage("Se restauraron los dibujos de "+symbol+" "+interval+".");
+    }catch{if(showMessage)setMessage("No fue posible recuperar los dibujos.");}
+  }
+  function clearDrawings(){
+    snapshotDrawings();renderDrawingSnapshot([]);
+    setSelectedDrawing("");setMessage("Dibujos borrados. Puedes deshacer.");
+  }
+  function changeDrawing(id:string,operation:"style"|"lock"|"clone"|"delete",color="#22d3ee",width=2){
+    const rows=readUserDrawings(),index=rows.findIndex(d=>d.id===id);
+    if(index<0)return;
+    snapshotDrawings();
+    const row=rows[index];
+    if(operation==="delete")rows.splice(index,1);
+    if(operation==="lock")rows[index]={...row,lock:!row.lock};
+    if(operation==="style")rows[index]={...row,styles:{
+      ...row.styles,line:{...row.styles?.line,color,size:width},
+    }};
+    if(operation==="clone")rows.push({...row,id:"clone-"+Date.now(),lock:false,
+      points:row.points.map(p=>({...p,timestamp:p.timestamp+intervalMilliseconds(interval)}))});
+    renderDrawingSnapshot(rows);
+    if(operation==="delete")setSelectedDrawing("");
+    if(operation==="clone")setSelectedDrawing(rows[rows.length-1].id);
+  }
+  function undoDrawingAction(){
+    const previous=undoDrawings.current.pop();if(!previous)return;
+    redoDrawings.current.push(readUserDrawings());
+    renderDrawingSnapshot(previous);
+  }
+  function redoDrawingAction(){
+    const next=redoDrawings.current.pop();if(!next)return;
+    undoDrawings.current.push(readUserDrawings());
+    renderDrawingSnapshot(next);
   }
 
-  function clearDrawings() {
-    try { chartRef.current?.removeOverlay({ groupId: "practice-user" }); } catch {}
-    window.localStorage.removeItem(drawingKey());
-    setMessage("Dibujos borrados para esta moneda y temporalidad.");
+  const sizedPlan = useMemo(() => {
+    const plan=buildPlanForSide(form.side);
+    if(!plan||!summary)return null;
+    return sizePaperPosition({
+      equity:summary.equity,availableMargin:summary.available_margin,
+      riskPct:Number(riskPercent),leverage:Number(form.leverage),entry:plan.entry,
+      stop:plan.stop,target:plan.tp1,
+    });
+  },[form.side,form.orderType,form.limitPrice,form.stop,form.tp1,form.leverage,
+    showTpSl,livePrice,riskPercent,summary?.equity,summary?.available_margin]);
+
+  function applySizedPlan(){
+    const plan=buildPlanForSide(form.side);
+    if(!sizedPlan||!plan){setMessage("Completa la entrada, SL y TP, y espera a que cargue el saldo demo.");return;}
+    setShowTpSl(true);
+    setMarginPct(0);
+    setForm(x=>({...x,margin:String(Math.floor(sizedPlan.margin*100)/100),
+      stop:String(Number(plan.stop.toPrecision(10))),
+      tp1:String(Number(plan.tp1.toPrecision(10))),tp2:"",tp3:""}));
+    setMessage(sizedPlan.capped
+      ?"Tamaño limitado por el margen disponible; el riesgo real estimado es "+sizedPlan.riskPctActual.toFixed(2)+"%."
+      :"Margen ficticio calculado para un riesgo estimado de "+sizedPlan.riskPctActual.toFixed(2)+"%, incluidos costes.");
   }
+
+  // Preview matches the form but creates no backend order.
+  useEffect(()=>{
+    const chart=chartRef.current;
+    if(!chart||!chartReady)return;
+    if(!showTpSl||!form.stop||!form.tp1||!barsRef.current.length){
+      previewDrawRef.current={key:"",at:0};
+      try{chart.removeOverlay({groupId:"order-plan"});}catch{}
+      return;
+    }
+    const plan=buildPlanForSide(form.side);
+    if(!plan){try{chart.removeOverlay({groupId:"order-plan"});}catch{}return;}
+    const key=[symbol,interval,form.side,form.stop,form.tp1,form.orderType,form.limitPrice].join("|");
+    if(previewDrawRef.current.key===key && Date.now()-previewDrawRef.current.at<2_000)return;
+    previewDrawRef.current={key,at:Date.now()};
+    try{chart.removeOverlay({groupId:"order-plan"});}catch{}
+    const lastTs=Number(barsRef.current.at(-1)?.timestamp||Date.now());
+    const step=intervalMilliseconds(interval);
+    try{
+      chart.createOverlay({name:form.side==="LONG"?"EXPLODEX_LONG_POSITION":"EXPLODEX_SHORT_POSITION",
+        groupId:"order-plan",lock:false,zLevel:12,points:[
+          {timestamp:lastTs-3*step,value:plan.entry},
+          {timestamp:lastTs-3*step,value:plan.stop},
+          {timestamp:lastTs+12*step,value:plan.tp1},
+        ],
+        onPressedMoveEnd:(event:any)=>{
+          syncPositionDrawing(form.side==="LONG"?"EXPLODEX_LONG_POSITION":"EXPLODEX_SHORT_POSITION",event?.overlay?.points||[]);
+          return false;
+        },
+      });
+    }catch{}
+  },[chartReady,form.side,form.stop,form.tp1,form.orderType,form.limitPrice,livePrice,interval,symbol,showTpSl]);
 
   const riskPreview = useMemo(() => {
     const margin = Number(form.margin || 0);
@@ -1683,15 +1841,41 @@ export default function PracticeTradingTerminal() {
     };
   }
 
-  async function openTrade(sideOverride?: Side) {
+  function openTrade(sideOverride?:Side) {
+    if(busy||!sid)return;
+    const side=sideOverride??form.side;
+    const plan=buildPlanForSide(side);
+    const margin=Number(form.margin),lev=Number(form.leverage);
+    if(!plan){setMessage("Primero indica un SL y un TP válidos o déjalos ambos vacíos para un plan de práctica automático.");return;}
+    if(!(margin>0&&lev>=1&&lev<=20&&margin<=(summary?.available_margin??0))){
+      setMessage("Revisa margen y apalancamiento: el margen no debe superar el saldo ficticio disponible.");return;
+    }
+    const qty=margin*lev/plan.entry;
+    const grossGain=Math.abs(plan.tp1-plan.entry)*qty;
+    const grossRisk=Math.abs(plan.stop-plan.entry)*qty;
+    const netGain=grossGain-(plan.entry+plan.tp1)*qty*.0005-plan.entry*qty*.0004;
+    const netLoss=-grossRisk-(plan.entry+plan.stop)*qty*.0005-plan.entry*qty*.0004;
+    confirmEntryRef.current=plan.entry;
+    setDraftPlan({side,entry:plan.entry,stop:plan.stop,target:plan.tp1,qty,
+      netGain,netLoss,roi:margin>0?netGain/margin*100:0,
+      rr:netLoss<0?netGain/-netLoss:0});
+    setConfirmSide(side);
+  }
+
+  async function executeOpenTrade(sideOverride:Side) {
     if (!BASE_URL || !sid) return;
-    const side = sideOverride ?? form.side;
+    const side = sideOverride;
     const plan = buildPlanForSide(side);
     if (!plan) {
       setMessage(livePrice > 0 ? "Revisa el SL y TP: el SL debe quedar del lado opuesto al TP respecto a la entrada. Completa ambos campos o vacíalos para un plan demo automático." : "Todavía no hay precio de mercado para abrir la práctica.");
       return;
     }
 
+    if (form.orderType==="MARKET" && confirmEntryRef.current>0 &&
+      Math.abs(plan.entry-confirmEntryRef.current)/confirmEntryRef.current>.003){
+      setConfirmSide(null);setDraftPlan(null);
+      setMessage("El precio de mercado se movió más de 0.3 % desde la vista previa. Abre una nueva confirmación.");return;
+    }
     setForm(x => ({
       ...x,
       side,
@@ -1733,6 +1917,7 @@ export default function PracticeTradingTerminal() {
           : "";
         setMessage(`Demo ${payload.side} abierta a ${fmt(payload.entry_price)}${plan.auto ? " · SL/TP automático aplicado." : ""}${warning}`);
       }
+      setConfirmSide(null);setDraftPlan(null);
       await syncPractice();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo abrir la operación demo.");
@@ -2055,6 +2240,7 @@ export default function PracticeTradingTerminal() {
           <DeskTool icon={<Activity size={16}/>} label="HCH / neckline" onClick={() => draw("EXPLODEX_HCH")}/>
           <DeskTool icon={<Brush size={16}/>} label="Dibujo libre" onClick={() => draw("brush")}/>
           <DeskSeparator/>
+          <DeskTool icon={<Layers3 size={16}/>} label="Administrar dibujos" onClick={()=>{setUserDrawings(readUserDrawings());setShowDrawingManager(x=>!x);}} active={showDrawingManager}/>
           <DeskTool icon={<Save size={16}/>} label="Guardar dibujos" onClick={saveDrawings}/>
           <DeskTool icon={<RefreshCcw size={16}/>} label="Cargar dibujos" onClick={() => restoreDrawings(true)}/>
           <DeskTool icon={<Eraser size={16}/>} label="Borrar dibujos" onClick={clearDrawings} danger/>
@@ -2071,6 +2257,12 @@ export default function PracticeTradingTerminal() {
               className="shrink-0 rounded-lg border border-violet-400/30 bg-violet-400/[.09] px-2 py-1 text-[9px] font-black text-violet-100 disabled:opacity-40">
               {askingAi?"Consultando…":"🤖 IA proyectar"}
             </button>
+            <button onClick={()=>setShowFrames(v=>!v)}
+              className={"shrink-0 rounded-lg border px-2 py-1 text-[9px] font-black "+(showFrames?"border-cyan-400/40 text-cyan-200":"border-slate-700 text-slate-300")}>15m / 1h / 4h</button>
+            <button onClick={()=>setShowScanner(v=>!v)}
+              className={"shrink-0 rounded-lg border px-2 py-1 text-[9px] font-black "+(showScanner?"border-cyan-400/40 text-cyan-200":"border-slate-700 text-slate-300")}>Escáner</button>
+            <button onClick={()=>setShowAlerts(v=>!v)}
+              className={"shrink-0 rounded-lg border px-2 py-1 text-[9px] font-black "+(showAlerts?"border-amber-400/40 text-amber-200":"border-slate-700 text-slate-300")}>Alertas</button>
             <button onClick={()=>setShowAnalysisPanel(v=>!v)}
               className="shrink-0 rounded-lg border border-slate-700 px-2 py-1 text-[9px] font-black text-slate-300">
               {showAnalysisPanel?"Ocultar panel":"Ver análisis"}
@@ -2124,6 +2316,30 @@ export default function PracticeTradingTerminal() {
               <span className="hidden rounded-md border border-slate-800 px-2 py-1 text-slate-600 lg:inline">Rueda = zoom · arrastra = mover</span>
             </div>
           </div>
+
+          {showDrawingManager && <PracticeDrawingManager drawings={userDrawings}
+            selected={selectedDrawing} onSelect={setSelectedDrawing}
+            onStyle={(id,color,width)=>changeDrawing(id,"style",color,width)}
+            onLock={id=>changeDrawing(id,"lock")}
+            onClone={id=>changeDrawing(id,"clone")}
+            onDelete={id=>changeDrawing(id,"delete")}
+            onUndo={undoDrawingAction} onRedo={redoDrawingAction}
+            onSave={saveDrawings} onClose={()=>setShowDrawingManager(false)}
+            canUndo={drawingRevision>=0&&undoDrawings.current.length>0}
+            canRedo={drawingRevision>=0&&redoDrawings.current.length>0}/>}
+
+          {showScanner&&<PracticeScanner symbol={symbol}
+            onSelect={s=>{setSymbol(s);setSymbolInput(s);}}
+            onClose={()=>setShowScanner(false)}/>}
+
+          <div className={showAlerts?"":"hidden"}>
+            <PracticePriceAlerts symbol={symbol} price={livePrice}
+              onSelect={s=>{setSymbol(s);setSymbolInput(s);}}
+              onClose={()=>setShowAlerts(false)}/>
+          </div>
+
+          {showFrames&&<PracticeMultiTimeframes symbol={symbol} active={interval}
+            onSelect={setIntervalValue} onClose={()=>setShowFrames(false)}/>}
 
           {autoDetect && autoRead?.pattern &&
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-400/15 bg-violet-400/[.035] px-3 py-1.5 text-[9px] text-violet-200">
@@ -2315,6 +2531,22 @@ export default function PracticeTradingTerminal() {
                 </button>
               </div>
 
+              <div className="rounded-xl border border-violet-400/20 bg-violet-400/[.035] p-3">
+                <div className="mb-2 text-[10px] font-black text-violet-200">Tamaño según tu riesgo</div>
+                <div className="flex gap-2">
+                  <label className="flex-1 text-[9px] text-slate-400">Riesgo sobre equity (%)
+                    <input type="number" min="0.1" max="10" step="0.1" value={riskPercent} onChange={e=>setRiskPercent(e.target.value)}
+                      className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 font-mono text-xs text-white"/>
+                  </label>
+                  <button onClick={applySizedPlan} disabled={!sizedPlan}
+                    className="self-end rounded border border-violet-400/30 px-3 py-2 text-[9px] font-bold text-violet-100 disabled:opacity-30">Aplicar tamaño</button>
+                </div>
+                {sizedPlan&&<p className="mt-2 text-[9px] leading-4 text-slate-400">
+                  Margen {money(sizedPlan.margin)} · riesgo {money(sizedPlan.riskUsdt)} ({sizedPlan.riskPctActual.toFixed(2)} %) · R:R neto 1:{sizedPlan.rr.toFixed(2)}
+                  {sizedPlan.capped?" · limitado por saldo disponible":""}
+                </p>}
+              </div>
+
               <div className="grid grid-cols-2 gap-2 text-[9px]">
                 <div className="rounded-lg border border-slate-800 px-2 py-2">
                   <span className="text-slate-600">Coste</span>
@@ -2453,7 +2685,7 @@ export default function PracticeTradingTerminal() {
             <div className="overflow-x-auto">
               <table className="w-full min-w-[920px] text-[10px]">
                 <thead className="text-[8px] font-black uppercase tracking-[.1em] text-slate-600">
-                  <tr><th className="px-2 py-2 text-left">Par</th><th>Setup</th><th>Lado</th><th>Entrada</th><th>Salida</th><th>PnL</th><th>R</th><th>Motivo</th></tr>
+                  <tr><th className="px-2 py-2 text-left">Par</th><th>Setup</th><th>Lado</th><th>Entrada</th><th>Salida</th><th>PnL</th><th>R</th><th>Motivo</th><th>Revisión</th></tr>
                 </thead>
                 <tbody>
                   {history.slice(0,20).map((row) => (
@@ -2466,17 +2698,48 @@ export default function PracticeTradingTerminal() {
                       <td className={Number(row.net_pnl) >= 0 ? "text-emerald-300" : "text-rose-300"}>{money(row.net_pnl)}</td>
                       <td>{row.r_multiple == null ? "—" : Number(row.r_multiple).toFixed(2)+"R"}</td>
                       <td className="text-slate-600">{row.close_reason}</td>
+                      <td><button onClick={()=>{setReviewTrade(row);setReviewAi(null);}} className="rounded border border-violet-400/25 px-2 py-1 text-[9px] font-bold text-violet-200">Revisar</button></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
               {!history.length && <EmptyDock text="Aún no hay operaciones cerradas."/>}
+              {reviewTrade&&<PracticeTradeCoach trade={reviewTrade} history={history}
+                onClose={()=>{setReviewTrade(null);setReviewAi(null);}}
+                onAi={()=>void askAiDirection("review",undefined,reviewTrade)}
+                review={reviewAi} busy={askingAi}/>}
             </div>
           )}
         </div>
       </section>
 
       {replaySnapshot && <PracticeReplayLab candles={replaySnapshot} symbol={symbol} interval={interval} sessionId={sid} onClose={() => setReplaySnapshot(null)}/>}
+
+      {confirmSide&&draftPlan&&<div className="fixed inset-0 z-[110] grid place-items-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-label="Confirmar operación PAPER">
+        <div className="w-full max-w-[520px] rounded-2xl border border-slate-700 bg-[#0b1522] p-4 shadow-2xl">
+          <div className="flex items-center justify-between gap-2">
+            <b className="text-sm text-white">Confirmar {confirmSide} · {symbol}</b>
+            <button onClick={()=>{setConfirmSide(null);setDraftPlan(null);}} aria-label="Descartar plan" className="text-slate-500"><X size={17}/></button>
+          </div>
+          <p className="mt-1 text-[10px] text-slate-400">Vista previa ficticia. No se enviará nada al mercado real.</p>
+          <div className="mt-3 overflow-hidden rounded-lg border border-slate-800">
+            <div className={"p-3 "+(draftPlan.side==="LONG"?"bg-emerald-500/15":"bg-rose-500/15")}>
+              <div className="flex justify-between text-xs font-bold text-emerald-200"><span>TP · {fmt(draftPlan.target)}</span><span>{money(draftPlan.netGain)} · {draftPlan.roi.toFixed(2)}% ROI</span></div>
+            </div>
+            <div className="flex justify-between bg-slate-950 px-3 py-2 text-[11px] text-slate-200"><span>Entrada {fmt(draftPlan.entry)}</span><span>{form.leverage}x · {money(Number(form.margin))} de margen</span></div>
+            <div className="flex justify-between bg-rose-500/15 p-3 text-xs font-bold text-rose-200"><span>SL · {fmt(draftPlan.stop)}</span><span>{money(draftPlan.netLoss)}</span></div>
+          </div>
+          <p className="mt-2 text-[10px] text-slate-500">Relación neta 1:{Math.max(0,draftPlan.rr).toFixed(2)} · se incluyen comisiones estimadas y margen para deslizamiento, pero no funding.</p>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button disabled={busy} onClick={()=>void executeOpenTrade(confirmSide)}
+              className={"rounded-xl px-3 py-3 text-xs font-black disabled:opacity-40 "+(confirmSide==="LONG"?"bg-emerald-400 text-slate-950":"bg-rose-500 text-white")}>
+              {busy?"Enviando práctica…":"Confirmar "+confirmSide+" PAPER"}
+            </button>
+            <button onClick={()=>{setConfirmSide(null);setDraftPlan(null);}} disabled={busy}
+              className="rounded-xl border border-slate-700 px-3 py-3 text-xs font-bold text-slate-300">Descartar</button>
+          </div>
+        </div>
+      </div>}
 
       {message && (
         <div className="fixed bottom-5 left-1/2 z-[90] flex max-w-[90vw] -translate-x-1/2 items-center gap-2 rounded-xl border border-cyan-500/30 bg-slate-950/95 px-4 py-3 text-xs font-bold text-cyan-100 shadow-2xl">
