@@ -477,7 +477,10 @@ export default function PracticeTradingTerminal() {
   const [aiDirection, setAiDirection] = useState<AiDirectionResult | null>(null);
   const [analyzingAll, setAnalyzingAll] = useState(false);
   const [askingAi, setAskingAi] = useState(false);
-  const aiCacheRef = useRef<{ symbol: string; interval: Interval; at: number; price: number; result: AiDirectionResult } | null>(null);
+  const aiCacheRef = useRef<{ symbol: string; interval: Interval; context: string; at: number; price: number; result: AiDirectionResult } | null>(null);
+  const [autoDetect, setAutoDetect] = useState(true);
+  const [autoRead, setAutoRead] = useState<TechnicalRead | null>(null);
+  const lastDetectedBarRef = useRef("");
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [strongMagnet, setStrongMagnet] = useState(true);
   const [showExplain, setShowExplain] = useState(false);
@@ -1157,11 +1160,11 @@ export default function PracticeTradingTerminal() {
     }
   }
 
-  function drawPrecisionPattern(read: TechnicalRead | null) {
+  function drawPrecisionPattern(read: TechnicalRead | null, quiet = false) {
     const chart = chartRef.current;
     const pattern = read?.pattern;
     if (!chart || !pattern) return;
-    try { chart.removeOverlay({ groupId: "pattern-engine" }); } catch {}
+    try { chart.removeOverlay({ groupId: (quiet ? "pattern-auto" : "pattern-engine") }); } catch {}
     const bars = barsRef.current;
     const startTs = Number(bars[Math.max(0, bars.length - 100)]?.timestamp || pattern.overlays[0]?.points[0]?.timestamp || Date.now());
     const endTs = Number(bars.at(-1)?.timestamp || Date.now());
@@ -1181,7 +1184,7 @@ export default function PracticeTradingTerminal() {
         try {
           chart.createOverlay({
             name: "segment",
-            groupId: "pattern-engine",
+            groupId: (quiet ? "pattern-auto" : "pattern-engine"),
             lock: true,
             points: [points[i], points[i + 1]],
             styles: { line: { color: colorFor(guide.label), size: 2, style: guide.kind === "horizontal" ? "dashed" : "solid" } },
@@ -1189,9 +1192,35 @@ export default function PracticeTradingTerminal() {
         } catch {}
       }
     }
-    setMessage(`${pattern.name} dibujado automáticamente con pivotes 5/5. Revisa que los swings coincidan visualmente antes de usar el plan.`);
+    if (!quiet) setMessage(`${pattern.name} dibujado con pivotes 5/5. Revisa los swings antes de usar el plan.`);
   }
 
+
+  // Free geometric detection on CLOSED candles only; no AI request or database write.
+  useEffect(() => {
+    if (!chartReady || !autoDetect || barsRef.current.length < 65) return;
+    const rows = barsRef.current;
+    const lastClosed = Number(rows.at(-2)?.timestamp || 0);
+    const signature = symbol + ":" + interval + ":" + lastClosed;
+    if (!lastClosed || signature === lastDetectedBarRef.current) return;
+    lastDetectedBarRef.current = signature;
+    const read = analyzeTechnical(rows, interval);
+    setAutoRead(read);
+    if (read?.pattern) drawPrecisionPattern(read, true);
+    else {
+      try { chartRef.current?.removeOverlay({groupId:"pattern-auto"}); } catch {}
+    }
+  }, [marketInsight, chartReady, autoDetect, symbol, interval]);
+
+  useEffect(() => {
+    setPrecisionScan(null);
+    setAiDirection(null);
+    setAutoRead(null);
+    lastDetectedBarRef.current = "";
+    try { chartRef.current?.removeOverlay({groupId:"pattern-auto"}); } catch {}
+    try { chartRef.current?.removeOverlay({groupId:"ai-direction"}); } catch {}
+    try { chartRef.current?.removeOverlay({groupId:"ai-measure"}); } catch {}
+  }, [symbol, interval]);
 
   function intervalMilliseconds(value: Interval) {
     if (value.endsWith("d")) return Number(value.slice(0, -1)) * 86_400_000;
