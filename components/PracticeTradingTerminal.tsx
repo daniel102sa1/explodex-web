@@ -5,6 +5,7 @@ import { analyzeTechnical, INDICATOR_HELP, type TechnicalRead, type CandleBar } 
 import PracticeStatsLab from "@/components/PracticeStatsLab";
 import PracticeReplayLab from "@/components/PracticeReplayLab";
 import PracticeFlowPanel from "@/components/PracticeFlowPanel";
+import PracticeSymbolSearch from "@/components/PracticeSymbolSearch";
 import {
   Activity,
   BarChart3,
@@ -1899,26 +1900,9 @@ export default function PracticeTradingTerminal() {
     <div className="overflow-hidden rounded-2xl border border-slate-800/80 bg-[#050b14] shadow-2xl shadow-black/30">
       {/* Market header */}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-800/80 bg-[#08111d]/95 px-2.5 py-2">
-        <form
-          className="flex min-w-[220px] flex-1 items-center gap-1.5 lg:max-w-[360px]"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const next = normalizeSymbol(symbolInput);
-            setSymbolInput(next);
-            setSymbol(next);
-          }}
-        >
-          <label className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-slate-700/70 bg-[#030812] px-3 py-2">
-            <Search size={14} className="shrink-0 text-slate-500"/>
-            <input
-              value={symbolInput}
-              onChange={(e) => setSymbolInput(e.target.value)}
-              className="min-w-0 flex-1 bg-transparent text-xs font-black uppercase text-white outline-none"
-              placeholder="BTCUSDT"
-            />
-          </label>
-          <button className="rounded-lg bg-cyan-400 px-3 py-2 text-[10px] font-black text-slate-950 hover:bg-cyan-300">IR</button>
-        </form>
+        <PracticeSymbolSearch value={symbolInput} selected={symbol}
+          onInput={setSymbolInput} onSelect={(pair) => { setSymbol(pair); setSymbolInput(pair); }}/>
+
 
         <div className="hidden items-center gap-1 overflow-x-auto xl:flex">
           {QUICK_SYMBOLS.map((pair) => (
