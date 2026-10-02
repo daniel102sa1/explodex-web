@@ -2189,6 +2189,7 @@ export default function PracticeTradingTerminal() {
           <DeskTool icon={<Activity size={16}/>} label="HCH / neckline" onClick={() => draw("EXPLODEX_HCH")}/>
           <DeskTool icon={<Brush size={16}/>} label="Dibujo libre" onClick={() => draw("brush")}/>
           <DeskSeparator/>
+          <DeskTool icon={<Layers3 size={16}/>} label="Administrar dibujos" onClick={()=>{setUserDrawings(readUserDrawings());setShowDrawingManager(x=>!x);}} active={showDrawingManager}/>
           <DeskTool icon={<Save size={16}/>} label="Guardar dibujos" onClick={saveDrawings}/>
           <DeskTool icon={<RefreshCcw size={16}/>} label="Cargar dibujos" onClick={() => restoreDrawings(true)}/>
           <DeskTool icon={<Eraser size={16}/>} label="Borrar dibujos" onClick={clearDrawings} danger/>
@@ -2205,6 +2206,12 @@ export default function PracticeTradingTerminal() {
               className="shrink-0 rounded-lg border border-violet-400/30 bg-violet-400/[.09] px-2 py-1 text-[9px] font-black text-violet-100 disabled:opacity-40">
               {askingAi?"Consultando…":"🤖 IA proyectar"}
             </button>
+            <button onClick={()=>setShowFrames(v=>!v)}
+              className={"shrink-0 rounded-lg border px-2 py-1 text-[9px] font-black "+(showFrames?"border-cyan-400/40 text-cyan-200":"border-slate-700 text-slate-300")}>15m / 1h / 4h</button>
+            <button onClick={()=>setShowScanner(v=>!v)}
+              className={"shrink-0 rounded-lg border px-2 py-1 text-[9px] font-black "+(showScanner?"border-cyan-400/40 text-cyan-200":"border-slate-700 text-slate-300")}>Escáner</button>
+            <button onClick={()=>setShowAlerts(v=>!v)}
+              className={"shrink-0 rounded-lg border px-2 py-1 text-[9px] font-black "+(showAlerts?"border-amber-400/40 text-amber-200":"border-slate-700 text-slate-300")}>Alertas</button>
             <button onClick={()=>setShowAnalysisPanel(v=>!v)}
               className="shrink-0 rounded-lg border border-slate-700 px-2 py-1 text-[9px] font-black text-slate-300">
               {showAnalysisPanel?"Ocultar panel":"Ver análisis"}
@@ -2258,6 +2265,30 @@ export default function PracticeTradingTerminal() {
               <span className="hidden rounded-md border border-slate-800 px-2 py-1 text-slate-600 lg:inline">Rueda = zoom · arrastra = mover</span>
             </div>
           </div>
+
+          {showDrawingManager && <PracticeDrawingManager drawings={userDrawings}
+            selected={selectedDrawing} onSelect={setSelectedDrawing}
+            onStyle={(id,color,width)=>changeDrawing(id,"style",color,width)}
+            onLock={id=>changeDrawing(id,"lock")}
+            onClone={id=>changeDrawing(id,"clone")}
+            onDelete={id=>changeDrawing(id,"delete")}
+            onUndo={undoDrawingAction} onRedo={redoDrawingAction}
+            onSave={saveDrawings} onClose={()=>setShowDrawingManager(false)}
+            canUndo={drawingRevision>=0&&undoDrawings.current.length>0}
+            canRedo={drawingRevision>=0&&redoDrawings.current.length>0}/>}
+
+          {showScanner&&<PracticeScanner symbol={symbol}
+            onSelect={s=>{setSymbol(s);setSymbolInput(s);}}
+            onClose={()=>setShowScanner(false)}/>}
+
+          <div className={showAlerts?"":"hidden"}>
+            <PracticePriceAlerts symbol={symbol} price={livePrice}
+              onSelect={s=>{setSymbol(s);setSymbolInput(s);}}
+              onClose={()=>setShowAlerts(false)}/>
+          </div>
+
+          {showFrames&&<PracticeMultiTimeframes symbol={symbol} active={interval}
+            onSelect={setIntervalValue} onClose={()=>setShowFrames(false)}/>}
 
           {autoDetect && autoRead?.pattern &&
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-400/15 bg-violet-400/[.035] px-3 py-1.5 text-[9px] text-violet-200">
