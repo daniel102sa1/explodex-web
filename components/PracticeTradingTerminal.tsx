@@ -1764,13 +1764,17 @@ export default function PracticeTradingTerminal() {
   useEffect(()=>{
     const chart=chartRef.current;
     if(!chart||!chartReady)return;
-    try{chart.removeOverlay({groupId:"order-plan"});}catch{}
-    if(!showTpSl||!form.stop||!form.tp1||!barsRef.current.length)return;
+    if(!showTpSl||!form.stop||!form.tp1||!barsRef.current.length){
+      previewDrawRef.current={key:"",at:0};
+      try{chart.removeOverlay({groupId:"order-plan"});}catch{}
+      return;
+    }
     const plan=buildPlanForSide(form.side);
-    if(!plan)return;
+    if(!plan){try{chart.removeOverlay({groupId:"order-plan"});}catch{}return;}
     const key=[symbol,interval,form.side,form.stop,form.tp1,form.orderType,form.limitPrice].join("|");
     if(previewDrawRef.current.key===key && Date.now()-previewDrawRef.current.at<2_000)return;
     previewDrawRef.current={key,at:Date.now()};
+    try{chart.removeOverlay({groupId:"order-plan"});}catch{}
     const lastTs=Number(barsRef.current.at(-1)?.timestamp||Date.now());
     const step=intervalMilliseconds(interval);
     try{
