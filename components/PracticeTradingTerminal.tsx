@@ -2007,7 +2007,7 @@ export default function PracticeTradingTerminal() {
                 timestamp:Number(row.timestamp),open:Number(row.open),high:Number(row.high),
                 low:Number(row.low),close:Number(row.close),volume:Number(row.volume)
               })));
-            }} className="mr-1 shrink-0 rounded-lg border border-cyan-400/25 bg-cyan-400/[.05] px-2 py-1 text-[9px] font-black text-cyan-200">▶ REPLAY LOCAL</button>
+            }} title="Practicar sin base de datos con hasta 220 velas ya cargadas" className="mr-1 shrink-0 rounded-lg border border-cyan-400/25 bg-cyan-400/[.05] px-2 py-1 text-[9px] font-black text-cyan-200">▶ REPLAY LOCAL</button>
             <span className="mr-1 shrink-0 text-[8px] font-black uppercase tracking-[.15em] text-slate-500">Indicadores</span>
             {(["principal","momentum","riesgo"] as const).map(group => (
               <button key={group} onClick={()=>setIndicatorCategory(group)}
