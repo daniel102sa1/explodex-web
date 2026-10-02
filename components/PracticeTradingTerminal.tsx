@@ -1280,18 +1280,80 @@ export default function PracticeTradingTerminal() {
     );
   }
 
-  async function askAiDirection() {
+  function latestManualDrawing(): {type:string;points:Array<{timestamp:number;value:number}>} | null {
+    const chart = chartRef.current;
+    if (!chart) return null;
+    try {
+      const drawings = chart.getOverlays({groupId:"practice-user"}) ?? [];
+      for (let i = drawings.length-1; i >= 0; i--) {
+        const d = drawings[i];
+        const points = (d.points || []).slice(0,8).map((point:any) => ({
+          timestamp:Number(point.timestamp),value:Number(point.value),
+        })).filter((point:any) => Number.isFinite(point.timestamp) && point.timestamp > 0 &&
+          Number.isFinite(point.value) && point.value > 0);
+        if (points.length >= 2) return {type:String(d.name||"manual").slice(0,40),points};
+      }
+    } catch {}
+    return null;
+  }
+
+  function drawManualMeasurement(
+    sketch:{type:string;points:Array<{timestamp:number;value:number}>},
+    result:AiDirectionResult
+  ) {
+    const chart=chartRef.current;
+    try { chart?.removeOverlay({groupId:"ai-measure"}); } catch {}
+    const high=Math.max(...sketch.points.map(p=>p.value));
+    const low=Math.min(...sketch.points.map(p=>p.value));
+    const height=high-low;
+    const direction=result.direction;
+    if (!(height>0) || (direction!=="LONG"&&direction!=="SHORT")) {
+      setMessage("Dibujo medido. No proyecto un TP porque no hay una dirección suficientemente confirmada.");
+      return;
+    }
+    const breakout=Number(result.breakout_level || result.entry || 0);
+    if (!(breakout>0)) {
+      setMessage("No hay un nivel de ruptura válido para medir un objetivo.");
+      return;
+    }
+    const target=direction==="LONG"?breakout+height:breakout-height;
+    if (!(target>0)) return;
+    const bars=barsRef.current;
+    const lastTs=Number(bars.at(-1)?.timestamp||Date.now());
+    const toTs=lastTs+intervalMilliseconds(interval)*18;
+    const color=direction==="LONG"?"#a78bfa":"#f0abfc";
+    try {
+      chart?.createOverlay({name:"segment",groupId:"ai-measure",lock:true,
+        points:[{timestamp:lastTs,value:breakout},{timestamp:toTs,value:target}],
+        styles:{line:{color,size:2,style:"dashed"}}});
+      chart?.createOverlay({name:"segment",groupId:"ai-measure",lock:true,
+        points:[{timestamp:lastTs,value:target},{timestamp:toTs,value:target}],
+        styles:{line:{color,size:1.4,style:"dashed"}}});
+    } catch {}
+    setMessage(`Altura geométrica ${fmt(height)}; ruptura ${fmt(breakout)}; objetivo medido ${fmt(target)}. Es una proyección educativa que requiere validar la figura, no un precio garantizado.`);
+  }
+
+  async function askAiDirection(mode:"market"|"drawing"|"position"="market", position?:PracticePosition) {
     if (!BASE_URL || !sid) {
       setMessage("Espera a que la sesión demo se conecte.");
       return;
     }
+    const manualDrawing = mode === "drawing" ? latestManualDrawing() : null;
+    if (mode === "drawing" && !manualDrawing) {
+      setMessage("Primero dibuja una figura o dos pivotes en el gráfico y después pulsa IA · MEDIR DIBUJO.");
+      return;
+    }
+    const activePosition = position ?? summary?.open_positions?.find(p=>p.symbol===symbol);
+    const context = mode+":"+(activePosition ? [activePosition.id,activePosition.entry_price,activePosition.stop_loss,activePosition.take_profit].join("/") : "")+
+      ":"+(manualDrawing ? JSON.stringify(manualDrawing) : "");
     const cached = aiCacheRef.current;
-    if (cached && cached.symbol === symbol && cached.interval === interval &&
+    if (cached && cached.symbol === symbol && cached.interval === interval && cached.context === context &&
         Date.now() - cached.at < 120_000 && cached.price > 0 &&
         Math.abs(livePrice - cached.price) / cached.price < .001) {
       setAiDirection(cached.result);
       drawAiProjection(cached.result);
-      setMessage("Análisis reutilizado durante 2 minutos para no gastar otra consulta de IA.");
+      if (manualDrawing) drawManualMeasurement(manualDrawing,cached.result);
+      else setMessage("Análisis reutilizado durante 2 minutos para no gastar otra consulta de IA.");
       return;
     }
     setAskingAi(true);
@@ -1310,6 +1372,13 @@ export default function PracticeTradingTerminal() {
         session_id: sid,
         symbol,
         interval,
+        manual_drawing: manualDrawing,
+        open_position: activePosition ? {
+          side:activePosition.side,entry_price:activePosition.entry_price,
+          stop_loss:activePosition.stop_loss,take_profit:activePosition.take_profit,
+          mark_price:activePosition.mark_price,quantity:activePosition.quantity,
+          margin_used:activePosition.margin_used,leverage:activePosition.leverage,
+        } : null,
         engine_direction: scan?.direction ?? "ESPERAR",
         current,
         multi_timeframe: (scan?.rows ?? []).map(row => ({
@@ -1344,19 +1413,21 @@ export default function PracticeTradingTerminal() {
       });
       if (!response.ok) throw new Error(`Backend ${response.status}`);
       const result = await response.json() as AiDirectionResult;
-      aiCacheRef.current = {symbol,interval,at:Date.now(),price:livePrice,result};
+      aiCacheRef.current = {symbol,interval,context,at:Date.now(),price:livePrice,result};
       setAiDirection(result);
       drawAiProjection(result);
+      if (manualDrawing) drawManualMeasurement(manualDrawing,result);
 
-      if (result.direction !== "WAIT" && result.stop_loss > 0 && result.tp1 > 0) {
+      if (mode!=="position" && result.direction !== "WAIT" && result.stop_loss > 0 && result.tp1 > 0) {
         const side: Side = result.direction === "LONG" ? "LONG" : "SHORT";
+        setShowTpSl(true);
         setForm(x => ({
           ...x,
           side,
           stop: String(Number(result.stop_loss.toPrecision(10))),
           tp1: String(Number(result.tp1.toPrecision(10))),
-          tp2: String(Number(result.tp2.toPrecision(10))),
-          tp3: String(Number(result.tp3.toPrecision(10))),
+          tp2: "",
+          tp3: "",
           note: `${result.available ? "IA OpenAI" : "Motor técnico"}: ${result.summary}`,
         }));
       }
@@ -1438,19 +1509,19 @@ export default function PracticeTradingTerminal() {
       if (current?.pattern) {
         drawPrecisionPattern(current);
         const p = current.pattern;
-        if (p.direction !== "WAIT" && p.entry && p.stop && p.tp1 && p.tp2 && p.tp3) {
+        if (p.direction !== "WAIT" && p.entry && p.stop && p.tp1) {
           const confirmedSide: Side = p.direction === "LONG" ? "LONG" : "SHORT";
           setForm(x => ({
             ...x,
             side: confirmedSide,
             stop: String(Number(p.stop!.toPrecision(10))),
             tp1: String(Number(p.tp1!.toPrecision(10))),
-            tp2: String(Number(p.tp2!.toPrecision(10))),
-            tp3: String(Number(p.tp3!.toPrecision(10))),
+            tp2: "",
+            tp3: "",
             pattern: p.name.toUpperCase().replaceAll(" ", "_").replaceAll("-", "_").slice(0, 40),
             note: `Patrón confirmado: ${p.name}. ${p.rationale.join(" ")}`,
           }));
-          setMessage(`${p.name} CONFIRMADO ${p.direction}. Dibujé la figura y cargué SL/TP medidos en el ticket demo; revísalos antes de ejecutar.`);
+          setMessage(`${p.name} CONFIRMADO ${p.direction}. Dibujé la figura y cargué un TP y un SL en el ticket demo; revísalos antes de ejecutar.`);
         } else {
           setMessage(`${p.name} EN FORMACIÓN. Dibujé la estructura; aún no cargo una entrada porque falta confirmar la ruptura.`);
         }
@@ -2026,9 +2097,9 @@ export default function PracticeTradingTerminal() {
             askingAi={askingAi}
             showExplain={showExplain}
             onAnalyze={analyzeEverything}
-            onAskAi={askAiDirection}
+            onAskAi={() => void askAiDirection("market")}
             onToggleExplain={() => setShowExplain(v => !v)}
-            onDraw={() => drawPrecisionPattern(precisionScan?.current ?? null)}
+            onDraw={() => drawPrecisionPattern(precisionScan?.current ?? autoRead)}
             onDrawLong={() => draw("EXPLODEX_LONG_POSITION")}
             onDrawShort={() => draw("EXPLODEX_SHORT_POSITION")}
           />
@@ -2436,7 +2507,7 @@ function PrecisionAssistant({
         <button onClick={onAskAi} disabled={askingAi} className="rounded-lg border border-violet-400/30 bg-violet-400/10 px-3 py-2 text-[9px] font-black text-violet-100 disabled:opacity-40">{askingAi ? "PENSANDO…" : "🤖 DIME PARA DÓNDE VA"}</button>
         {aiDirection && <span className={`rounded-lg border px-3 py-2 text-[9px] font-black ${aiDirection.direction === "LONG" ? "border-emerald-400/20 text-emerald-300" : aiDirection.direction === "SHORT" ? "border-rose-400/20 text-rose-300" : "border-amber-400/20 text-amber-300"}`}>{aiDirection.available ? "IA" : "MOTOR"}: {aiDirection.direction}</span>}
       </div>
-      {aiDirection && <div className="mb-2 rounded-xl border border-violet-400/15 bg-violet-400/[.03] px-3 py-2"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1"><div className="text-[8px] font-black uppercase tracking-[.12em] text-violet-300">{aiDirection.available ? "OpenAI bajo demanda" : "Fallback técnico · IA no configurada"}</div><div className="mt-1 text-[10px] leading-4 text-slate-300">{aiDirection.summary}</div></div><div className="grid grid-cols-4 gap-1"><Tiny label="Entrada" value={fmt(aiDirection.entry)}/><Tiny label="SL" value={fmt(aiDirection.stop_loss)} tone="bad"/><Tiny label="TP2" value={fmt(aiDirection.tp2)} tone="good"/><Tiny label="Fuerza" value={aiDirection.evidence_strength}/></div></div></div>}
+      {aiDirection && <div className="mb-2 rounded-xl border border-violet-400/15 bg-violet-400/[.03] px-3 py-2"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1"><div className="text-[8px] font-black uppercase tracking-[.12em] text-violet-300">{aiDirection.available ? "OpenAI bajo demanda" : "Fallback técnico · IA no configurada"}</div><div className="mt-1 text-[10px] leading-4 text-slate-300">{aiDirection.summary}</div></div><div className="grid grid-cols-4 gap-1"><Tiny label="Entrada" value={fmt(aiDirection.entry)}/><Tiny label="SL" value={fmt(aiDirection.stop_loss)} tone="bad"/><Tiny label="TP" value={fmt(aiDirection.tp1)} tone="good"/><Tiny label="Fuerza" value={aiDirection.evidence_strength}/></div></div></div>}
       <div className="grid gap-2 xl:grid-cols-[210px_minmax(0,1fr)_330px]">
         <div className={`rounded-xl border p-3 ${directionTone}`}>
           <div className="text-[8px] font-black uppercase tracking-[.13em] opacity-65">Contexto multi-temporal</div>
