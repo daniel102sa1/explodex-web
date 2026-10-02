@@ -6,6 +6,7 @@ import PracticeStatsLab from "@/components/PracticeStatsLab";
 import PracticeReplayLab from "@/components/PracticeReplayLab";
 import PracticeFlowPanel from "@/components/PracticeFlowPanel";
 import PracticeSymbolSearch from "@/components/PracticeSymbolSearch";
+import PracticePositionEditor from "@/components/PracticePositionEditor";
 import {
   Activity,
   BarChart3,
@@ -476,7 +477,11 @@ export default function PracticeTradingTerminal() {
   const [aiDirection, setAiDirection] = useState<AiDirectionResult | null>(null);
   const [analyzingAll, setAnalyzingAll] = useState(false);
   const [askingAi, setAskingAi] = useState(false);
-  const aiCacheRef = useRef<{ symbol: string; interval: Interval; at: number; price: number; result: AiDirectionResult } | null>(null);
+  const aiCacheRef = useRef<{ symbol: string; interval: Interval; context: string; at: number; price: number; result: AiDirectionResult } | null>(null);
+  const [autoDetect, setAutoDetect] = useState(true);
+  const [autoRead, setAutoRead] = useState<TechnicalRead | null>(null);
+  const [showAnalysisPanel, setShowAnalysisPanel] = useState(false);
+  const lastDetectedBarRef = useRef("");
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [strongMagnet, setStrongMagnet] = useState(true);
   const [showExplain, setShowExplain] = useState(false);
@@ -501,7 +506,8 @@ export default function PracticeTradingTerminal() {
   const [chartReady, setChartReady] = useState(false);
   const [showOrder, setShowOrder] = useState(true);
   const [marginPct, setMarginPct] = useState(0);
-  const [showTpSl, setShowTpSl] = useState(false);
+  const [showTpSl, setShowTpSl] = useState(true);
+  const [editingPosition, setEditingPosition] = useState<number | null>(null);
   const [bottomTab, setBottomTab] = useState<"positions" | "orders" | "history" | "stats">("positions");
   const [form, setForm] = useState<OrderForm>({
     side: "LONG",
@@ -717,23 +723,33 @@ export default function PracticeTradingTerminal() {
       };
       registerPositionOverlay("EXPLODEX_LONG_POSITION", "LONG");
       registerPositionOverlay("EXPLODEX_SHORT_POSITION", "SHORT");
-      // Draggable chart levels for open PAPER trades.
+      // Exchange-style entry, SL and ONE TP, with an inline price and PnL label.
       try {
         kc.registerOverlay({
           name: "EXPLODEX_MANAGED_LEVEL",
-          totalStep: 2,
-          needDefaultYAxisFigure: true,
-          needDefaultPointFigure: false,
+          totalStep: 2, needDefaultYAxisFigure: true, needDefaultPointFigure: true,
           mode: "normal",
           createPointFigures: ({ coordinates, overlay, bounding }: any) => {
             if (!coordinates?.length) return [];
             const level = overlay?.extendData || {};
             const color = level.kind === "SL" ? "#fb7185" : level.kind === "ENTRY" ? "#67e8f9" : "#34d399";
             const y = coordinates[0].y;
-            const width = Number(bounding?.width || 1600);
+            const width = Number(bounding?.width || 1200);
+            const value = Number(overlay?.points?.[0]?.value || 0);
+            const entry = Number(level.entry || value);
+            const quantity = Number(level.quantity || 0);
+            const margin = Number(level.margin || 0);
+            const gross = level.side === "LONG" ? (value-entry)*quantity : (entry-value)*quantity;
+            const fee = (entry+value)*quantity*.0005;
+            const net = gross-fee;
+            const roi = margin > 0 ? net/margin*100 : 0;
+            const label = `${level.label || level.kind} ${fmt(value)}` +
+              (level.kind === "ENTRY" ? "" : ` | ${net>=0?"+":""}${net.toFixed(2)}$ | ${roi>=0?"+":""}${roi.toFixed(2)}%`);
             return [
-              { type: "line", attrs: { coordinates: [{x: 0, y}, {x: width, y}] }, styles: { color, size: 1.5, style: level.kind === "ENTRY" ? "dashed" : "solid" } },
-              { type: "text", attrs: { x: 8, y: y - 5, text: `${level.label || level.kind} · ${Number(overlay?.points?.[0]?.value || 0).toPrecision(7)}` }, styles: { color, size: 10 } },
+              { type: "line", attrs: { coordinates: [{x: 0, y}, {x: width, y}] },
+                styles: { color, size: 1.5, style: "dashed" } },
+              { type: "text", attrs: { x: Math.max(8, width - 300), y: y - 6, text: label },
+                styles: { color, size: 11 } },
             ];
           },
         } as any);
@@ -927,6 +943,7 @@ export default function PracticeTradingTerminal() {
 
           if (bars.length) {
             barsRef.current = bars.slice(-300);
+            levelSignatureRef.current = "";
             setLivePrice(Number(bars[bars.length - 1].close || 0));
             setMarketInsight(analyzeMarket(barsRef.current, requestedInterval));
           }
@@ -1145,11 +1162,11 @@ export default function PracticeTradingTerminal() {
     }
   }
 
-  function drawPrecisionPattern(read: TechnicalRead | null) {
+  function drawPrecisionPattern(read: TechnicalRead | null, quiet = false) {
     const chart = chartRef.current;
     const pattern = read?.pattern;
     if (!chart || !pattern) return;
-    try { chart.removeOverlay({ groupId: "pattern-engine" }); } catch {}
+    try { chart.removeOverlay({ groupId: (quiet ? "pattern-auto" : "pattern-engine") }); } catch {}
     const bars = barsRef.current;
     const startTs = Number(bars[Math.max(0, bars.length - 100)]?.timestamp || pattern.overlays[0]?.points[0]?.timestamp || Date.now());
     const endTs = Number(bars.at(-1)?.timestamp || Date.now());
@@ -1169,7 +1186,7 @@ export default function PracticeTradingTerminal() {
         try {
           chart.createOverlay({
             name: "segment",
-            groupId: "pattern-engine",
+            groupId: (quiet ? "pattern-auto" : "pattern-engine"),
             lock: true,
             points: [points[i], points[i + 1]],
             styles: { line: { color: colorFor(guide.label), size: 2, style: guide.kind === "horizontal" ? "dashed" : "solid" } },
@@ -1177,9 +1194,47 @@ export default function PracticeTradingTerminal() {
         } catch {}
       }
     }
-    setMessage(`${pattern.name} dibujado automáticamente con pivotes 5/5. Revisa que los swings coincidan visualmente antes de usar el plan.`);
+    if (!quiet) setMessage(`${pattern.name} dibujado con pivotes 5/5. Revisa los swings antes de usar el plan.`);
   }
 
+
+  // Free geometric detection on CLOSED candles only; no AI request or database write.
+  useEffect(() => {
+    if (!chartReady || !autoDetect || barsRef.current.length < 65) return;
+    const rows = barsRef.current;
+    const lastClosed = Number(rows.at(-2)?.timestamp || 0);
+    const signature = symbol + ":" + interval + ":" + lastClosed;
+    if (!lastClosed || signature === lastDetectedBarRef.current) return;
+    lastDetectedBarRef.current = signature;
+    const read = analyzeTechnical(rows, interval);
+    setAutoRead(read);
+    if (read?.pattern) drawPrecisionPattern(read, true);
+    else {
+      try { chartRef.current?.removeOverlay({groupId:"pattern-auto"}); } catch {}
+    }
+  }, [marketInsight, chartReady, autoDetect, symbol, interval]);
+
+  useEffect(() => {
+    setForm(x=>({...x,stop:"",tp1:"",tp2:"",tp3:""}));
+  }, [symbol]);
+
+  useEffect(() => {
+    if (!autoDetect) {
+      try { chartRef.current?.removeOverlay({groupId:"pattern-auto"}); } catch {}
+      setAutoRead(null);
+      lastDetectedBarRef.current = "";
+    }
+  }, [autoDetect]);
+
+  useEffect(() => {
+    setPrecisionScan(null);
+    setAiDirection(null);
+    setAutoRead(null);
+    lastDetectedBarRef.current = "";
+    try { chartRef.current?.removeOverlay({groupId:"pattern-auto"}); } catch {}
+    try { chartRef.current?.removeOverlay({groupId:"ai-direction"}); } catch {}
+    try { chartRef.current?.removeOverlay({groupId:"ai-measure"}); } catch {}
+  }, [symbol, interval]);
 
   function intervalMilliseconds(value: Interval) {
     if (value.endsWith("d")) return Number(value.slice(0, -1)) * 86_400_000;
@@ -1216,9 +1271,7 @@ export default function PracticeTradingTerminal() {
     const levels = [
       ["ENTRY", result.entry, "#f8fafc"],
       ["SL", result.stop_loss, "#fb7185"],
-      ["TP1", result.tp1, "#6ee7b7"],
-      ["TP2", result.tp2, "#34d399"],
-      ["TP3", result.tp3, "#22d3ee"],
+      ["TP", result.tp1, "#34d399"],
     ] as Array<[string, number, string]>;
 
     for (const [label, value, color] of levels) {
@@ -1241,18 +1294,81 @@ export default function PracticeTradingTerminal() {
     );
   }
 
-  async function askAiDirection() {
+  function latestManualDrawing(): {type:string;points:Array<{timestamp:number;value:number}>} | null {
+    const chart = chartRef.current;
+    if (!chart) return null;
+    try {
+      const drawings = chart.getOverlays({groupId:"practice-user"}) ?? [];
+      for (let i = drawings.length-1; i >= 0; i--) {
+        const d = drawings[i];
+        const points = (d.points || []).slice(0,8).map((point:any) => ({
+          timestamp:Number(point.timestamp),value:Number(point.value),
+        })).filter((point:any) => Number.isFinite(point.timestamp) && point.timestamp > 0 &&
+          Number.isFinite(point.value) && point.value > 0);
+        if (points.length >= 2) return {type:String(d.name||"manual").slice(0,40),points};
+      }
+    } catch {}
+    return null;
+  }
+
+  function drawManualMeasurement(
+    sketch:{type:string;points:Array<{timestamp:number;value:number}>},
+    result:AiDirectionResult
+  ) {
+    const chart=chartRef.current;
+    try { chart?.removeOverlay({groupId:"ai-measure"}); } catch {}
+    const high=Math.max(...sketch.points.map(p=>p.value));
+    const low=Math.min(...sketch.points.map(p=>p.value));
+    const height=high-low;
+    const direction=result.direction;
+    if (!(height>0) || (direction!=="LONG"&&direction!=="SHORT")) {
+      setMessage("Dibujo medido. No proyecto un TP porque no hay una dirección suficientemente confirmada.");
+      return;
+    }
+    const breakout=Number(result.breakout_level || result.entry || 0);
+    if (!(breakout>0)) {
+      setMessage("No hay un nivel de ruptura válido para medir un objetivo.");
+      return;
+    }
+    const target=direction==="LONG"?breakout+height:breakout-height;
+    if (!(target>0)) return;
+    const bars=barsRef.current;
+    const lastTs=Number(bars.at(-1)?.timestamp||Date.now());
+    const toTs=lastTs+intervalMilliseconds(interval)*18;
+    const color=direction==="LONG"?"#a78bfa":"#f0abfc";
+    try {
+      chart?.createOverlay({name:"segment",groupId:"ai-measure",lock:true,
+        points:[{timestamp:lastTs,value:breakout},{timestamp:toTs,value:target}],
+        styles:{line:{color,size:2,style:"dashed"}}});
+      chart?.createOverlay({name:"segment",groupId:"ai-measure",lock:true,
+        points:[{timestamp:lastTs,value:target},{timestamp:toTs,value:target}],
+        styles:{line:{color,size:1.4,style:"dashed"}}});
+    } catch {}
+    setMessage(`Altura geométrica ${fmt(height)}; ruptura ${fmt(breakout)}; objetivo medido ${fmt(target)}. Es una proyección educativa que requiere validar la figura, no un precio garantizado.`);
+  }
+
+  async function askAiDirection(mode:"market"|"drawing"|"position"="market", position?:PracticePosition) {
+    setShowAnalysisPanel(true);
     if (!BASE_URL || !sid) {
       setMessage("Espera a que la sesión demo se conecte.");
       return;
     }
+    const manualDrawing = mode === "drawing" ? latestManualDrawing() : null;
+    if (mode === "drawing" && !manualDrawing) {
+      setMessage("Primero dibuja una figura o dos pivotes en el gráfico y después pulsa IA · MEDIR DIBUJO.");
+      return;
+    }
+    const activePosition = position ?? summary?.open_positions?.find(p=>p.symbol===symbol);
+    const context = mode+":"+(activePosition ? [activePosition.id,activePosition.entry_price,activePosition.stop_loss,activePosition.take_profit].join("/") : "")+
+      ":"+(manualDrawing ? JSON.stringify(manualDrawing) : "");
     const cached = aiCacheRef.current;
-    if (cached && cached.symbol === symbol && cached.interval === interval &&
+    if (cached && cached.symbol === symbol && cached.interval === interval && cached.context === context &&
         Date.now() - cached.at < 120_000 && cached.price > 0 &&
         Math.abs(livePrice - cached.price) / cached.price < .001) {
       setAiDirection(cached.result);
       drawAiProjection(cached.result);
-      setMessage("Análisis reutilizado durante 2 minutos para no gastar otra consulta de IA.");
+      if (manualDrawing) drawManualMeasurement(manualDrawing,cached.result);
+      else setMessage("Análisis reutilizado durante 2 minutos para no gastar otra consulta de IA.");
       return;
     }
     setAskingAi(true);
@@ -1271,6 +1387,13 @@ export default function PracticeTradingTerminal() {
         session_id: sid,
         symbol,
         interval,
+        manual_drawing: manualDrawing,
+        open_position: activePosition ? {
+          side:activePosition.side,entry_price:activePosition.entry_price,
+          stop_loss:activePosition.stop_loss,take_profit:activePosition.take_profit,
+          mark_price:activePosition.mark_price,quantity:activePosition.quantity,
+          margin_used:activePosition.margin_used,leverage:activePosition.leverage,
+        } : null,
         engine_direction: scan?.direction ?? "ESPERAR",
         current,
         multi_timeframe: (scan?.rows ?? []).map(row => ({
@@ -1305,19 +1428,21 @@ export default function PracticeTradingTerminal() {
       });
       if (!response.ok) throw new Error(`Backend ${response.status}`);
       const result = await response.json() as AiDirectionResult;
-      aiCacheRef.current = {symbol,interval,at:Date.now(),price:livePrice,result};
+      aiCacheRef.current = {symbol,interval,context,at:Date.now(),price:livePrice,result};
       setAiDirection(result);
       drawAiProjection(result);
+      if (manualDrawing) drawManualMeasurement(manualDrawing,result);
 
-      if (result.direction !== "WAIT" && result.stop_loss > 0 && result.tp1 > 0) {
+      if (mode!=="position" && result.direction !== "WAIT" && result.stop_loss > 0 && result.tp1 > 0) {
         const side: Side = result.direction === "LONG" ? "LONG" : "SHORT";
+        setShowTpSl(true);
         setForm(x => ({
           ...x,
           side,
           stop: String(Number(result.stop_loss.toPrecision(10))),
           tp1: String(Number(result.tp1.toPrecision(10))),
-          tp2: String(Number(result.tp2.toPrecision(10))),
-          tp3: String(Number(result.tp3.toPrecision(10))),
+          tp2: "",
+          tp3: "",
           note: `${result.available ? "IA OpenAI" : "Motor técnico"}: ${result.summary}`,
         }));
       }
@@ -1349,6 +1474,7 @@ export default function PracticeTradingTerminal() {
   }
 
   async function analyzeEverything() {
+    setShowAnalysisPanel(true);
     setAnalyzingAll(true);
     setMessage("");
     try {
@@ -1399,19 +1525,19 @@ export default function PracticeTradingTerminal() {
       if (current?.pattern) {
         drawPrecisionPattern(current);
         const p = current.pattern;
-        if (p.direction !== "WAIT" && p.entry && p.stop && p.tp1 && p.tp2 && p.tp3) {
+        if (p.direction !== "WAIT" && p.entry && p.stop && p.tp1) {
           const confirmedSide: Side = p.direction === "LONG" ? "LONG" : "SHORT";
           setForm(x => ({
             ...x,
             side: confirmedSide,
             stop: String(Number(p.stop!.toPrecision(10))),
             tp1: String(Number(p.tp1!.toPrecision(10))),
-            tp2: String(Number(p.tp2!.toPrecision(10))),
-            tp3: String(Number(p.tp3!.toPrecision(10))),
+            tp2: "",
+            tp3: "",
             pattern: p.name.toUpperCase().replaceAll(" ", "_").replaceAll("-", "_").slice(0, 40),
             note: `Patrón confirmado: ${p.name}. ${p.rationale.join(" ")}`,
           }));
-          setMessage(`${p.name} CONFIRMADO ${p.direction}. Dibujé la figura y cargué SL/TP medidos en el ticket demo; revísalos antes de ejecutar.`);
+          setMessage(`${p.name} CONFIRMADO ${p.direction}. Dibujé la figura y cargué un TP y un SL en el ticket demo; revísalos antes de ejecutar.`);
         } else {
           setMessage(`${p.name} EN FORMACIÓN. Dibujé la estructura; aún no cargo una entrada porque falta confirmar la ruptura.`);
         }
@@ -1539,35 +1665,21 @@ export default function PracticeTradingTerminal() {
   function buildPlanForSide(side: Side) {
     const entry = form.orderType === "LIMIT" && Number(form.limitPrice) > 0 ? Number(form.limitPrice) : livePrice;
     if (!(entry > 0)) return null;
-
-    const rawStop = Number(form.stop || 0);
-    const rawTp1 = Number(form.tp1 || 0);
-    const rawTp2 = Number(form.tp2 || 0);
-    const rawTp3 = Number(form.tp3 || 0);
+    const stop = showTpSl ? Number(form.stop || 0) : 0;
+    const target = showTpSl ? Number(form.tp1 || 0) : 0;
+    const supplied = Boolean(stop || target);
     const valid = side === "LONG"
-      ? rawStop > 0 && rawStop < entry && rawTp1 > entry
-      : rawStop > entry && rawTp1 > 0 && rawTp1 < entry;
-
-    if (valid) {
-      return {
-        entry,
-        stop: rawStop,
-        tp1: rawTp1,
-        tp2: rawTp2 > 0 ? rawTp2 : rawTp1,
-        tp3: rawTp3 > 0 ? rawTp3 : (rawTp2 > 0 ? rawTp2 : rawTp1),
-        auto: false,
-      };
-    }
-
-    const stop = side === "LONG" ? entry * .99 : entry * 1.01;
-    const risk = Math.abs(entry - stop);
+      ? stop > 0 && stop < entry && target > entry
+      : stop > entry && target > 0 && target < entry;
+    // Never silently replace an invalid manually entered TP/SL.
+    if (supplied && !valid) return null;
+    if (valid) return {entry,stop,tp1:target,auto:false};
+    const autoStop = side === "LONG" ? entry * .99 : entry * 1.01;
+    const risk = Math.abs(entry - autoStop);
     return {
-      entry,
-      stop,
-      tp1: side === "LONG" ? entry + risk * 1.5 : entry - risk * 1.5,
-      tp2: side === "LONG" ? entry + risk * 2 : entry - risk * 2,
-      tp3: side === "LONG" ? entry + risk * 3 : entry - risk * 3,
-      auto: true,
+      entry,stop:autoStop,
+      tp1:side === "LONG" ? entry + risk * 1.5 : entry - risk * 1.5,
+      auto:true,
     };
   }
 
@@ -1576,7 +1688,7 @@ export default function PracticeTradingTerminal() {
     const side = sideOverride ?? form.side;
     const plan = buildPlanForSide(side);
     if (!plan) {
-      setMessage("Todavía no hay precio de mercado para abrir la práctica.");
+      setMessage(livePrice > 0 ? "Revisa el SL y TP: el SL debe quedar del lado opuesto al TP respecto a la entrada. Completa ambos campos o vacíalos para un plan demo automático." : "Todavía no hay precio de mercado para abrir la práctica.");
       return;
     }
 
@@ -1585,8 +1697,8 @@ export default function PracticeTradingTerminal() {
       side,
       stop: String(Number(plan.stop.toPrecision(10))),
       tp1: String(Number(plan.tp1.toPrecision(10))),
-      tp2: String(Number(plan.tp2.toPrecision(10))),
-      tp3: String(Number(plan.tp3.toPrecision(10))),
+      tp2: "",
+      tp3: "",
     }));
     setBusy(true);
     setMessage("");
@@ -1604,8 +1716,8 @@ export default function PracticeTradingTerminal() {
           leverage: Number(form.leverage),
           stop_loss: plan.stop,
           take_profit: plan.tp1,
-          tp2: plan.tp2,
-          tp3: plan.tp3,
+          tp2: null,
+          tp3: null,
           timeframe: interval,
           pattern: form.pattern,
           note: form.note || null,
@@ -1630,20 +1742,15 @@ export default function PracticeTradingTerminal() {
   }
 
   function setExamplePlan(side: Side = form.side) {
-    if (!(livePrice > 0)) return;
     const entry = form.orderType === "LIMIT" && Number(form.limitPrice) > 0 ? Number(form.limitPrice) : livePrice;
+    if (!(entry > 0)) return;
     const stop = side === "LONG" ? entry * .99 : entry * 1.01;
     const risk = Math.abs(entry - stop);
-    const tp1 = side === "LONG" ? entry + risk * 1.5 : entry - risk * 1.5;
-    const tp2 = side === "LONG" ? entry + risk * 2 : entry - risk * 2;
-    const tp3 = side === "LONG" ? entry + risk * 3 : entry - risk * 3;
+    const tp = side === "LONG" ? entry + risk * 1.5 : entry - risk * 1.5;
+    setShowTpSl(true);
     setForm(x => ({
-      ...x,
-      side,
-      stop: String(Number(stop.toPrecision(10))),
-      tp1: String(Number(tp1.toPrecision(10))),
-      tp2: String(Number(tp2.toPrecision(10))),
-      tp3: String(Number(tp3.toPrecision(10))),
+      ...x,side,stop:String(Number(stop.toPrecision(10))),
+      tp1:String(Number(tp.toPrecision(10))),tp2:"",tp3:"",
     }));
   }
 
@@ -1698,35 +1805,8 @@ export default function PracticeTradingTerminal() {
     }
   }
 
-  async function applyFormLevels(id: number) {
-    if (!BASE_URL || !sid) return;
-    setBusy(true);
-    try {
-      const response = await fetch(`${BASE_URL}/api/v1/practice/${id}/modify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          session_id: sid,
-          stop_loss: form.stop ? Number(form.stop) : null,
-          take_profit: form.tp1 ? Number(form.tp1) : null,
-          tp2: form.tp2 ? Number(form.tp2) : null,
-          tp3: form.tp3 ? Number(form.tp3) : null,
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.detail || "No se pudieron actualizar niveles");
-      setMessage("SL/TP de la posición actualizados desde el formulario.");
-      await syncPractice();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No se pudieron actualizar niveles.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-
   // A level is committed once on mouse release, never on every mouse move.
-  async function commitDraggedLevel(p: PracticePosition, kind: "SL"|"TP1"|"TP2"|"TP3", price: number) {
+  async function commitDraggedLevel(p: PracticePosition, kind: "SL"|"TP", price: number) {
     if (busy || !sid || !Number.isFinite(price) || price <= 0) return;
     const valid = kind === "SL"
       ? (p.side === "LONG" ? price < p.entry_price : price > p.entry_price)
@@ -1742,9 +1822,8 @@ export default function PracticeTradingTerminal() {
     try {
       const levels = {
         stop_loss: kind === "SL" ? price : p.stop_loss,
-        take_profit: kind === "TP1" ? price : p.take_profit,
-        tp2: kind === "TP2" ? price : (p.tp2 ?? p.take_profit),
-        tp3: kind === "TP3" ? price : (p.tp3 ?? p.tp2 ?? p.take_profit),
+        take_profit: kind === "TP" ? price : p.take_profit,
+        single_target: true,
       };
       const response = await fetch(`${BASE_URL}/api/v1/practice/${p.id}/modify`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -1773,11 +1852,9 @@ export default function PracticeTradingTerminal() {
     try { chart.removeOverlay({ groupId: "practice-managed" }); } catch {}
     const timestamp = Number(barsRef.current.at(-1)?.timestamp || Date.now());
     for (const p of positions) {
-      const levels: Array<{kind:"ENTRY"|"SL"|"TP1"|"TP2"|"TP3";price:number}> = [
+      const levels: Array<{kind:"ENTRY"|"SL"|"TP";price:number}> = [
         {kind:"ENTRY",price:p.entry_price}, {kind:"SL",price:p.stop_loss},
-        {kind:"TP1",price:p.take_profit},
-        ...(p.tp2 ? [{kind:"TP2" as const,price:p.tp2}] : []),
-        ...(p.tp3 ? [{kind:"TP3" as const,price:p.tp3}] : []),
+        {kind:"TP",price:p.take_profit},
       ];
       for (const {kind,price} of levels) {
         if (!(Number(price) > 0)) continue;
@@ -1786,7 +1863,7 @@ export default function PracticeTradingTerminal() {
             name: "EXPLODEX_MANAGED_LEVEL", groupId: "practice-managed",
             lock: kind === "ENTRY", zLevel: 10, mode: "normal",
             points: [{timestamp,value:price}],
-            extendData: {kind,label:`${p.side} #${p.id} ${kind}`},
+            extendData: {kind,label:`#${p.id} ${kind}`,side:p.side,entry:p.entry_price,quantity:p.quantity,margin:p.margin_used},
             onRightClick: (event:any) => { event?.preventDefault?.(); return true; },
             onPressedMoveEnd: (event:any) => {
               if (kind === "ENTRY") return true;
@@ -1798,7 +1875,7 @@ export default function PracticeTradingTerminal() {
         } catch {}
       }
     }
-  }, [summary?.open_positions, symbol, interval, chartReady, sid]);
+  }, [summary?.open_positions, symbol, interval, chartReady, sid, marketInsight]);
 
   const roiPlanner = useMemo(() => {
     const entry = form.orderType === "LIMIT" ? Number(form.limitPrice) : livePrice;
@@ -1826,10 +1903,10 @@ export default function PracticeTradingTerminal() {
       ...x,side,
       stop: correctStop ? x.stop : String(Number((entry - delta / 2).toPrecision(10))),
       tp1: String(Number(target.toPrecision(10))),
-      tp2: String(Number((entry + delta * 1.5).toPrecision(10))),
-      tp3: String(Number((entry + delta * 2).toPrecision(10))),
+      tp2: "",
+      tp3: "",
     }));
-    setMessage(`TP1 ${side} para ROI neto estimado ${targetRoi}%: ${fmt(target)}. Revisa SL, comisión y liquidación.`);
+    setMessage(`TP ${side} para ROI neto estimado ${targetRoi}%: ${fmt(target)}. Revisa SL, comisión y liquidación.`);
   }
 
   async function cancelOrder(id: number) {
@@ -1986,6 +2063,18 @@ export default function PracticeTradingTerminal() {
         {/* Chart */}
         <section className="min-w-0 bg-[#050b14]">
           <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-800/80 bg-[#07101a] px-2 py-1.5">
+            <button onClick={()=>void analyzeEverything()} disabled={analyzingAll}
+              className="shrink-0 rounded-lg border border-cyan-400/30 bg-cyan-400/[.08] px-2 py-1 text-[9px] font-black text-cyan-100 disabled:opacity-40">
+              {analyzingAll?"Analizando…":"⚡ Análisis técnico"}
+            </button>
+            <button onClick={()=>void askAiDirection("market")} disabled={askingAi}
+              className="shrink-0 rounded-lg border border-violet-400/30 bg-violet-400/[.09] px-2 py-1 text-[9px] font-black text-violet-100 disabled:opacity-40">
+              {askingAi?"Consultando…":"🤖 IA proyectar"}
+            </button>
+            <button onClick={()=>setShowAnalysisPanel(v=>!v)}
+              className="shrink-0 rounded-lg border border-slate-700 px-2 py-1 text-[9px] font-black text-slate-300">
+              {showAnalysisPanel?"Ocultar panel":"Ver análisis"}
+            </button>
             <button onClick={() => {
               const rows = barsRef.current.slice(-220);
               if (rows.length < 65) { setMessage("Carga al menos 65 velas antes de iniciar Replay."); return; }
@@ -1995,6 +2084,15 @@ export default function PracticeTradingTerminal() {
               })));
             }} title="Practicar sin base de datos con hasta 220 velas ya cargadas" className="mr-1 shrink-0 rounded-lg border border-cyan-400/25 bg-cyan-400/[.05] px-2 py-1 text-[9px] font-black text-cyan-200">▶ REPLAY LOCAL</button>
             <button onClick={() => setShowFlow(v=>!v)} className={"shrink-0 rounded-lg border px-2 py-1 text-[9px] font-black "+(showFlow?"border-cyan-400/30 bg-cyan-400/10 text-cyan-200":"border-slate-700 text-slate-500")}>Flujo / OI</button>
+            <button onClick={()=>{setAutoDetect(v=>!v);lastDetectedBarRef.current="";}}
+              className={"shrink-0 rounded-lg border px-2 py-1 text-[9px] font-black "+(autoDetect?"border-emerald-400/30 bg-emerald-400/10 text-emerald-200":"border-slate-700 text-slate-500")}>
+              Autofiguras {autoDetect?"ON":"OFF"}
+            </button>
+            <button onClick={()=>void askAiDirection("drawing")} disabled={askingAi}
+              title="Selecciona tu último dibujo y pide a la IA interpretarlo y medir el escenario. Usa una consulta de IA, no guarda el dibujo en PostgreSQL."
+              className="shrink-0 rounded-lg border border-violet-400/30 bg-violet-400/10 px-2 py-1 text-[9px] font-black text-violet-200 disabled:opacity-40">
+              {askingAi?"IA…":"🤖 IA medir dibujo"}
+            </button>
             <span className="mr-1 shrink-0 text-[8px] font-black uppercase tracking-[.15em] text-slate-500">Indicadores</span>
             {(["principal","momentum","riesgo"] as const).map(group => (
               <button key={group} onClick={()=>setIndicatorCategory(group)}
@@ -2027,21 +2125,27 @@ export default function PracticeTradingTerminal() {
             </div>
           </div>
 
+          {autoDetect && autoRead?.pattern &&
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-400/15 bg-violet-400/[.035] px-3 py-1.5 text-[9px] text-violet-200">
+              <span>Autofigura · <b>{autoRead.pattern.name}</b> · {autoRead.pattern.status==="FORMING"?"en formación, sin confirmar":autoRead.pattern.direction+" confirmado"} · {autoRead.pattern.direction==="WAIT"?"Sin TP hasta ruptura":"TP posible "+fmt(autoRead.pattern.tp1)}</span>
+              <button onClick={()=>drawPrecisionPattern(autoRead)} className="rounded-md border border-violet-400/25 px-2 py-1 font-bold">Ver trazado</button>
+            </div>}
+
           {activeTool && <div className="flex items-center justify-between gap-2 border-b border-cyan-400/15 bg-cyan-400/[.04] px-3 py-2 text-[10px] text-cyan-100"><span><b>{activeTool}</b> activa · {strongMagnet ? "imán fuerte" : "imán suave"} · marca los puntos directamente sobre las velas</span><button onClick={() => setActiveTool(null)} className="rounded-md border border-cyan-400/20 px-2 py-1 text-[9px] font-black">Cursor</button></div>}
 
-          <PrecisionAssistant
+          {showAnalysisPanel && <PrecisionAssistant
             scan={precisionScan}
             aiDirection={aiDirection}
             analyzing={analyzingAll}
             askingAi={askingAi}
             showExplain={showExplain}
             onAnalyze={analyzeEverything}
-            onAskAi={askAiDirection}
+            onAskAi={() => void askAiDirection("market")}
             onToggleExplain={() => setShowExplain(v => !v)}
-            onDraw={() => drawPrecisionPattern(precisionScan?.current ?? null)}
+            onDraw={() => drawPrecisionPattern(precisionScan?.current ?? autoRead)}
             onDrawLong={() => draw("EXPLODEX_LONG_POSITION")}
             onDrawShort={() => draw("EXPLODEX_SHORT_POSITION")}
-          />
+          />}
 
           {showFlow && <PracticeFlowPanel symbol={symbol}/>}
 
@@ -2062,7 +2166,7 @@ export default function PracticeTradingTerminal() {
             </div>
             <div className="flex gap-3">
               <span>PAPER ONLY</span>
-              <span>SL/TP arrastrables · diario con copia local</span>
+              <span>Un TP y un SL arrastrables · diario local</span>
             </div>
           </div>
         </section>
@@ -2177,21 +2281,19 @@ export default function PracticeTradingTerminal() {
               </div>
 
               <button
-                onClick={()=>setShowTpSl(v=>!v)}
+                onClick={()=>{setShowTpSl(v=>!v);setForm(x=>({...x,stop:"",tp1:"",tp2:"",tp3:""}));}}
                 className="flex w-full items-center justify-between rounded-xl border border-slate-800 bg-[#0d1117] px-3 py-2.5 text-left"
               >
                 <span className="flex items-center gap-2 text-[10px] font-black text-slate-300">
                   <span className={`grid h-4 w-4 place-items-center rounded border ${showTpSl?"border-cyan-400 bg-cyan-400 text-slate-950":"border-slate-600"}`}>{showTpSl?"✓":""}</span>
-                  TP / SL
+                  TP único / SL
                 </span>
-                <span className="text-[8px] text-slate-600">{showTpSl ? "Manual" : "Auto al abrir"}</span>
+                <span className="text-[8px] text-slate-600">{showTpSl ? "Precio editable" : "Plan demo automático"}</span>
               </button>
 
               {showTpSl && <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-800 bg-[#0d1117] p-2">
                 <TradeInput label="Stop Loss" value={form.stop} onChange={(v)=>setForm(x=>({...x,stop:v}))}/>
-                <TradeInput label="TP1" value={form.tp1} onChange={(v)=>setForm(x=>({...x,tp1:v}))}/>
-                <TradeInput label="TP2" value={form.tp2} onChange={(v)=>setForm(x=>({...x,tp2:v}))}/>
-                <TradeInput label="TP3" value={form.tp3} onChange={(v)=>setForm(x=>({...x,tp3:v}))}/>
+                <TradeInput label="Take Profit (1 TP)" value={form.tp1} onChange={(v)=>setForm(x=>({...x,tp1:v,tp2:"",tp3:""}))}/>
                 <button onClick={()=>setExamplePlan("LONG")} className="rounded-lg border border-emerald-400/15 px-2 py-2 text-[8px] font-black text-emerald-300">Plan LONG auto</button>
                 <button onClick={()=>setExamplePlan("SHORT")} className="rounded-lg border border-rose-400/15 px-2 py-2 text-[8px] font-black text-rose-300">Plan SHORT auto</button>
               </div>}
@@ -2294,15 +2396,31 @@ export default function PracticeTradingTerminal() {
                     <Tiny label="Entrada" value={fmt(p.entry_price)}/>
                     <Tiny label="Mark" value={fmt(p.mark_price)}/>
                     <Tiny label="SL" value={fmt(p.stop_loss)} tone="bad"/>
-                    <Tiny label="TP1" value={fmt(p.take_profit)} tone="good"/>
+                    <Tiny label="TP" value={fmt(p.take_profit)} tone="good"/>
                   </div>
+                  {(p.tp2!=null||p.tp3!=null)&&<div className="mt-2 text-[9px] text-amber-300">Esta posición conserva objetivos antiguos: entra a Editar TP/SL y guarda para convertirla a TP único.</div>}
                   <div className="mt-2 grid grid-cols-5 gap-1">
                     <ActionButton label="BE" onClick={() => moveToBreakEven(p.id)} disabled={busy || p.moved_to_be}/>
                     <ActionButton label="25%" onClick={() => partialClose(p.id,.25)} disabled={busy}/>
                     <ActionButton label="50%" onClick={() => partialClose(p.id,.5)} disabled={busy}/>
-                    <ActionButton label="SL/TP" onClick={() => applyFormLevels(p.id)} disabled={busy || !form.stop || !form.tp1}/>
+                    <ActionButton label={editingPosition===p.id?"Ocultar":"Editar TP/SL"} onClick={() => setEditingPosition(id=>id===p.id?null:p.id)} disabled={busy}/>
                     <ActionButton label="Cerrar" onClick={() => closeTrade(p.id)} disabled={busy} danger/>
                   </div>
+                  {editingPosition===p.id && <div className="mt-2">
+                    <button onClick={()=>{
+                      if (p.symbol!==symbol) {
+                        setSymbolInput(p.symbol);setSymbol(p.symbol);
+                        setMessage("Cambié el gráfico a "+p.symbol+". Cuando carguen sus velas vuelve a pulsar IA · ANALIZAR MI POSICIÓN.");
+                      } else void askAiDirection("position",p);
+                    }} disabled={askingAi}
+                      className="w-full rounded-lg border border-violet-400/25 bg-violet-400/[.05] px-3 py-2 text-[9px] font-black text-violet-200 disabled:opacity-40">
+                      {askingAi?"IA analizando…":"🤖 IA · analizar mi posición y sugerir TP"}
+                    </button>
+                    <PracticePositionEditor position={p} sessionId={sid} baseUrl={BASE_URL}
+                    aiHint={p.symbol===symbol?aiDirection:null}
+                    onSaved={async()=>{await loadPractice();setMessage(`Posición #${p.id}: se guardó un único TP y un SL.`);}}
+                    onCancel={()=>setEditingPosition(null)}/>
+                  </div>}
                 </div>
               ))}
               {!summary?.open_positions?.length && <EmptyDock text="No tienes posiciones demo abiertas."/>}
@@ -2320,7 +2438,7 @@ export default function PracticeTradingTerminal() {
                   <div className="mt-2 grid grid-cols-4 gap-1">
                     <Tiny label="LIMIT" value={fmt(o.limit_price)}/>
                     <Tiny label="SL" value={fmt(o.stop_loss)} tone="bad"/>
-                    <Tiny label="TP1" value={fmt(o.take_profit)} tone="good"/>
+                    <Tiny label="TP" value={fmt(o.take_profit)} tone="good"/>
                     <Tiny label="Margen" value={money(o.margin_used)}/>
                   </div>
                 </div>
@@ -2443,7 +2561,7 @@ function PrecisionAssistant({
         <button onClick={onAskAi} disabled={askingAi} className="rounded-lg border border-violet-400/30 bg-violet-400/10 px-3 py-2 text-[9px] font-black text-violet-100 disabled:opacity-40">{askingAi ? "PENSANDO…" : "🤖 DIME PARA DÓNDE VA"}</button>
         {aiDirection && <span className={`rounded-lg border px-3 py-2 text-[9px] font-black ${aiDirection.direction === "LONG" ? "border-emerald-400/20 text-emerald-300" : aiDirection.direction === "SHORT" ? "border-rose-400/20 text-rose-300" : "border-amber-400/20 text-amber-300"}`}>{aiDirection.available ? "IA" : "MOTOR"}: {aiDirection.direction}</span>}
       </div>
-      {aiDirection && <div className="mb-2 rounded-xl border border-violet-400/15 bg-violet-400/[.03] px-3 py-2"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1"><div className="text-[8px] font-black uppercase tracking-[.12em] text-violet-300">{aiDirection.available ? "OpenAI bajo demanda" : "Fallback técnico · IA no configurada"}</div><div className="mt-1 text-[10px] leading-4 text-slate-300">{aiDirection.summary}</div></div><div className="grid grid-cols-4 gap-1"><Tiny label="Entrada" value={fmt(aiDirection.entry)}/><Tiny label="SL" value={fmt(aiDirection.stop_loss)} tone="bad"/><Tiny label="TP2" value={fmt(aiDirection.tp2)} tone="good"/><Tiny label="Fuerza" value={aiDirection.evidence_strength}/></div></div></div>}
+      {aiDirection && <div className="mb-2 rounded-xl border border-violet-400/15 bg-violet-400/[.03] px-3 py-2"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1"><div className="text-[8px] font-black uppercase tracking-[.12em] text-violet-300">{aiDirection.available ? "OpenAI bajo demanda" : "Fallback técnico · IA no configurada"}</div><div className="mt-1 text-[10px] leading-4 text-slate-300">{aiDirection.summary}</div></div><div className="grid grid-cols-4 gap-1"><Tiny label="Entrada" value={fmt(aiDirection.entry)}/><Tiny label="SL" value={fmt(aiDirection.stop_loss)} tone="bad"/><Tiny label="TP" value={fmt(aiDirection.tp1)} tone="good"/><Tiny label="Fuerza" value={aiDirection.evidence_strength}/></div></div></div>}
       <div className="grid gap-2 xl:grid-cols-[210px_minmax(0,1fr)_330px]">
         <div className={`rounded-xl border p-3 ${directionTone}`}>
           <div className="text-[8px] font-black uppercase tracking-[.13em] opacity-65">Contexto multi-temporal</div>
@@ -2491,12 +2609,10 @@ function PrecisionAssistant({
                   La figura todavía no decide dirección. Escenario LONG si confirma por arriba de <b>{fmt(pattern.breakoutLong)}</b>; escenario SHORT si confirma por debajo de <b>{fmt(pattern.breakoutShort)}</b>. No se precarga una entrada antes de la ruptura.
                 </div>
               ) : (
-                <div className="mt-2 grid grid-cols-5 gap-1">
+                <div className="mt-2 grid grid-cols-3 gap-1">
                   <Tiny label="Entrada" value={fmt(pattern.entry)}/>
                   <Tiny label="SL" value={fmt(pattern.stop)} tone="bad"/>
-                  <Tiny label="TP1" value={fmt(pattern.tp1)} tone="good"/>
-                  <Tiny label="TP2 medido" value={fmt(pattern.tp2)} tone="good"/>
-                  <Tiny label="TP3 ext." value={fmt(pattern.tp3)} tone="good"/>
+                  <Tiny label="TP único" value={fmt(pattern.tp1)} tone="good"/>
                 </div>
               )}
               <div className="mt-2 flex flex-wrap gap-1">
