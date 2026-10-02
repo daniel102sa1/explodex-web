@@ -6,9 +6,9 @@ type Side = "LONG" | "SHORT";
 type Position = {
   id:number; symbol:string; side:Side; entry_price:number; stop_loss:number;
   take_profit:number; margin_used:number; quantity:number; tp2?:number|null;
-  tp3?:number|null;
+  tp3?:number|null;mark_price?:number;
 };
-type Hint = { direction:"LONG"|"SHORT"|"WAIT"; tp1:number; stop_loss:number } | null;
+type Hint = { direction:"LONG"|"SHORT"|"WAIT"; tp1:number; stop_loss:number; available:boolean } | null;
 
 function fmt(n:number){return Number.isFinite(n)?n.toLocaleString("en-US",{maximumFractionDigits:n>=100?3:8}):"—";}
 
@@ -59,6 +59,9 @@ export default function PracticePositionEditor({
       Esta posición se creó con varios objetivos. Al guardar, se eliminarán TP2 y TP3
       y el TP indicado cerrará toda la cantidad restante.
     </p>}
+    {position.mark_price!=null && validTP &&
+      (position.side==="LONG"?tp<=position.mark_price:tp>=position.mark_price) &&
+      <p className="mb-2 text-[9px] text-amber-200">El precio actual ya alcanzó o superó el TP indicado. El simulador podría ejecutarlo en la próxima sincronización; revisa el nivel antes de guardar.</p>}
     <div className="grid gap-2 sm:grid-cols-2">
       <label className="block"><span className="mb-1 block text-[9px] font-black text-rose-300">Stop Loss · precio</span>
         <input type="number" step="any" value={stop} onChange={e=>setStop(e.target.value)}
@@ -78,7 +81,7 @@ export default function PracticePositionEditor({
       (position.side==="LONG"?aiHint.tp1>entry:aiHint.tp1<entry)&&
       <button type="button" onClick={()=>setTarget(String(aiHint.tp1))}
         className="mt-2 rounded-md border border-violet-400/30 px-2.5 py-1.5 text-[9px] font-bold text-violet-200">
-        Usar TP sugerido por IA: {fmt(aiHint.tp1)}
+        Usar TP sugerido por {aiHint.available?"IA":"motor técnico"}: {fmt(aiHint.tp1)}
       </button>}
     {error&&<p className="mt-2 text-[10px] text-rose-300">{error}</p>}
     <div className="mt-3 flex gap-2">
