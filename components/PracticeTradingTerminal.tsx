@@ -1214,6 +1214,18 @@ export default function PracticeTradingTerminal() {
   }, [marketInsight, chartReady, autoDetect, symbol, interval]);
 
   useEffect(() => {
+    setForm(x=>({...x,stop:"",tp1:"",tp2:"",tp3:""}));
+  }, [symbol]);
+
+  useEffect(() => {
+    if (!autoDetect) {
+      try { chartRef.current?.removeOverlay({groupId:"pattern-auto"}); } catch {}
+      setAutoRead(null);
+      lastDetectedBarRef.current = "";
+    }
+  }, [autoDetect]);
+
+  useEffect(() => {
     setPrecisionScan(null);
     setAiDirection(null);
     setAutoRead(null);
