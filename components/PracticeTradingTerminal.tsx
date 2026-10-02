@@ -1164,11 +1164,13 @@ export default function PracticeTradingTerminal() {
         mode: strongMagnet ? "strong_magnet" : "weak_magnet",
         modeSensitivity: strongMagnet ? 18 : 10,
         onDrawStart: () => {
+          snapshotDrawings();
           setMessage(meta.hint);
           return false;
         },
         onDrawEnd: () => {
           setActiveTool(null);
+          window.setTimeout(()=>refreshUserDrawings(),60);
           setMessage(`${meta.label} lista. Puedes arrastrar sus puntos para afinarla.`);
           return false;
         },
@@ -1607,53 +1609,89 @@ export default function PracticeTradingTerminal() {
     } catch {}
   }
 
-  function drawingKey() {
-    return `explodex:practice-drawings:${symbol}:${interval}`;
-  }
+  function drawingKey() { return "explodex:practice-drawings:"+symbol+":"+interval; }
 
-  function saveDrawings() {
-    const chart = chartRef.current;
-    if (!chart) return;
-    try {
-      const rows = (chart.getOverlays({ groupId: "practice-user" }) ?? []).map((item: any) => ({
-        name: item.name,
-        points: item.points,
-        groupId: "practice-user",
-        mode: item.mode || "weak_magnet",
-      }));
-      window.localStorage.setItem(drawingKey(), JSON.stringify(rows));
-      setMessage(`${rows.length} dibujo(s) guardados para ${symbol} ${interval}.`);
-    } catch {
-      setMessage("No pude guardar los dibujos.");
-    }
+  function readUserDrawings():UserDrawing[] {
+    const chart=chartRef.current;
+    if(!chart)return [];
+    try{
+      return (chart.getOverlays({groupId:"practice-user"})||[]).filter((row:any)=>
+        row && row.name && Array.isArray(row.points)&&row.points.length)
+        .slice(0,80).map((row:any)=>({
+          id:String(row.id),name:String(row.name),points:row.points,
+          mode:row.mode||"weak_magnet",lock:Boolean(row.lock),styles:row.styles||undefined,
+        }));
+    }catch{return [];}
   }
-
-  function restoreDrawings(showMessage = true) {
-    const chart = chartRef.current;
-    if (!chart) return;
-    try {
-      chart.removeOverlay({ groupId: "practice-user" });
-      const raw = window.localStorage.getItem(drawingKey());
-      const rows = raw ? JSON.parse(raw) : [];
-      for (const row of Array.isArray(rows) ? rows : []) {
-        if (!row?.name || !Array.isArray(row.points)) continue;
+  function saveDrawingRows(rows:UserDrawing[],announce=false) {
+    try{window.localStorage.setItem(drawingKey(),JSON.stringify(rows));}
+    catch {if(announce)setMessage("No se pudieron guardar los dibujos en este navegador.");return;}
+    if(announce)setMessage(rows.length+" dibujo(s) guardado(s) para "+symbol+" "+interval+".");
+  }
+  function refreshUserDrawings(announce=false){
+    const rows=readUserDrawings();
+    setUserDrawings(rows);setDrawingRevision(x=>x+1);
+    saveDrawingRows(rows,announce);
+  }
+  function snapshotDrawings(){
+    undoDrawings.current.push(readUserDrawings());
+    undoDrawings.current=undoDrawings.current.slice(-20);
+    redoDrawings.current=[];
+    setDrawingRevision(x=>x+1);
+  }
+  function renderDrawingSnapshot(rows:UserDrawing[]){
+    const chart=chartRef.current;if(!chart)return;
+    try{
+      chart.removeOverlay({groupId:"practice-user"});
+      for(const d of rows.slice(0,80)) {
         chart.createOverlay({
-          name: row.name,
-          points: row.points,
-          groupId: "practice-user",
-          mode: row.mode || "weak_magnet",
+          id:d.id,name:d.name,points:d.points,groupId:"practice-user",
+          mode:d.mode||"weak_magnet",lock:Boolean(d.lock),styles:d.styles,
+          onPressedMoveStart:()=>{snapshotDrawings();return false;},
+          onPressedMoveEnd:()=>{refreshUserDrawings();return false;},
         });
       }
-      if (showMessage) setMessage(`${rows.length || 0} dibujo(s) restaurados.`);
-    } catch {
-      if (showMessage) setMessage("No pude restaurar los dibujos.");
-    }
+      setUserDrawings(readUserDrawings());setDrawingRevision(x=>x+1);
+      saveDrawingRows(readUserDrawings());
+    }catch{setMessage("No se pudo restaurar uno de los objetos.");}
   }
-
-  function clearDrawings() {
-    try { chartRef.current?.removeOverlay({ groupId: "practice-user" }); } catch {}
-    window.localStorage.removeItem(drawingKey());
-    setMessage("Dibujos borrados para esta moneda y temporalidad.");
+  function saveDrawings(){refreshUserDrawings(true);}
+  function restoreDrawings(showMessage=true){
+    try{
+      const saved=JSON.parse(window.localStorage.getItem(drawingKey())||"[]");
+      renderDrawingSnapshot(Array.isArray(saved)?saved:[]);
+      if(showMessage)setMessage("Se restauraron los dibujos de "+symbol+" "+interval+".");
+    }catch{if(showMessage)setMessage("No fue posible recuperar los dibujos.");}
+  }
+  function clearDrawings(){
+    snapshotDrawings();renderDrawingSnapshot([]);
+    setSelectedDrawing("");setMessage("Dibujos borrados. Puedes deshacer.");
+  }
+  function changeDrawing(id:string,operation:"style"|"lock"|"clone"|"delete",color="#22d3ee",width=2){
+    const rows=readUserDrawings(),index=rows.findIndex(d=>d.id===id);
+    if(index<0)return;
+    snapshotDrawings();
+    const row=rows[index];
+    if(operation==="delete")rows.splice(index,1);
+    if(operation==="lock")rows[index]={...row,lock:!row.lock};
+    if(operation==="style")rows[index]={...row,styles:{
+      ...row.styles,line:{...row.styles?.line,color,size:width},
+    }};
+    if(operation==="clone")rows.push({...row,id:"clone-"+Date.now(),lock:false,
+      points:row.points.map(p=>({...p,timestamp:p.timestamp+intervalMilliseconds(interval)}))});
+    renderDrawingSnapshot(rows);
+    if(operation==="delete")setSelectedDrawing("");
+    if(operation==="clone")setSelectedDrawing(rows[rows.length-1].id);
+  }
+  function undoDrawingAction(){
+    const previous=undoDrawings.current.pop();if(!previous)return;
+    redoDrawings.current.push(readUserDrawings());
+    renderDrawingSnapshot(previous);
+  }
+  function redoDrawingAction(){
+    const next=redoDrawings.current.pop();if(!next)return;
+    undoDrawings.current.push(readUserDrawings());
+    renderDrawingSnapshot(next);
   }
 
   const riskPreview = useMemo(() => {
