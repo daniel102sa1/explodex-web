@@ -1157,6 +1157,22 @@ export default function PracticeTradingTerminal() {
     brush: { label: "Dibujo libre", hint: "Dibuja libremente sobre el gráfico." },
   };
 
+  function syncPositionDrawing(name:string,points:any[]) {
+    if(name!=="EXPLODEX_LONG_POSITION"&&name!=="EXPLODEX_SHORT_POSITION")return;
+    if(!Array.isArray(points)||points.length<3)return;
+    const entry=Number(points[0]?.value),stop=Number(points[1]?.value),tp=Number(points[2]?.value);
+    const side:Side=name==="EXPLODEX_LONG_POSITION"?"LONG":"SHORT";
+    const valid=entry>0 && (side==="LONG"?stop>0&&stop<entry&&tp>entry:stop>entry&&tp>0&&tp<entry);
+    if(!valid){setMessage("La herramienta requiere entrada, SL y TP en el orden correcto para "+side+".");return;}
+    const useLimit=!(livePrice>0)||Math.abs(entry-livePrice)/livePrice>.002;
+    setShowTpSl(true);
+    setForm(x=>({...x,side,orderType:useLimit?"LIMIT":"MARKET",
+      limitPrice:useLimit?String(Number(entry.toPrecision(10))):"",
+      stop:String(Number(stop.toPrecision(10))),
+      tp1:String(Number(tp.toPrecision(10))),tp2:"",tp3:""}));
+    setMessage("Plan "+side+" trasladado del gráfico al ticket: entrada "+fmt(entry)+", SL "+fmt(stop)+", TP "+fmt(tp)+". Confirma antes de abrir.");
+  }
+
   function draw(name: string) {
     const chart = chartRef.current;
     if (!chart) return;
@@ -1174,11 +1190,22 @@ export default function PracticeTradingTerminal() {
           setMessage(meta.hint);
           return false;
         },
-        onDrawEnd: () => {
+        onDrawEnd: (event:any) => {
+          if(name==="EXPLODEX_LONG_POSITION"||name==="EXPLODEX_SHORT_POSITION") {
+            const points=event?.overlay?.points||readUserDrawings().at(-1)?.points||[];
+            syncPositionDrawing(name,points);
+          }
           setActiveTool(null);
           window.setTimeout(()=>refreshUserDrawings(),60);
-          setMessage(`${meta.label} lista. Puedes arrastrar sus puntos para afinarla.`);
+          if(name!=="EXPLODEX_LONG_POSITION"&&name!=="EXPLODEX_SHORT_POSITION")
+            setMessage(`${meta.label} lista. Puedes arrastrar sus puntos para afinarla.`);
           return false;
+        },
+        onPressedMoveStart:()=>{snapshotDrawings();return false;},
+        onPressedMoveEnd:(event:any)=>{
+          if(name==="EXPLODEX_LONG_POSITION"||name==="EXPLODEX_SHORT_POSITION")
+            syncPositionDrawing(name,event?.overlay?.points||[]);
+          refreshUserDrawings();return false;
         },
       });
     } catch {
