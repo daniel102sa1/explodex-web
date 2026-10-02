@@ -502,6 +502,7 @@ export default function PracticeTradingTerminal() {
   const [confirmSide, setConfirmSide] = useState<Side | null>(null);
   const confirmEntryRef = useRef(0);
   const [draftPlan, setDraftPlan] = useState<{side:Side;entry:number;stop:number;target:number;qty:number;netGain:number;netLoss:number;roi:number;rr:number} | null>(null);
+  const previewDrawRef = useRef({key:"",at:0});
   const [showFrames, setShowFrames] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [showAlerts, setShowAlerts] = useState(false);
@@ -789,11 +790,12 @@ export default function PracticeTradingTerminal() {
             needDefaultYAxisFigure: true,
             mode: "weak_magnet",
             modeSensitivity: 8,
-            createPointFigures: ({ coordinates }: any) => {
+            createPointFigures: ({ coordinates,overlay }: any) => {
               if (!Array.isArray(coordinates) || coordinates.length < 2) return [];
+              const custom=overlay?.styles?.line||{};
               return [
-                { type: "line", attrs: { coordinates }, styles: { color: "#c084fc", size: 1.8 } },
-                { type: "text", attrs: { x: coordinates[0].x + 6, y: coordinates[0].y - 8, text: label }, styles: { color: "#e9d5ff", size: 11 } },
+                { type: "line", attrs: { coordinates }, styles: { color:custom.color||"#c084fc", size:custom.size||1.8 } },
+                { type: "text", attrs: { x: coordinates[0].x + 6, y: coordinates[0].y - 8, text: label }, styles: { color:custom.color||"#e9d5ff", size: 11 } },
               ];
             },
           } as any);
@@ -1288,6 +1290,7 @@ export default function PracticeTradingTerminal() {
     try { chartRef.current?.removeOverlay({groupId:"ai-measure"}); } catch {}
     try { chartRef.current?.removeOverlay({groupId:"order-plan"}); } catch {}
     setConfirmSide(null);
+    previewDrawRef.current={key:"",at:0};
     setUserDrawings([]);
     setSelectedDrawing("");
     undoDrawings.current=[];redoDrawings.current=[];
@@ -1765,6 +1768,9 @@ export default function PracticeTradingTerminal() {
     if(!showTpSl||!form.stop||!form.tp1||!barsRef.current.length)return;
     const plan=buildPlanForSide(form.side);
     if(!plan)return;
+    const key=[symbol,interval,form.side,form.stop,form.tp1,form.orderType,form.limitPrice].join("|");
+    if(previewDrawRef.current.key===key && Date.now()-previewDrawRef.current.at<2_000)return;
+    previewDrawRef.current={key,at:Date.now()};
     const lastTs=Number(barsRef.current.at(-1)?.timestamp||Date.now());
     const step=intervalMilliseconds(interval);
     try{
