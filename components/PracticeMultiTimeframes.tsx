@@ -44,7 +44,7 @@ export default function PracticeMultiTimeframes({symbol,active,onSelect,onClose}
       {FRAMES.map(interval=>{
         const item=rows.find(r=>r.interval===interval);
         const bars=item?.bars.slice(-45)||[];
-        const read=bars.length>=35?analyzeTechnical(item!.bars,interval):null;
+        const read=bars.length>=35?analyzeTechnical(item!.bars.slice(0,-1),interval):null;
         const min=bars.length?Math.min(...bars.map(b=>b.low)):0;
         const max=bars.length?Math.max(...bars.map(b=>b.high)):1;
         const span=Math.max(1e-9,max-min);
