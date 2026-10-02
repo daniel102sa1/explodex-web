@@ -943,6 +943,7 @@ export default function PracticeTradingTerminal() {
 
           if (bars.length) {
             barsRef.current = bars.slice(-300);
+            levelSignatureRef.current = "";
             setLivePrice(Number(bars[bars.length - 1].close || 0));
             setMarketInsight(analyzeMarket(barsRef.current, requestedInterval));
           }
@@ -1874,7 +1875,7 @@ export default function PracticeTradingTerminal() {
         } catch {}
       }
     }
-  }, [summary?.open_positions, symbol, interval, chartReady, sid]);
+  }, [summary?.open_positions, symbol, interval, chartReady, sid, marketInsight]);
 
   const roiPlanner = useMemo(() => {
     const entry = form.orderType === "LIMIT" ? Number(form.limitPrice) : livePrice;
